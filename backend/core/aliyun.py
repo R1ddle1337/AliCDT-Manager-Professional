@@ -83,7 +83,7 @@ class AliyunClient:
         data = await _post(self.bss_host, params)
         d = data.get("Data", {})
         return {
-            "available_amount": float(d.get("AvailableAmount", 0)),
+            "available_amount": round(float(d.get("AvailableAmount", 0)), 10),
             "currency": d.get("Currency", self.currency),
             "symbol": self.currency_symbol,
         }
@@ -106,12 +106,12 @@ class AliyunClient:
             if pretax > 0 or outstanding > 0:
                 details.append({
                     "product": item.get("ProductName", ""),
-                    "pretax_amount": round(pretax, 4),
-                    "outstanding_amount": round(outstanding, 4),
+                    "pretax_amount": round(pretax, 10),
+                    "outstanding_amount": round(outstanding, 10),
                 })
         return {
             "billing_cycle": billing_cycle,
-            "total_outstanding": round(total_outstanding, 4),
+            "total_outstanding": round(total_outstanding, 10),
             "currency": self.currency,
             "symbol": self.currency_symbol,
             "details": details,
