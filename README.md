@@ -130,7 +130,7 @@ cd /app/alicdt-manager && docker compose down && rm -rf /app/alicdt-manager
 ## Tech Stack
 
 - Backend: Python + FastAPI + APScheduler + SQLite
-- Frontend: Vue 3 + TailwindCSS
+- Frontend: Vue + TailwindCSS
 
 
 ## Nodeseek
