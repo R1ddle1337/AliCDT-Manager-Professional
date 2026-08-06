@@ -100,14 +100,14 @@ class AliyunClient:
         total_outstanding = 0.0
         details = []
         for item in items:
-            # 使用高精度的目录总价（PretaxGrossAmount），而非已被四舍五入到2位小数的 OutstandingAmount
-            gross = float(item.get("PretaxGrossAmount", 0))
-            total_outstanding += gross
-            if gross > 0:
+            outstanding = float(item.get("OutstandingAmount", 0))
+            pretax = float(item.get("PretaxAmount", 0))
+            total_outstanding += outstanding
+            if pretax > 0 or outstanding > 0:
                 details.append({
                     "product": item.get("ProductName", ""),
-                    "pretax_amount": round(gross, 10),
-                    "outstanding_amount": round(gross, 10),
+                    "pretax_amount": round(pretax, 10),
+                    "outstanding_amount": round(outstanding, 10),
                 })
         return {
             "billing_cycle": billing_cycle,
