@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, Text, DateTime
+from sqlalchemy import Column, Integer, String, Float, Boolean, Text, DateTime, inspect, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -6,8 +6,10 @@ from datetime import datetime
 
 Base = declarative_base()
 
+
 class Account(Base):
     __tablename__ = "accounts"
+
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
     access_key_id = Column(String, nullable=False)
@@ -27,8 +29,10 @@ class Account(Base):
     enabled = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+
 class Instance(Base):
     __tablename__ = "instances"
+
     id = Column(Integer, primary_key=True, index=True)
     account_id = Column(Integer, nullable=False)
     instance_id = Column(String, nullable=False, unique=True)
@@ -44,8 +48,10 @@ class Instance(Base):
     last_synced = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+
 class BillingCache(Base):
     __tablename__ = "billing_cache"
+
     id = Column(Integer, primary_key=True, index=True)
     account_id = Column(Integer, nullable=False)
     cache_type = Column(String, nullable=False)
@@ -53,27 +59,67 @@ class BillingCache(Base):
     data = Column(Text, nullable=False)
     expires_at = Column(DateTime, nullable=False)
 
+
 class Log(Base):
     __tablename__ = "logs"
+
     id = Column(Integer, primary_key=True, index=True)
     level = Column(String, default="info")
     category = Column(String, default="system")
     message = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+
 class Settings(Base):
     __tablename__ = "settings"
+
     key = Column(String, primary_key=True)
     value = Column(Text, nullable=True)
+
 
 DATABASE_URL = "sqlite+aiosqlite:////app/data/guard.db"
 
 engine = create_async_engine(DATABASE_URL, echo=False)
-AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+AsyncSessionLocal = sessionmaker(
+    engine,
+    class_=AsyncSession,
+    expire_on_commit=False
+)
+
 
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+        def migrate(sync_conn):
+            inspector = inspect(sync_conn)
+
+            migrations = {
+                "accounts": {
+                    "nostock_notified": "BOOLEAN DEFAULT 0",
+                },
+            }
+
+            for table_name, columns in migrations.items():
+                if not inspector.has_table(table_name):
+                    continue
+
+                existing_columns = {
+                    column["name"]
+                    for column in inspector.get_columns(table_name)
+                }
+
+                for column_name, column_definition in columns.items():
+                    if column_name not in existing_columns:
+                        sync_conn.execute(
+                            text(
+                                f'ALTER TABLE "{table_name}" '
+                                f'ADD COLUMN "{column_name}" {column_definition}'
+                            )
+                        )
+
+        await conn.run_sync(migrate)
+
 
 async def get_db():
     async with AsyncSessionLocal() as session:
