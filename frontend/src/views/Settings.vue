@@ -75,8 +75,13 @@
       {{ msg }}
     </div>
 
-    <div class="text-center text-xs text-text-muted pt-4">
-      AliCDT Manager v1.0
+    <div class="text-center text-xs pt-4 space-y-2">
+      <div class="text-text-muted">AliCDT Manager v1.0</div>
+      <a v-if="versionInfo.has_update" :href="versionInfo.url" target="_blank"
+        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-accent/10 border border-accent/20 text-accent hover:bg-accent/20 transition-colors">
+        <span class="w-1.5 h-1.5 bg-accent rounded-full animate-pulse"></span>
+        发现新版本 v{{ versionInfo.latest }}，点击查看
+      </a>
     </div>
   </div>
 </template>
@@ -97,16 +102,27 @@ const form = ref({
   tg_chat_id: '',
   tg_daily_report: '0',
 })
+const versionInfo = ref({ has_update: false, latest: '', url: '' })
 
 onMounted(async () => {
   await store.fetchSettings()
   form.value.tg_bot_token = store.settings.tg_bot_token || ''
   form.value.tg_chat_id = store.settings.tg_chat_id || ''
   form.value.tg_daily_report = store.settings.tg_daily_report || '0'
+  checkVersion()
 })
 
 function authHeader() {
   return { Authorization: `Bearer ${localStorage.getItem('token')}` }
+}
+
+async function checkVersion() {
+  try {
+    const { data } = await axios.get('/api/version/check', { headers: authHeader() })
+    versionInfo.value = data
+  } catch (e) {
+    // 静默失败，不影响使用
+  }
 }
 
 async function save() {
