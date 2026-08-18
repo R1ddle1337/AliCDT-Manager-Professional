@@ -256,7 +256,7 @@ async function saveName() {
     await store.renameInstance(props.instance.instance_id, val)
     editingName.value = false
   } catch (error) {
-    alert('名称修改失败: ' + (error.message || '请检查后端日志或网络状态'))
+    alert('名称修改失败: ' + (error.response?.data?.detail || error.message))
   } finally {
     isSavingName.value = false
   }
@@ -267,6 +267,8 @@ async function handleStart() {
   isStarting.value = true
   try {
     await store.controlInstance(props.instance.instance_id, 'start')
+  } catch (e) {
+    alert('启动失败：' + (e.response?.data?.detail || e.message))
   } finally {
     isStarting.value = false
   }
@@ -277,6 +279,8 @@ async function handleStop() {
   isStopping.value = true
   try {
     await store.controlInstance(props.instance.instance_id, 'stop')
+  } catch (e) {
+    alert('停止失败：' + (e.response?.data?.detail || e.message))
   } finally {
     isStopping.value = false
   }
@@ -287,6 +291,8 @@ async function syncThis() {
   isSyncing.value = true
   try {
     await store.syncSingleInstance(props.instance.instance_id)
+  } catch (e) {
+    alert('同步失败：' + (e.response?.data?.detail || e.message))
   } finally {
     isSyncing.value = false
   }
