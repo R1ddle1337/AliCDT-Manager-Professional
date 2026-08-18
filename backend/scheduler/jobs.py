@@ -142,14 +142,44 @@ async def keep_alive_check():
                 await db.commit()
 
             if status == "Stopped":
-                await client.start_instance(account.instance_id)
-                await send_tg_notify(
-                    f"⚡ <b>保活触发</b>\n"
-                    f"账户: {account.name}\n"
-                    f"实例: {account.instance_id}\n"
-                    f"检测到停机，已自动拉起"
-                )
-                await add_important_log("keepalive", f"[{account.name}] 实例 {account.instance_id} 被回收，已自动拉起")
+                try:
+                    await client.start_instance(account.instance_id)
+                    # 启动成功，清除库存不足标记
+                    if account.nostock_notified:
+                        async with AsyncSessionLocal() as db:
+                            await db.execute(
+                                update(Account).where(Account.id == account.id).values(nostock_notified=False)
+                            )
+                            await db.commit()
+                        await send_tg_notify(
+                            f"✅ <b>库存恢复</b>\n账户: {account.name}\n实例已成功重新启动"
+                        )
+                    await send_tg_notify(
+                        f"⚡ <b>保活触发</b>\n"
+                        f"账户: {account.name}\n"
+                        f"实例: {account.instance_id}\n"
+                        f"检测到停机，已自动拉起"
+                    )
+                    await add_important_log("keepalive", f"[{account.name}] 实例 {account.instance_id} 被回收，已自动拉起")
+                except Exception as start_err:
+                    err_msg = str(start_err)
+                    if "NoStock" in err_msg:
+                        # 库存不足，只在第一次通知，之后交给每日汇报
+                        if not account.nostock_notified:
+                            async with AsyncSessionLocal() as db:
+                                await db.execute(
+                                    update(Account).where(Account.id == account.id).values(nostock_notified=True)
+                                )
+                                await db.commit()
+                            await send_tg_notify(
+                                f"⚠️ <b>保活失败：库存不足</b>\n"
+                                f"账户: {account.name}\n"
+                                f"实例: {account.instance_id}\n"
+                                f"该可用区抢占式实例已售罄，系统将持续重试，后续进展会在每日流量汇报中提示"
+                            )
+                            await add_important_log("keepalive", f"[{account.name}] 保活失败：库存不足，已通知")
+                    else:
+                        raise
 
         except Exception:
             pass
@@ -239,7 +269,7 @@ async def monthly_reset():
         try:
             async with AsyncSessionLocal() as db:
                 await db.execute(
-                    update(Account).where(Account.id == account.id).values(manual_stopped=False)
+                    update(Account).where(Account.id == account.id).values(manual_stopped=False, nostock_notified=False)
                 )
                 await db.commit()
 
@@ -292,6 +322,8 @@ async def _do_daily_report():
                 f"  [{bar}] {inst.traffic_percent:.1f}%  熔断: {account.threshold_percent}%\n"
                 f"  🖥 状态: {inst.status}  地域: {inst.region_id or '—'}"
             )
+            if account.keep_alive and account.nostock_notified:
+                block += "\n  ⚠️ 库存不足，保活持续重试中"
             try:
                 client = AliyunClient(
                     account.access_key_id, account.access_key_secret,
