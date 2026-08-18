@@ -19,6 +19,7 @@ from scheduler.jobs import start_scheduler, sync_instances, traffic_check, add_i
 SECRET_KEY = os.environ.get("SECRET_KEY", "fallback-change-me")
 ALGORITHM = "HS256"
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+CURRENT_VERSION = "1.0"
 
 
 def create_token(username: str):
@@ -332,6 +333,27 @@ async def change_password(data: dict, user=Depends(get_current_user), db: AsyncS
         row.value = new_hash
     await db.commit()
     return {"message": "密码已更新"}
+
+
+@app.get("/api/version/check")
+async def check_version(user=Depends(get_current_user)):
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                "https://api.github.com/repos/lillinlin/AliCDT-Manager/releases/latest",
+                headers={"Accept": "application/vnd.github+json"}
+            )
+            data = r.json()
+            latest_tag = data.get("tag_name", "").lstrip("v")
+            has_update = bool(latest_tag) and latest_tag != CURRENT_VERSION
+            return {
+                "current": CURRENT_VERSION,
+                "latest": latest_tag or CURRENT_VERSION,
+                "has_update": has_update,
+                "url": data.get("html_url", "https://github.com/lillinlin/AliCDT-Manager/releases"),
+            }
+    except Exception:
+        return {"current": CURRENT_VERSION, "latest": CURRENT_VERSION, "has_update": False, "url": ""}
 
 
 @app.get("/api/logs")
