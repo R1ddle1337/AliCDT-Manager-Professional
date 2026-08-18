@@ -2,7 +2,7 @@
 
 **阿里云 CDT 流量监控与自动化管理控制台**
 
-[![Docker](https://img.shields.io/badge/Docker-ghcr.io-blue?logo=docker)](https://github.com/lillinlin/AliCDT-Manager/pkgs/container/alicdt-manager)
+[![Docker in AMD/ARM](https://img.shields.io/badge/Docker-ghcr.io-blue?logo=docker)](https://github.com/lillinlin/AliCDT-Manager/pkgs/container/alicdt-manager)
 [![GitHub](https://img.shields.io/badge/GitHub-lillinlin-black?logo=github)](https://github.com/lillinlin/AliCDT-Manager)
 
 </div>
