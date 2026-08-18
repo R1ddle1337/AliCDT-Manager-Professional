@@ -58,6 +58,22 @@ async def startup():
     start_scheduler()
 
 
+def friendly_error(e: Exception) -> str:
+    """把阿里云常见错误码转换成人类可读的提示"""
+    msg = str(e)
+    if "NoStock" in msg:
+        return "该可用区抢占式实例库存不足，暂时无法启动，请稍后重试"
+    if "InvalidAccessKeyId" in msg or "SignatureDoesNotMatch" in msg:
+        return "AccessKey 无效或已过期，请检查账户配置"
+    if "Forbidden" in msg or "NoPermission" in msg:
+        return "权限不足，请检查 RAM 账号权限配置"
+    if "InstanceNotFound" in msg or "InvalidInstanceId" in msg:
+        return "实例不存在或已被释放"
+    if "IncorrectInstanceStatus" in msg:
+        return "实例当前状态不允许此操作，请稍后重试"
+    return f"操作失败: {msg}"
+
+
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -190,8 +206,11 @@ async def sync_single_instance(instance_id: str, user=Depends(get_current_user),
     result = await db.execute(select(Account).where(Account.id == inst.account_id))
     acc = result.scalar_one_or_none()
     client = AliyunClient(acc.access_key_id, acc.access_key_secret, acc.region_id, acc.site_type)
-    status = await client.get_instance_status(instance_id)
-    traffic_gb = await client.get_cdt_traffic()
+    try:
+        status = await client.get_instance_status(instance_id)
+        traffic_gb = await client.get_cdt_traffic()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=friendly_error(e))
     limit = acc.traffic_limit_gb or 200.0
     percent = round(traffic_gb / limit * 100, 2)
     inst.status = status
@@ -222,7 +241,10 @@ async def start_instance(instance_id: str, user=Depends(get_current_user), db: A
     result = await db.execute(select(Account).where(Account.id == inst.account_id))
     acc = result.scalar_one_or_none()
     client = AliyunClient(acc.access_key_id, acc.access_key_secret, acc.region_id, acc.site_type)
-    await client.start_instance(instance_id)
+    try:
+        await client.start_instance(instance_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=friendly_error(e))
     await db.execute(update(Account).where(Account.id == acc.id).values(manual_stopped=False))
     await db.commit()
     await add_important_log("system", f"手动开机: {instance_id}")
@@ -238,7 +260,10 @@ async def stop_instance(instance_id: str, user=Depends(get_current_user), db: As
     result = await db.execute(select(Account).where(Account.id == inst.account_id))
     acc = result.scalar_one_or_none()
     client = AliyunClient(acc.access_key_id, acc.access_key_secret, acc.region_id, acc.site_type)
-    await client.stop_instance(instance_id, acc.shutdown_mode)
+    try:
+        await client.stop_instance(instance_id, acc.shutdown_mode)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=friendly_error(e))
     await db.execute(update(Account).where(Account.id == acc.id).values(manual_stopped=True))
     await db.commit()
     await add_important_log("system", f"手动关机: {instance_id}")
@@ -254,7 +279,10 @@ async def release_instance(instance_id: str, user=Depends(get_current_user), db:
     result = await db.execute(select(Account).where(Account.id == inst.account_id))
     acc = result.scalar_one_or_none()
     client = AliyunClient(acc.access_key_id, acc.access_key_secret, acc.region_id, acc.site_type)
-    await client.delete_instance(instance_id)
+    try:
+        await client.delete_instance(instance_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=friendly_error(e))
     await db.execute(delete(Instance).where(Instance.instance_id == instance_id))
     await db.commit()
     await add_important_log("system", f"释放实例: {instance_id}")
