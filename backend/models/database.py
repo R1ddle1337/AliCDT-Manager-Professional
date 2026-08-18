@@ -23,6 +23,7 @@ class Account(Base):
     auto_start_time = Column(String, nullable=True)
     auto_stop_time = Column(String, nullable=True)
     manual_stopped = Column(Boolean, default=False)
+    nostock_notified = Column(Boolean, default=False)
     enabled = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
