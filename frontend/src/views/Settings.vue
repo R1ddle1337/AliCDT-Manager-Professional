@@ -74,6 +74,10 @@
       :class="msg.startsWith('❌') ? 'text-danger bg-danger/10 border-danger/20' : 'text-success bg-success/10 border-success/20'">
       {{ msg }}
     </div>
+
+    <div class="text-center text-xs text-text-muted pt-4">
+      AliCDT Manager v1.0
+    </div>
   </div>
 </template>
 
