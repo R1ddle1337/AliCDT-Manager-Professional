@@ -22,7 +22,7 @@
 - 每1~2分钟自动同步数据，有特殊情况可点击立即同步
 
 ## 🔑 所需 RAM 权限
-
+https://ram.console.alibabacloud.com/users
 ```bash
 AliyunECSFullAccess
 ```
