@@ -2,7 +2,7 @@
 
 **阿里云 CDT 流量监控与自动化管理控制台**
 
-[![Docker in AMD/ARM](https://img.shields.io/badge/Docker-ghcr.io-blue?logo=docker)](https://github.com/lillinlin/AliCDT-Manager/pkgs/container/alicdt-manager)
+[![Docker](https://img.shields.io/badge/Docker-ghcr.io-blue?logo=docker)](https://github.com/lillinlin/AliCDT-Manager/pkgs/container/alicdt-manager)
 [![GitHub](https://img.shields.io/badge/GitHub-lillinlin-black?logo=github)](https://github.com/lillinlin/AliCDT-Manager)
 
 </div>
@@ -10,7 +10,7 @@
 ---
 
 ## ✨ 功能
-
+- AMD/ARM
 - 多账户聚合监控，CDT 流量实时展示
 - 流量熔断：超阈值自动停机
 - (新增)余额待还熔断：到设置的待还余额值自动停机
