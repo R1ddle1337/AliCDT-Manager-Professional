@@ -19,7 +19,7 @@ from scheduler.jobs import start_scheduler, sync_instances, traffic_check, add_i
 SECRET_KEY = os.environ.get("SECRET_KEY", "fallback-change-me")
 ALGORITHM = "HS256"
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-CURRENT_VERSION = "1.0"
+CURRENT_VERSION = "1.1"
 
 
 def create_token(username: str):
