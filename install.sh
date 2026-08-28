@@ -28,7 +28,7 @@ mkdir -p "$INSTALL_DIR/data"
 cd "$INSTALL_DIR"
 
 # 生成随机密钥
-    echo "SECRET_KEY=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 48)" > .env
+echo "SECRET_KEY=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 48)" > .env
 
 # 下载 docker-compose.yml
 curl -fsSL https://raw.githubusercontent.com/R1ddle1337/AliCDT-Manager-Professional/main/docker-compose.yml -o docker-compose.yml
@@ -38,9 +38,9 @@ if [ "$PORT" != "8000" ]; then
     sed -i "s/127.0.0.1:8000:8000/127.0.0.1:${PORT}:8000/" docker-compose.yml
 fi
 
-# 启动
-docker compose pull
-docker compose up -d
+# 构建并启动（前端和后端均在本机镜像中构建）
+docker compose build
+docker compose up -d --no-build
 
 echo -e "${GREEN}=============================="
 echo "   安装完成！"

@@ -1,6 +1,9 @@
 services:
   alicdt-manager:
-    image: ghcr.io/r1ddle1337/alicdt-manager-professional:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: alicdt-manager-professional:local
     container_name: alicdt-manager-professional
     restart: always
     ports:

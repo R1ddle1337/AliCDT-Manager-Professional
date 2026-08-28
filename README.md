@@ -4,7 +4,7 @@
 
 **阿里云 CDT 流量监控与自动化管理控制台**
 
-[![Docker](https://img.shields.io/badge/Docker-ghcr.io-blue?logo=docker)](https://github.com/R1ddle1337/AliCDT-Manager-Professional/pkgs/container/alicdt-manager-professional)
+[![Docker](https://img.shields.io/badge/Docker-local%20build-blue?logo=docker)](https://docs.docker.com/compose/)
 [![GitHub](https://img.shields.io/badge/GitHub-R1ddle1337-black?logo=github)](https://github.com/R1ddle1337/AliCDT-Manager-Professional)
 
 </div>
@@ -62,7 +62,8 @@ echo "SECRET_KEY=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 48)" > .env
 curl -fsSL https://raw.githubusercontent.com/R1ddle1337/AliCDT-Manager-Professional/main/docker-compose.yml -o docker-compose.yml
 ```
 ```bash
-docker compose up -d
+docker compose build
+docker compose up -d --no-build
 ```
 
 ## 界面截图
@@ -121,8 +122,8 @@ server {
 # 重启服务
 cd /app/alicdt-manager && docker compose restart
 
-# 更新到最新镜像
-cd /app/alicdt-manager && docker compose pull && docker compose up -d
+# 重新构建并更新
+cd /app/alicdt-manager && docker compose build && docker compose up -d --no-build
 
 # 停止服务/卸载（保留数据）
 cd /app/alicdt-manager && docker compose down
