@@ -36,6 +36,14 @@ def _sign(key_secret: str, string_to_sign: str) -> str:
     return base64.b64encode(h.digest()).decode("utf-8")
 
 
+def _number(value, default: float = 0.0) -> float:
+    """将国内/国际站可能返回的空字符串或数字安全转换为浮点数。"""
+    try:
+        return float(value or default)
+    except (TypeError, ValueError):
+        return default
+
+
 def _build_params(action: str, key_id: str, key_secret: str, version: str, extra: dict) -> dict:
     params = {
         "Format": "JSON",
@@ -81,9 +89,9 @@ class AliyunClient:
     async def get_balance(self) -> dict:
         params = _build_params("QueryAccountBalance", self.key_id, self.key_secret, "2017-12-14", {})
         data = await _post(self.bss_host, params)
-        d = data.get("Data", {})
+        d = data.get("Data") or {}
         return {
-            "available_amount": round(float(d.get("AvailableAmount", 0)), 10),
+            "available_amount": round(_number(d.get("AvailableAmount")), 10),
             "currency": d.get("Currency", self.currency),
             "symbol": self.currency_symbol,
         }
@@ -96,12 +104,21 @@ class AliyunClient:
             "2017-12-14", {"BillingCycle": billing_cycle}
         )
         data = await _post(self.bss_host, params)
-        items = data.get("Data", {}).get("Items", {}).get("Item", [])
+        bill_data = data.get("Data") or {}
+        items_container = bill_data.get("Items") or {}
+        items = items_container.get("Item", []) if isinstance(items_container, dict) else items_container
+        # BSS 在只有一条账单明细时可能返回对象，多条时返回数组。
+        if isinstance(items, dict):
+            items = [items]
+        if not isinstance(items, list):
+            items = []
         total_outstanding = 0.0
         details = []
         for item in items:
-            outstanding = float(item.get("OutstandingAmount", 0))
-            pretax = float(item.get("PretaxAmount", 0))
+            if not isinstance(item, dict):
+                continue
+            outstanding = _number(item.get("OutstandingAmount"))
+            pretax = _number(item.get("PretaxAmount"))
             total_outstanding += outstanding
             if pretax > 0 or outstanding > 0:
                 details.append({

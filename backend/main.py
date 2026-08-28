@@ -66,6 +66,8 @@ def friendly_error(e: Exception) -> str:
         return "该可用区抢占式实例库存不足，暂时无法启动，请稍后重试"
     if "InvalidAccessKeyId" in msg or "SignatureDoesNotMatch" in msg:
         return "AccessKey 无效或已过期，请检查账户配置"
+    if "NotAuthorized" in msg or "not authorized" in msg.lower():
+        return "该账户未授权 BSS 账单接口，请在对应站点的 RAM 用户上添加 AliyunBSSFullAccess（或等价只读权限）"
     if "Forbidden" in msg or "NoPermission" in msg:
         return "权限不足，请检查 RAM 账号权限配置"
     if "InstanceNotFound" in msg or "InvalidInstanceId" in msg:
@@ -298,9 +300,22 @@ async def get_billing(account_id: int, user=Depends(get_current_user), db: Async
     if not acc:
         raise HTTPException(status_code=404)
     client = AliyunClient(acc.access_key_id, acc.access_key_secret, acc.region_id, acc.site_type)
-    balance = await client.get_balance()
-    bill = await client.get_bill_overview()
-    return {"balance": balance, "bill": bill}
+    # 余额和账单请求彼此独立，并发执行；某一项权限不足时仍返回另一项结果。
+    balance_result, bill_result = await asyncio.gather(
+        client.get_balance(), client.get_bill_overview(), return_exceptions=True
+    )
+    errors = []
+    if isinstance(balance_result, Exception):
+        errors.append(f"余额：{friendly_error(balance_result)}")
+        balance = None
+    else:
+        balance = balance_result
+    if isinstance(bill_result, Exception):
+        errors.append(f"账单：{friendly_error(bill_result)}")
+        bill = None
+    else:
+        bill = bill_result
+    return {"balance": balance, "bill": bill, "errors": errors}
 
 
 @app.get("/api/settings")
