@@ -79,7 +79,8 @@ async def traffic_check():
             if percent >= account.threshold_percent and not account.manual_stopped:
                 trigger_reason = f"流量超阈值 {traffic_gb}GB/{percent}%（阈值{account.threshold_percent}%）"
 
-            if not trigger_reason and account.outstanding_threshold and account.outstanding_threshold > 0 and not account.manual_stopped:
+            if (account.site_type != "china" and not trigger_reason and account.outstanding_threshold
+                    and account.outstanding_threshold > 0 and not account.manual_stopped):
                 try:
                     bill = await client.get_bill_overview()
                     outstanding = bill.get("total_outstanding", 0)
@@ -376,19 +377,20 @@ async def _do_daily_report():
             )
             if account.keep_alive and account.nostock_notified:
                 block += "\n  库存不足，保活持续重试中"
-            try:
-                client = AliyunClient(
-                    account.access_key_id, account.access_key_secret,
-                    account.region_id, account.site_type,
-                )
-                balance = await client.get_balance()
-                bill = await client.get_bill_overview()
-                symbol = balance.get("symbol", "$") if balance else "$"
-                avail = balance.get("available_amount", 0) if balance else 0
-                outst = bill.get("total_outstanding", 0) if bill else 0
-                block += f"\n  余额: {symbol}{avail}  待还: {symbol}{outst}"
-            except Exception:
-                block += "\n  账单获取失败"
+            if account.site_type != "china":
+                try:
+                    client = AliyunClient(
+                        account.access_key_id, account.access_key_secret,
+                        account.region_id, account.site_type,
+                    )
+                    balance = await client.get_balance()
+                    bill = await client.get_bill_overview()
+                    symbol = balance.get("symbol", "$") if balance else "$"
+                    avail = balance.get("available_amount", 0) if balance else 0
+                    outst = bill.get("total_outstanding", 0) if bill else 0
+                    block += f"\n  余额: {symbol}{avail}  待还: {symbol}{outst}"
+                except Exception:
+                    block += "\n  账单获取失败"
         else:
             block = f"[无实例] <b>{account.name}</b>\n  暂无实例数据"
 

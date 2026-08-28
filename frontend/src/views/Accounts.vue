@@ -70,7 +70,8 @@
           <div class="sm:col-span-2"><label class="field-label" for="instance-id">实例 ID <span class="font-normal text-slate-400">（用于保活与定时任务，可选）</span></label><input id="instance-id" v-model="form.instance_id" class="input" placeholder="i-..." /></div>
           <div><label class="field-label" for="traffic-limit">流量上限（GB）</label><input id="traffic-limit" v-model.number="form.traffic_limit_gb" type="number" min="0" class="input" /></div>
           <div><label class="field-label" for="threshold">流量熔断阈值（%）</label><input id="threshold" v-model.number="form.threshold_percent" type="number" min="0" max="100" class="input" /></div>
-          <div class="sm:col-span-2"><label class="field-label" for="outstanding">待还金额熔断阈值 <span class="font-normal text-slate-400">（0 表示不启用）</span></label><input id="outstanding" v-model.number="form.outstanding_threshold" type="number" min="0" step="0.01" class="input" /></div>
+          <div v-if="form.site_type !== 'china'" class="sm:col-span-2"><label class="field-label" for="outstanding">待还金额熔断阈值 <span class="font-normal text-slate-400">（0 表示不启用）</span></label><input id="outstanding" v-model.number="form.outstanding_threshold" type="number" min="0" step="0.01" class="input" /></div>
+          <div v-else class="notice notice-info sm:col-span-2">国内站账单功能暂未启用，保存后不会请求 BSS 账单接口。</div>
           <div class="sm:col-span-2"><label class="field-label" for="shutdown-mode">停机模式</label><select id="shutdown-mode" v-model="form.shutdown_mode" class="input"><option value="StopCharging">节省停机（停止计费）</option><option value="KeepCharging">普通停机（继续计费）</option></select></div>
         </div>
 
@@ -143,11 +144,13 @@ async function submit() {
   if (!editTarget.value && !form.value.access_key_secret) { formError.value = '请填写 AccessKey Secret'; return }
   submitting.value = true
   try {
+    const payload = { ...form.value }
+    if (payload.site_type === 'china') payload.outstanding_threshold = 0
     if (editTarget.value) {
-      await store.updateAccount(editTarget.value.id, form.value)
+      await store.updateAccount(editTarget.value.id, payload)
       saveMessage.value = '账户已更新。'
     } else {
-      await store.createAccount(form.value)
+      await store.createAccount(payload)
       saveMessage.value = '账户已保存，实例和流量数据正在后台同步。'
     }
     showForm.value = false

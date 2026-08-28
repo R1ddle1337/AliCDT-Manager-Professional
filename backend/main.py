@@ -299,6 +299,8 @@ async def get_billing(account_id: int, user=Depends(get_current_user), db: Async
     acc = result.scalar_one_or_none()
     if not acc:
         raise HTTPException(status_code=404)
+    if acc.site_type == "china":
+        return {"balance": None, "bill": None, "errors": [], "disabled": True}
     client = AliyunClient(acc.access_key_id, acc.access_key_secret, acc.region_id, acc.site_type)
     # 余额和账单请求彼此独立，并发执行；某一项权限不足时仍返回另一项结果。
     balance_result, bill_result = await asyncio.gather(

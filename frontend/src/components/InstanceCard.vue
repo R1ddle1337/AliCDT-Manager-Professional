@@ -31,7 +31,7 @@
 
     <div class="mt-3 flex flex-wrap gap-2"><span v-if="account?.keep_alive" class="tag tag-blue">自动保活</span><span v-if="account?.auto_stop_time" class="tag tag-muted">{{ account.auto_stop_time }} 关机</span><span v-if="account?.auto_start_time" class="tag tag-muted">{{ account.auto_start_time }} 开机</span><span class="tag tag-muted">{{ account?.shutdown_mode === 'StopCharging' ? '节省停机' : '普通停机' }}</span></div>
 
-    <div class="billing-panel mt-4"><div class="flex items-center justify-between"><span class="panel-label">账单摘要</span><span v-if="billingLoading" class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-accent/30 border-t-accent"></span></div><div v-if="billingError" class="mt-2 text-xs leading-5 text-danger">{{ billingError }}</div><div v-if="!billingLoading && (billing?.balance || billing?.bill)" class="mt-3 grid grid-cols-2 gap-3"><div><span class="detail-label">账户余额</span><strong class="font-mono" :class="(billing?.balance?.available_amount ?? 0) < 1 ? 'text-danger' : 'text-success'">{{ billing?.balance?.symbol }}{{ billing?.balance?.available_amount ?? '—' }}</strong></div><div><span class="detail-label">本月待还</span><strong class="font-mono" :class="(billing?.bill?.total_outstanding ?? 0) > 0 ? 'text-warning-dark' : 'text-slate-700'">{{ billing?.bill?.symbol }}{{ billing?.bill?.total_outstanding ?? '—' }}</strong></div></div></div>
+    <div v-if="showBilling" class="billing-panel mt-4"><div class="flex items-center justify-between"><span class="panel-label">账单摘要</span><span v-if="billingLoading" class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-accent/30 border-t-accent"></span></div><div v-if="billingError" class="mt-2 text-xs leading-5 text-danger">{{ billingError }}</div><div v-if="!billingLoading && (billing?.balance || billing?.bill)" class="mt-3 grid grid-cols-2 gap-3"><div><span class="detail-label">账户余额</span><strong class="font-mono" :class="(billing?.balance?.available_amount ?? 0) < 1 ? 'text-danger' : 'text-success'">{{ billing?.balance?.symbol }}{{ billing?.balance?.available_amount ?? '—' }}</strong></div><div><span class="detail-label">本月待还</span><strong class="font-mono" :class="(billing?.bill?.total_outstanding ?? 0) > 0 ? 'text-warning-dark' : 'text-slate-700'">{{ billing?.bill?.symbol }}{{ billing?.bill?.total_outstanding ?? '—' }}</strong></div></div></div>
 
     <div class="mt-4 flex items-center justify-between border-t border-slate-100 pt-4 text-[11px] text-slate-400"><span class="truncate pr-2">{{ account?.name || '未知账户' }}</span><div class="flex items-center gap-2"><span v-if="instance.last_synced">同步于 {{ formatTime(instance.last_synced) }}</span><button type="button" @click="syncThis" :disabled="isSyncing" class="btn-ghost border border-slate-200 px-2 py-1 text-[10px]">{{ isSyncing ? '同步中' : '同步' }}</button></div></div>
 
@@ -56,6 +56,7 @@ const REGION_MAP = {
   'ap-northeast-1': '日本 · 东京', 'ap-northeast-2': '韩国 · 首尔', 'ap-south-1': '印度 · 孟买', 'us-west-1': '美国 · 硅谷', 'us-east-1': '美国 · 弗吉尼亚', 'eu-west-1': '英国 · 伦敦', 'eu-central-1': '德国 · 法兰克福', 'me-east-1': '阿联酋 · 迪拜',
 }
 const regionLabel = computed(() => REGION_MAP[props.instance?.region_id] || props.instance?.region_id || '')
+const showBilling = computed(() => props.account?.site_type !== 'china')
 const statusLabel = computed(() => ({ Running: '运行中', Stopped: '已停机' }[props.instance.status] || '状态未知'))
 const statusClass = computed(() => props.instance.status === 'Running' ? 'status-running' : props.instance.status === 'Stopped' ? 'status-stopped' : 'status-unknown')
 const trafficPct = computed(() => Number(props.instance.traffic_percent || 0))
@@ -68,7 +69,7 @@ async function handleStart() { if (isStarting.value) return; isStarting.value = 
 async function handleStop() { if (isStopping.value) return; isStopping.value = true; try { await store.controlInstance(props.instance.instance_id, 'stop') } catch (e) { alert('停止失败：' + (e.response?.data?.detail || e.message)) } finally { isStopping.value = false } }
 async function syncThis() { if (isSyncing.value) return; isSyncing.value = true; try { await store.syncSingleInstance(props.instance.instance_id) } catch (e) { alert('同步失败：' + (e.response?.data?.detail || e.message)) } finally { isSyncing.value = false } }
 async function loadBilling() { if (!props.account) return; billingLoading.value = true; billingError.value = ''; try { const result = await store.getBilling(props.account.id); billing.value = result; billingError.value = result.errors?.join('；') || '' } catch (e) { billingError.value = e.response?.data?.detail || '账单获取失败，请检查账户权限' } finally { billingLoading.value = false } }
-onMounted(loadBilling)
+onMounted(() => { if (showBilling.value) loadBilling() })
 function formatTime(t) { return t ? new Date(t + 'Z').toLocaleTimeString('zh-CN', { hour12: false }) : '' }
 </script>
 
