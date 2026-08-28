@@ -1,163 +1,101 @@
 <template>
-  <div class="p-6 space-y-6 fade-in">
-    <div class="flex items-center justify-between">
-      <h1 class="text-xl font-semibold text-text">账户管理</h1>
-      <button @click="openAdd" class="btn-primary flex items-center gap-2">
-        <span>＋</span> 添加账户
-      </button>
+  <div class="space-y-6 fade-in">
+    <div class="flex flex-wrap items-end justify-between gap-4">
+      <div>
+        <div class="eyebrow">WORKSPACE</div>
+        <h1 class="page-title">账户管理</h1>
+        <p class="page-subtitle">管理访问凭据、地域和自动化策略</p>
+      </div>
+      <button type="button" @click="openAdd" class="btn-primary">添加账户</button>
     </div>
 
-    <div class="space-y-3">
-      <div v-if="store.accounts.length === 0" class="card p-12 text-center text-text-muted text-sm">
-        暂无账户，点击右上角添加
-      </div>
+    <div v-if="saveMessage" class="notice notice-info">{{ saveMessage }}</div>
 
-      <div v-for="acc in store.accounts" :key="acc.id" class="card p-5">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-3">
-            <div class="w-9 h-9 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center text-sm">🔑</div>
-            <div>
-              <div class="font-medium text-text text-sm">{{ acc.name }}</div>
-              <div class="text-xs text-text-muted font-mono mt-0.5">{{ acc.access_key_id }}</div>
+    <div v-if="store.accounts.length === 0" class="card empty-state">
+      <div class="empty-mark">AC</div>
+      <div class="mt-4 font-semibold text-slate-800">还没有账户</div>
+      <p class="mt-1 text-sm text-text-muted">添加一个阿里云账户开始同步实例数据。</p>
+      <button type="button" @click="openAdd" class="btn-primary mt-5">添加第一个账户</button>
+    </div>
+
+    <div v-else class="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <article v-for="acc in store.accounts" :key="acc.id" class="card account-card">
+        <div class="flex items-start justify-between gap-4">
+          <div class="flex min-w-0 items-center gap-3">
+            <div class="account-mark">{{ initials(acc.name) }}</div>
+            <div class="min-w-0">
+              <h2 class="truncate font-semibold text-slate-800">{{ acc.name }}</h2>
+              <div class="mt-1 truncate font-mono text-xs text-slate-400">{{ acc.access_key_id }}</div>
             </div>
           </div>
-          <div class="flex items-center gap-2">
-            <span class="text-xs px-2 py-0.5 rounded-full bg-surface border border-border text-text-muted">{{ acc.region_id }}</span>
-            <span v-if="acc.keep_alive" class="text-xs px-2 py-0.5 rounded-full bg-accent/10 text-accent">保活</span>
-            <button @click="openEdit(acc)" class="btn-ghost text-xs px-2 py-1">编辑</button>
-            <button @click="confirmDelete(acc)" class="btn-danger text-xs px-2 py-1">删除</button>
-          </div>
+          <span class="region-badge">{{ acc.region_id }}</span>
         </div>
 
-        <div class="grid grid-cols-4 gap-3 mt-4 text-xs">
-          <div class="bg-surface rounded-lg px-3 py-2">
-            <div class="text-text-muted mb-0.5">流量上限</div>
-            <div class="text-text">{{ acc.traffic_limit_gb }} GB</div>
-          </div>
-          <div class="bg-surface rounded-lg px-3 py-2">
-            <div class="text-text-muted mb-0.5">流量熔断</div>
-            <div class="text-text">{{ acc.threshold_percent }}%</div>
-          </div>
-          <div class="bg-surface rounded-lg px-3 py-2">
-            <div class="text-text-muted mb-0.5">待还熔断</div>
-            <div class="text-text">{{ acc.outstanding_threshold > 0 ? acc.outstanding_threshold : '未启用' }}</div>
-          </div>
-          <div class="bg-surface rounded-lg px-3 py-2">
-            <div class="text-text-muted mb-0.5">停机模式</div>
-            <div class="text-text">{{ acc.shutdown_mode === 'StopCharging' ? '节省停机' : '普通停机' }}</div>
-          </div>
+        <div class="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div class="metric-box"><span>站点</span><strong>{{ acc.site_type === 'international' ? '国际站' : '中国站' }}</strong></div>
+          <div class="metric-box"><span>流量上限</span><strong>{{ acc.traffic_limit_gb }} GB</strong></div>
+          <div class="metric-box"><span>熔断阈值</span><strong>{{ acc.threshold_percent }}%</strong></div>
+          <div class="metric-box"><span>实例</span><strong>{{ acc.instance_id || '未指定' }}</strong></div>
         </div>
-      </div>
+
+        <div class="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4 text-xs">
+          <span class="tag" :class="acc.keep_alive ? 'tag-blue' : 'tag-muted'">{{ acc.keep_alive ? '自动保活' : '保活关闭' }}</span>
+          <span class="tag tag-muted">{{ acc.shutdown_mode === 'StopCharging' ? '节省停机' : '普通停机' }}</span>
+          <span v-if="acc.auto_stop_time" class="tag tag-muted">{{ acc.auto_stop_time }} 关机</span>
+          <span v-if="acc.auto_start_time" class="tag tag-muted">{{ acc.auto_start_time }} 开机</span>
+          <span class="ml-auto flex gap-1">
+            <button type="button" @click="openEdit(acc)" class="btn-ghost px-2.5 py-1.5 text-xs">编辑</button>
+            <button type="button" @click="confirmDelete(acc)" class="btn-danger px-2.5 py-1.5 text-xs">删除</button>
+          </span>
+        </div>
+      </article>
     </div>
 
     <Modal v-if="showForm" @close="showForm = false">
-      <div class="space-y-4 max-h-[80vh] overflow-y-auto pr-1">
-        <h2 class="font-semibold text-text">{{ editTarget ? '编辑账户' : '添加账户' }}</h2>
+      <form class="space-y-5" @submit.prevent="submit">
+        <div class="flex items-start justify-between">
+          <div>
+            <div class="eyebrow">ACCOUNT</div>
+            <h2 class="mt-1 text-lg font-bold text-slate-900">{{ editTarget ? '编辑账户' : '添加账户' }}</h2>
+          </div>
+          <button type="button" class="btn-ghost px-2 text-lg leading-none" aria-label="关闭" @click="showForm = false">×</button>
+        </div>
 
-        <div class="space-y-3">
-          <div>
-            <label class="text-xs text-text-muted mb-1 block">备注名 *</label>
-            <input v-model="form.name" class="input" placeholder="我的阿里云" />
-          </div>
-          <div>
-            <label class="text-xs text-text-muted mb-1 block">AccessKey ID *</label>
-            <input v-model="form.access_key_id" class="input" placeholder="LTAI5t..." />
-          </div>
-          <div>
-            <label class="text-xs text-text-muted mb-1 block">
-              AccessKey Secret {{ editTarget ? '（不修改请留空）' : '*' }}
-            </label>
-            <input v-model="form.access_key_secret" type="password" class="input" placeholder="••••••••" />
-          </div>
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="text-xs text-text-muted mb-1 block">地域 ID *</label>
-              <input v-model="form.region_id" class="input" placeholder="ap-southeast-1" />
-            </div>
-            <div>
-              <label class="text-xs text-text-muted mb-1 block">站点类型</label>
-              <select v-model="form.site_type" class="input">
-                <option value="international">国际站</option>
-                <option value="china">中国站</option>
-              </select>
-            </div>
-          </div>
-          <div>
-            <label class="text-xs text-text-muted mb-1 block">实例 ID（用于保活/定时任务）</label>
-            <input v-model="form.instance_id" class="input" placeholder="i-..." />
-          </div>
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="text-xs text-text-muted mb-1 block">流量上限 (GB)</label>
-              <input v-model.number="form.traffic_limit_gb" type="number" class="input" />
-            </div>
-            <div>
-              <label class="text-xs text-text-muted mb-1 block">流量熔断阈值 (%)</label>
-              <input v-model.number="form.threshold_percent" type="number" class="input" />
-            </div>
-          </div>
-          <div>
-            <label class="text-xs text-text-muted mb-1 block">待还金额熔断阈值（0表示不启用）</label>
-            <input v-model.number="form.outstanding_threshold" type="number" step="0.01" class="input" placeholder="例如 0.45" />
-            <div class="text-[11px] text-text-muted mt-1">当账户待还款金额达到此数值时自动停机</div>
-          </div>
-          <div>
-            <label class="text-xs text-text-muted mb-1 block">停机模式</label>
-            <select v-model="form.shutdown_mode" class="input">
-              <option value="StopCharging">节省停机（停止计费）</option>
-              <option value="KeepCharging">普通停机（继续计费）</option>
-            </select>
-          </div>
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div class="sm:col-span-2"><label class="field-label" for="account-name">备注名 <span class="text-danger">*</span></label><input id="account-name" v-model="form.name" class="input" placeholder="例如：生产环境" /></div>
+          <div><label class="field-label" for="access-key-id">AccessKey ID <span class="text-danger">*</span></label><input id="access-key-id" v-model="form.access_key_id" class="input" autocomplete="off" placeholder="LTAI..." /></div>
+          <div><label class="field-label" for="access-key-secret">AccessKey Secret <span v-if="!editTarget" class="text-danger">*</span></label><input id="access-key-secret" v-model="form.access_key_secret" type="password" class="input" autocomplete="new-password" :placeholder="editTarget ? '留空表示不修改' : '请输入密钥'" /></div>
+          <div><label class="field-label" for="region-id">地域 ID <span class="text-danger">*</span></label><input id="region-id" v-model="form.region_id" class="input" placeholder="ap-southeast-1" /></div>
+          <div><label class="field-label" for="site-type">站点类型</label><select id="site-type" v-model="form.site_type" class="input"><option value="international">国际站</option><option value="china">中国站</option></select></div>
+          <div class="sm:col-span-2"><label class="field-label" for="instance-id">实例 ID <span class="font-normal text-slate-400">（用于保活与定时任务，可选）</span></label><input id="instance-id" v-model="form.instance_id" class="input" placeholder="i-..." /></div>
+          <div><label class="field-label" for="traffic-limit">流量上限（GB）</label><input id="traffic-limit" v-model.number="form.traffic_limit_gb" type="number" min="0" class="input" /></div>
+          <div><label class="field-label" for="threshold">流量熔断阈值（%）</label><input id="threshold" v-model.number="form.threshold_percent" type="number" min="0" max="100" class="input" /></div>
+          <div class="sm:col-span-2"><label class="field-label" for="outstanding">待还金额熔断阈值 <span class="font-normal text-slate-400">（0 表示不启用）</span></label><input id="outstanding" v-model.number="form.outstanding_threshold" type="number" min="0" step="0.01" class="input" /></div>
+          <div class="sm:col-span-2"><label class="field-label" for="shutdown-mode">停机模式</label><select id="shutdown-mode" v-model="form.shutdown_mode" class="input"><option value="StopCharging">节省停机（停止计费）</option><option value="KeepCharging">普通停机（继续计费）</option></select></div>
+        </div>
 
-          <label class="flex items-center gap-2 cursor-pointer">
-            <div class="relative">
-              <input type="checkbox" v-model="form.keep_alive" class="sr-only" />
-              <div :class="form.keep_alive ? 'bg-accent' : 'bg-border'" class="w-9 h-5 rounded-full transition-colors"></div>
-              <div :class="form.keep_alive ? 'translate-x-4' : 'translate-x-0.5'" class="absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform"></div>
-            </div>
-            <span class="text-sm text-text">开启抢占式保活</span>
+        <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <label class="flex cursor-pointer items-center justify-between gap-3">
+            <div><div class="text-sm font-semibold text-slate-700">自动保活</div><div class="mt-1 text-xs text-slate-500">实例被回收后自动尝试重新启动</div></div>
+            <span class="toggle" :class="form.keep_alive ? 'toggle-on' : ''"><input v-model="form.keep_alive" type="checkbox" class="sr-only" /><span></span></span>
           </label>
-
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="text-xs text-text-muted mb-1 block">定时关机</label>
-              <input v-model="form.auto_stop_time" type="time" class="input" />
-            </div>
-            <div>
-              <label class="text-xs text-text-muted mb-1 block">定时开机</label>
-              <input v-model="form.auto_start_time" type="time" class="input" />
-            </div>
-          </div>
-          <div class="text-xs text-text-muted bg-surface rounded-lg px-3 py-2">
-            💡 开启保活时，定时关机期间保活会自动暂停，定时开机后恢复
-          </div>
         </div>
 
-        <div v-if="formError" class="text-xs text-danger bg-danger/10 border border-danger/20 rounded-lg px-3 py-2">
-          {{ formError }}
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div><label class="field-label" for="auto-stop">定时关机</label><input id="auto-stop" v-model="form.auto_stop_time" type="time" class="input" /></div>
+          <div><label class="field-label" for="auto-start">定时开机</label><input id="auto-start" v-model="form.auto_start_time" type="time" class="input" /></div>
         </div>
 
-        <div class="flex gap-3 pt-2">
-          <button @click="showForm = false" class="btn-ghost flex-1">取消</button>
-          <button @click="submit" :disabled="submitting" class="btn-primary flex-1">
-            {{ submitting ? '保存中...' : '保存' }}
-          </button>
-        </div>
-      </div>
+        <div v-if="formError" class="notice notice-error">{{ formError }}</div>
+        <div class="flex gap-3 border-t border-slate-100 pt-4"><button type="button" @click="showForm = false" class="btn-ghost flex-1 border border-slate-200">取消</button><button type="submit" :disabled="submitting" class="btn-primary flex-1"><span v-if="submitting" class="mr-2 inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/35 border-t-white"></span>{{ submitting ? '保存中...' : '保存账户' }}</button></div>
+      </form>
     </Modal>
 
     <Modal v-if="deleteTarget" @close="deleteTarget = null">
-      <div class="text-center space-y-4">
-        <div class="text-4xl">🗑️</div>
-        <div class="font-semibold">确认删除账户？</div>
-        <div class="text-sm text-text-muted">{{ deleteTarget.name }}</div>
-        <div class="text-xs text-warning bg-warning/10 border border-warning/20 rounded-lg px-3 py-2">
-          删除账户后，关联的实例记录也会一并清除
-        </div>
-        <div class="flex gap-3">
-          <button @click="deleteTarget = null" class="btn-ghost flex-1">取消</button>
-          <button @click="doDelete" class="btn-danger flex-1">确认删除</button>
-        </div>
+      <div class="space-y-5">
+        <div><div class="eyebrow text-danger">REMOVE ACCOUNT</div><h2 class="mt-1 text-lg font-bold text-slate-900">确认删除账户？</h2><p class="mt-2 text-sm text-slate-500">{{ deleteTarget.name }}</p></div>
+        <div class="notice notice-error">删除账户后，关联的实例记录也会被清除。该操作不可撤销。</div>
+        <div class="flex gap-3"><button type="button" @click="deleteTarget = null" class="btn-ghost flex-1 border border-slate-200">取消</button><button type="button" @click="doDelete" class="btn-danger flex-1">确认删除</button></div>
       </div>
     </Modal>
   </div>
@@ -174,19 +112,16 @@ const editTarget = ref(null)
 const deleteTarget = ref(null)
 const submitting = ref(false)
 const formError = ref('')
+const saveMessage = ref('')
 
-const defaultForm = () => ({
-  name: '', access_key_id: '', access_key_secret: '',
-  region_id: 'ap-southeast-1', site_type: 'international',
-  instance_id: '', traffic_limit_gb: 200, threshold_percent: 95,
-  outstanding_threshold: 0,
-  shutdown_mode: 'StopCharging', keep_alive: false,
-  auto_stop_time: null, auto_start_time: null,
-})
-
+const defaultForm = () => ({ name: '', access_key_id: '', access_key_secret: '', region_id: 'ap-southeast-1', site_type: 'international', instance_id: '', traffic_limit_gb: 200, threshold_percent: 95, outstanding_threshold: 0, shutdown_mode: 'StopCharging', keep_alive: false, auto_stop_time: null, auto_start_time: null })
 const form = ref(defaultForm())
 
 onMounted(() => store.fetchAccounts())
+
+function initials(name) {
+  return (name || 'AC').trim().slice(0, 2).toUpperCase()
+}
 
 function openAdd() {
   editTarget.value = null
@@ -204,24 +139,21 @@ function openEdit(acc) {
 
 async function submit() {
   formError.value = ''
-  if (!form.value.name || !form.value.access_key_id) {
-    formError.value = '请填写必填项'
-    return
-  }
-  if (!editTarget.value && !form.value.access_key_secret) {
-    formError.value = '请填写 AccessKey Secret'
-    return
-  }
+  if (!form.value.name || !form.value.access_key_id || !form.value.region_id) { formError.value = '请填写备注名、AccessKey ID 和地域 ID'; return }
+  if (!editTarget.value && !form.value.access_key_secret) { formError.value = '请填写 AccessKey Secret'; return }
   submitting.value = true
   try {
     if (editTarget.value) {
       await store.updateAccount(editTarget.value.id, form.value)
+      saveMessage.value = '账户已更新。'
     } else {
       await store.createAccount(form.value)
+      saveMessage.value = '账户已保存，实例和流量数据正在后台同步。'
     }
     showForm.value = false
+    window.setTimeout(() => { saveMessage.value = '' }, 8000)
   } catch (e) {
-    formError.value = e.response?.data?.detail || '保存失败'
+    formError.value = e.response?.data?.detail || '保存失败，请检查网络和账户参数'
   } finally {
     submitting.value = false
   }
@@ -229,7 +161,29 @@ async function submit() {
 
 function confirmDelete(acc) { deleteTarget.value = acc }
 async function doDelete() {
-  await store.deleteAccount(deleteTarget.value.id)
-  deleteTarget.value = null
+  try { await store.deleteAccount(deleteTarget.value.id); deleteTarget.value = null } catch (e) { saveMessage.value = e.response?.data?.detail || '删除失败' }
 }
 </script>
+
+<style scoped>
+.eyebrow { color: #2563eb; font-size: 10px; font-weight: 800; letter-spacing: .16em; }
+.page-title { margin-top: 6px; color: #172033; font-size: 26px; font-weight: 750; letter-spacing: -.03em; }
+.page-subtitle { margin-top: 6px; color: #64748b; font-size: 13px; }
+.empty-state { padding: 56px 24px; text-align: center; }
+.empty-mark, .account-mark { display: inline-flex; align-items: center; justify-content: center; border-radius: 11px; background: #eff6ff; color: #2563eb; font-size: 11px; font-weight: 800; letter-spacing: .06em; }
+.empty-mark { width: 48px; height: 48px; margin: 0 auto; }
+.account-card { padding: 20px; transition: border-color .16s ease, box-shadow .16s ease; }
+.account-card:hover { border-color: #bfdbfe; box-shadow: 0 10px 28px rgba(30, 64, 175, .08); }
+.account-mark { width: 40px; height: 40px; }
+.region-badge { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: 999px; background: #f8fafc; padding: 5px 9px; color: #64748b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+.metric-box { min-width: 0; border-radius: 8px; background: #f8fafc; padding: 9px 10px; }
+.metric-box span { display: block; color: #94a3b8; font-size: 10px; }
+.metric-box strong { display: block; overflow: hidden; margin-top: 4px; color: #334155; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 650; }
+.tag { border-radius: 999px; padding: 4px 8px; font-size: 10px; font-weight: 650; }
+.tag-blue { background: #eff6ff; color: #2563eb; }
+.tag-muted { background: #f1f5f9; color: #64748b; }
+.toggle { position: relative; display: inline-flex; width: 40px; height: 23px; flex: 0 0 auto; border-radius: 999px; background: #cbd5e1; transition: background .15s ease; }
+.toggle span { position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(15,23,42,.2); transition: transform .15s ease; }
+.toggle-on { background: #2563eb; }
+.toggle-on span { transform: translateX(17px); }
+</style>

@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -103,7 +104,7 @@ async def traffic_check():
                         )
                         await db.commit()
                     await send_tg_notify(
-                        f"🚨 <b>熔断触发</b>\n"
+                        f"<b>熔断触发</b>\n"
                         f"账户: {account.name}\n"
                         f"原因: {trigger_reason}\n"
                         f"动作: 自动停机（{account.shutdown_mode}）"
@@ -152,10 +153,10 @@ async def keep_alive_check():
                             )
                             await db.commit()
                         await send_tg_notify(
-                            f"✅ <b>库存恢复</b>\n账户: {account.name}\n实例已成功重新启动"
+                            f"<b>库存恢复</b>\n账户: {account.name}\n实例已成功重新启动"
                         )
                     await send_tg_notify(
-                        f"⚡ <b>保活触发</b>\n"
+                        f"<b>保活触发</b>\n"
                         f"账户: {account.name}\n"
                         f"实例: {account.instance_id}\n"
                         f"检测到停机，已自动拉起"
@@ -172,7 +173,7 @@ async def keep_alive_check():
                                 )
                                 await db.commit()
                             await send_tg_notify(
-                                f"⚠️ <b>保活失败：库存不足</b>\n"
+                                f"<b>保活失败：库存不足</b>\n"
                                 f"账户: {account.name}\n"
                                 f"实例: {account.instance_id}\n"
                                 f"该可用区抢占式实例已售罄，系统将持续重试，后续进展会在每日流量汇报中提示"
@@ -207,7 +208,7 @@ async def scheduled_power():
                     )
                     await db.commit()
                 await add_important_log("scheduler", f"[{account.name}] 定时关机执行 {now}")
-                await send_tg_notify(f"⏰ <b>定时关机</b>\n账户: {account.name}\n时间: {now}")
+                await send_tg_notify(f"<b>定时关机</b>\n账户: {account.name}\n时间: {now}")
 
             if account.auto_start_time and account.auto_start_time == now:
                 await client.start_instance(account.instance_id)
@@ -217,7 +218,7 @@ async def scheduled_power():
                     )
                     await db.commit()
                 await add_important_log("scheduler", f"[{account.name}] 定时开机执行 {now}")
-                await send_tg_notify(f"⏰ <b>定时开机</b>\n账户: {account.name}\n时间: {now}")
+                await send_tg_notify(f"<b>定时开机</b>\n账户: {account.name}\n时间: {now}")
 
         except Exception as e:
             async with AsyncSessionLocal() as db:
@@ -225,36 +226,84 @@ async def scheduled_power():
                 await db.commit()
 
 
+async def sync_account(account_id: int, include_traffic: bool = False):
+    """同步一个账户。
+
+    添加账户时通过后台任务调用此函数，避免把阿里云网络请求放在创建接口的
+    请求链路中。初始化同步时实例和流量请求可以并发执行，进一步缩短等待时间。
+    """
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Account).where(Account.id == account_id, Account.enabled == True))
+        account = result.scalar_one_or_none()
+
+    if not account:
+        return
+
+    client = AliyunClient(
+        account.access_key_id, account.access_key_secret,
+        account.region_id, account.site_type,
+    )
+    try:
+        if include_traffic:
+            instances_result, traffic_result = await asyncio.gather(
+                client.get_instances(),
+                client.get_cdt_traffic(),
+                return_exceptions=True,
+            )
+        else:
+            instances_result = await client.get_instances()
+            traffic_result = None
+
+        if isinstance(instances_result, Exception):
+            raise instances_result
+
+        synced_at = datetime.utcnow()
+        async with AsyncSessionLocal() as db:
+            for inst in instances_result:
+                result = await db.execute(
+                    select(Instance).where(Instance.instance_id == inst["instance_id"])
+                )
+                existing = result.scalar_one_or_none()
+                if existing:
+                    existing.account_id = account.id
+                    existing.instance_name = inst["instance_name"]
+                    existing.region_id = inst["region_id"]
+                    existing.status = inst["status"]
+                    existing.public_ip = inst["public_ip"]
+                    existing.instance_type = inst["instance_type"]
+                    existing.is_spot = inst["is_spot"]
+                    existing.bandwidth_mbps = inst["bandwidth_mbps"]
+                    existing.last_synced = synced_at
+                else:
+                    db.add(Instance(account_id=account.id, last_synced=synced_at, **inst))
+
+            if include_traffic and not isinstance(traffic_result, Exception):
+                limit = account.traffic_limit_gb or 200.0
+                traffic_gb = float(traffic_result or 0.0)
+                percent = round(traffic_gb / limit * 100, 2)
+                await db.execute(
+                    update(Instance)
+                    .where(Instance.account_id == account.id)
+                    .values(
+                        traffic_used_gb=traffic_gb,
+                        traffic_percent=percent,
+                        last_synced=synced_at,
+                    )
+                )
+            await db.commit()
+    except Exception as error:
+        # 后台任务不能把异常传播到事件循环；记录下来便于在日志页定位凭证、
+        # 权限或网络问题。
+        await add_log("warning", "system", f"[{account.name}] 账户同步失败: {error}")
+
+
 async def sync_instances():
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Account).where(Account.enabled == True))
-        accounts = result.scalars().all()
+        result = await db.execute(select(Account.id).where(Account.enabled == True))
+        account_ids = [row[0] for row in result.all()]
 
-    for account in accounts:
-        try:
-            client = AliyunClient(
-                account.access_key_id, account.access_key_secret,
-                account.region_id, account.site_type,
-            )
-            instances = await client.get_instances()
-            async with AsyncSessionLocal() as db:
-                for inst in instances:
-                    result = await db.execute(
-                        select(Instance).where(Instance.instance_id == inst["instance_id"])
-                    )
-                    existing = result.scalar_one_or_none()
-                    if existing:
-                        existing.status = inst["status"]
-                        existing.public_ip = inst["public_ip"]
-                        existing.is_spot = inst["is_spot"]
-                        existing.bandwidth_mbps = inst["bandwidth_mbps"]
-                        existing.last_synced = datetime.utcnow()
-                    else:
-                        new_inst = Instance(account_id=account.id, **inst)
-                        db.add(new_inst)
-                await db.commit()
-        except Exception:
-            pass
+    # 不同地域的阿里云请求互不依赖，并发执行可避免多个账户串行等待。
+    await asyncio.gather(*(sync_account(account_id) for account_id in account_ids))
 
 
 async def monthly_reset():
@@ -286,7 +335,7 @@ async def monthly_reset():
 
     if restarted:
         await send_tg_notify(
-            f"🔄 <b>每月流量重置</b>\n"
+            f"<b>每月流量重置</b>\n"
             f"新的一个月开始，以下账户已自动恢复并启动：\n"
             + "\n".join(f"  • {name}" for name in restarted)
         )
@@ -303,27 +352,27 @@ async def _do_daily_report():
     instance_map = {i.account_id: i for i in instances}
 
     lines = [
-        "📊 <b>每日流量汇报</b>",
-        f"🕛 {datetime.now().strftime('%Y-%m-%d %H:%M')} 北京时间",
+        "<b>每日流量汇报</b>",
+        f"{datetime.now().strftime('%Y-%m-%d %H:%M')} 北京时间",
         "━━━━━━━━━━━━━━━━",
     ]
 
     for account in accounts:
         inst = instance_map.get(account.id)
-        status_icon = "🟢" if (inst and inst.status == "Running") else "🔴"
+        status_icon = "运行中" if (inst and inst.status == "Running") else "已停机"
 
         if inst:
             bar_filled = int((inst.traffic_percent or 0) / 10)
             bar = "█" * bar_filled + "░" * (10 - bar_filled)
             display_name = inst.instance_name or account.name
             block = (
-                f"{status_icon} <b>{display_name}</b>\n"
-                f"  📡 流量: {inst.traffic_used_gb:.2f}GB / {account.traffic_limit_gb}GB\n"
+                f"[{status_icon}] <b>{display_name}</b>\n"
+                f"  流量: {inst.traffic_used_gb:.2f}GB / {account.traffic_limit_gb}GB\n"
                 f"  [{bar}] {inst.traffic_percent:.1f}%  熔断: {account.threshold_percent}%\n"
-                f"  🖥 状态: {inst.status}  地域: {inst.region_id or '—'}"
+                f"  状态: {inst.status}  地域: {inst.region_id or '—'}"
             )
             if account.keep_alive and account.nostock_notified:
-                block += "\n  ⚠️ 库存不足，保活持续重试中"
+                block += "\n  库存不足，保活持续重试中"
             try:
                 client = AliyunClient(
                     account.access_key_id, account.access_key_secret,
@@ -334,11 +383,11 @@ async def _do_daily_report():
                 symbol = balance.get("symbol", "$") if balance else "$"
                 avail = balance.get("available_amount", 0) if balance else 0
                 outst = bill.get("total_outstanding", 0) if bill else 0
-                block += f"\n  💰 余额: {symbol}{avail}  待还: {symbol}{outst}"
+                block += f"\n  余额: {symbol}{avail}  待还: {symbol}{outst}"
             except Exception:
-                block += "\n  💰 账单获取失败"
+                block += "\n  账单获取失败"
         else:
-            block = f"⚪ <b>{account.name}</b>\n  暂无实例数据"
+            block = f"[无实例] <b>{account.name}</b>\n  暂无实例数据"
 
         lines.append(block)
         lines.append("━━━━━━━━━━━━━━━━")

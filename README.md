@@ -1,15 +1,17 @@
-# 🛡️ AliCDT-Manager
+# AliCDT Manager Professional
+
+这是基于 AliCDT-Manager 的界面与性能改进版本，提供更清晰的浅色控制台，并将账户初始化同步改为后台任务。
 
 **阿里云 CDT 流量监控与自动化管理控制台**
 
-[![Docker](https://img.shields.io/badge/Docker-ghcr.io-blue?logo=docker)](https://github.com/lillinlin/AliCDT-Manager/pkgs/container/alicdt-manager)
-[![GitHub](https://img.shields.io/badge/GitHub-lillinlin-black?logo=github)](https://github.com/lillinlin/AliCDT-Manager)
+[![Docker](https://img.shields.io/badge/Docker-ghcr.io-blue?logo=docker)](https://github.com/R1ddle1337/AliCDT-Manager-Professional/pkgs/container/alicdt-manager-professional)
+[![GitHub](https://img.shields.io/badge/GitHub-R1ddle1337-black?logo=github)](https://github.com/R1ddle1337/AliCDT-Manager-Professional)
 
 </div>
 
 ---
 
-## ✨ 功能
+## 功能
 - 支持 AMD64 / ARM64 架构
 - 多账户聚合监控，CDT 流量实时展示
 - 流量熔断：超阈值自动停机
@@ -21,8 +23,10 @@
 - Telegram 告警通知
 - 账单统计（待还款金额，国际站准确）
 - 每1~2分钟自动同步数据，有特殊情况可点击立即同步
+- 添加账户先保存后同步，避免等待阿里云接口返回
+- 控制台采用浅色专业界面，去除 Emoji 图标和文案
 
-## 🔑 所需 RAM 权限
+## 所需 RAM 权限
 https://ram.console.alibabacloud.com/users
 ```bash
 AliyunECSFullAccess
@@ -34,10 +38,10 @@ AliyunCDTFullAccess
 AliyunBSSFullAccess
 ```
 
-## 🚀 一键安装
+## 一键安装
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/lillinlin/AliCDT-Manager/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/R1ddle1337/AliCDT-Manager-Professional/main/install.sh)
 ```
 
 docker-compose.yml 默认端口为
@@ -46,7 +50,7 @@ ports:
 在安装完成需要配置 Nginx 反代通过域名访问
 
 
-## 🛠 手动部署
+## 手动部署
 
 ```bash
 mkdir -p /app/alicdt-manager/data && cd /app/alicdt-manager
@@ -55,13 +59,13 @@ mkdir -p /app/alicdt-manager/data && cd /app/alicdt-manager
 echo "SECRET_KEY=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 48)" > .env
 ```
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lillinlin/AliCDT-Manager/main/docker-compose.yml -o docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/R1ddle1337/AliCDT-Manager-Professional/main/docker-compose.yml -o docker-compose.yml
 ```
 ```bash
 docker compose up -d
 ```
 
-## ✨ 界面截图
+## 界面截图
 ![1](READMEimages/1.png)  
 ![2](READMEimages/2.png)  
 ![3](READMEimages/3.png)  
@@ -111,7 +115,7 @@ server {
 
 ---
 
-## 📋 常用命令
+## 常用命令
 
 ```bash
 # 重启服务

@@ -1,20 +1,21 @@
+# Build the Vue console in the image so a fresh clone is enough to deploy.
+FROM node:24-alpine AS frontend-build
+
+WORKDIR /src/frontend
+COPY frontend/package*.json ./
+RUN npm install --no-audit --no-fund
+COPY frontend/ ./
+RUN npm run build
+
 FROM python:3.12-slim
 
 WORKDIR /app
-
-# 安装后端依赖
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 复制后端代码
 COPY backend/ ./backend/
-
-# 复制前端构建产物（由 CI 在 Actions 中提前构建）
-COPY frontend/dist/ ./frontend/dist/
-
-# 数据目录
+COPY --from=frontend-build /src/frontend/dist/ ./frontend/dist/
 RUN mkdir -p /app/data
 
 WORKDIR /app/backend
-
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

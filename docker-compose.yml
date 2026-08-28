@@ -1,7 +1,7 @@
 services:
   alicdt-manager:
-    image: ghcr.io/lillinlin/alicdt-manager:latest
-    container_name: alicdt-manager
+    image: ghcr.io/r1ddle1337/alicdt-manager-professional:latest
+    container_name: alicdt-manager-professional
     restart: always
     ports:
       - "127.0.0.1:8000:8000"

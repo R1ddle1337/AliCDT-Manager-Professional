@@ -52,9 +52,12 @@ export const useStore = defineStore('main', () => {
 
   async function syncAll() {
     loading.value = true
-    await api.post('/instances/sync')
-    await fetchInstances()
-    loading.value = false
+    try {
+      await api.post('/instances/sync')
+      await fetchInstances()
+    } finally {
+      loading.value = false
+    }
   }
 
   async function syncSingleInstance(instanceId) {
@@ -91,9 +94,10 @@ export const useStore = defineStore('main', () => {
   }
 
   async function createAccount(payload) {
-    await api.post('/accounts', payload)
+    const { data } = await api.post('/accounts', payload)
     await fetchAccounts()
     await fetchInstances()
+    return data
   }
 
   async function updateAccount(id, payload) {

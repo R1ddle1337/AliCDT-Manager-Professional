@@ -1,3 +1,4 @@
+import asyncio
 import os
 import httpx
 from datetime import datetime, timedelta
@@ -14,7 +15,7 @@ from passlib.context import CryptContext
 
 from models.database import init_db, get_db, Account, Instance, Log, Settings
 from core.aliyun import AliyunClient
-from scheduler.jobs import start_scheduler, sync_instances, traffic_check, add_important_log
+from scheduler.jobs import start_scheduler, sync_instances, traffic_check, add_important_log, sync_account
 
 SECRET_KEY = os.environ.get("SECRET_KEY", "fallback-change-me")
 ALGORITHM = "HS256"
@@ -155,9 +156,10 @@ async def create_account(data: AccountCreate, user=Depends(get_current_user), db
     db.add(acc)
     await db.commit()
     await db.refresh(acc)
-    await sync_instances()
-    await traffic_check()
-    return {"id": acc.id, "message": "账户已添加"}
+    # 阿里云接口可能需要数十秒，不能阻塞保存账户的请求。
+    # 先返回让界面立即可用，再在后台完成实例和流量初始化同步。
+    asyncio.create_task(sync_account(acc.id, include_traffic=True))
+    return {"id": acc.id, "message": "账户已添加，正在后台同步"}
 
 
 @app.put("/api/accounts/{account_id}")
@@ -333,7 +335,7 @@ async def test_tg(user=Depends(get_current_user), db: AsyncSession = Depends(get
         async with httpx.AsyncClient(timeout=10) as c:
             r = await c.post(
                 f"https://api.telegram.org/bot{token_row.value}/sendMessage",
-                json={"chat_id": chat_row.value, "text": "✅ AliCDT Manager 测试消息发送成功"}
+                json={"chat_id": chat_row.value, "text": "AliCDT Manager 测试消息发送成功"}
             )
             data = r.json()
             if not data.get("ok"):

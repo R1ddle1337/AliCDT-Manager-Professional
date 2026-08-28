@@ -28,10 +28,10 @@ mkdir -p "$INSTALL_DIR/data"
 cd "$INSTALL_DIR"
 
 # 生成随机密钥
-echo "SECRET_KEY=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 48)" > .env
+    echo "SECRET_KEY=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 48)" > .env
 
 # 下载 docker-compose.yml
-curl -fsSL https://raw.githubusercontent.com/lillinlin/AliCDT-Manager/main/docker-compose.yml -o docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/R1ddle1337/AliCDT-Manager-Professional/main/docker-compose.yml -o docker-compose.yml
 
 # 替换端口（如果用户改了默认值）
 if [ "$PORT" != "8000" ]; then
