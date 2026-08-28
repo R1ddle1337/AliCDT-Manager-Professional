@@ -1,0 +1,8 @@
+.git
+.github
+data
+*.db
+*.pyc
+__pycache__
+frontend/node_modules
+frontend/dist

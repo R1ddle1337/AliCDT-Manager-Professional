@@ -294,7 +294,10 @@ async def sync_account(account_id: int, include_traffic: bool = False):
     except Exception as error:
         # 后台任务不能把异常传播到事件循环；记录下来便于在日志页定位凭证、
         # 权限或网络问题。
-        await add_log("warning", "system", f"[{account.name}] 账户同步失败: {error}")
+        try:
+            await add_log("warning", "system", f"[{account.name}] 账户同步失败: {error}")
+        except Exception:
+            pass
 
 
 async def sync_instances():
