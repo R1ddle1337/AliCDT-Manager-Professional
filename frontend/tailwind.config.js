@@ -21,7 +21,7 @@ export default {
         'text-muted': '#64748b',
       },
       fontFamily: {
-        sans: ['-apple-system', 'BlinkMacSystemFont', 'SF Pro Display', 'Inter', 'sans-serif'],
+        sans: ['Noto Sans CJK SC', 'Source Han Sans SC', 'HarmonyOS Sans SC', 'PingFang SC', 'Microsoft YaHei UI', 'system-ui', 'sans-serif'],
         mono: ['SF Mono', 'JetBrains Mono', 'monospace'],
       },
       borderRadius: {

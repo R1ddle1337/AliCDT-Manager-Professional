@@ -16,7 +16,7 @@ body {
   margin: 0;
   background: #f4f7fb;
   color: #172033;
-  font-family: Inter, "PingFang SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: "Noto Sans CJK SC", "Source Han Sans SC", "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei UI", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -109,7 +109,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .status-dot-success { background: #16a34a; box-shadow: 0 0 0 3px #dcfce7; }
 
 .app-main { min-width: 0; min-height: 100vh; flex: 1 1 auto; margin-left: 256px; }
-.page-container { width: min(1180px, 100%); margin: 0 auto; padding: 32px 34px 48px; }
+.page-container { width: min(1440px, 100%); margin: 0 auto; padding: 28px 30px 42px; }
 .mobile-header { display: none; }
 
 .card {
