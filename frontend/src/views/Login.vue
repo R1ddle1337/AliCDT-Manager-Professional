@@ -108,5 +108,5 @@ async function submit() {
 .login-layout { display: grid; grid-template-columns: 1fr 400px; align-items: center; gap: 80px; }
 .login-intro { padding: 24px 0; }
 .login-card { box-shadow: 0 22px 55px rgba(15, 23, 42, 0.09); }
-@media (max-width: 767px) { .login-layout { display: block; } }
+@media (max-width: 900px) { .login-layout { display: block; max-width: 400px; }.login-intro { display: none; } }
 </style>
