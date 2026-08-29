@@ -280,7 +280,7 @@ async def sync_account(account_id: int, include_traffic: bool = False):
 
             if include_traffic and not isinstance(traffic_result, Exception):
                 limit = account.traffic_limit_gb or 200.0
-                traffic_gb = float(traffic_result or 0.0)
+                traffic_gb = float(traffic_result)
                 percent = round(traffic_gb / limit * 100, 2)
                 await db.execute(
                     update(Instance)
@@ -291,6 +291,9 @@ async def sync_account(account_id: int, include_traffic: bool = False):
                         last_synced=synced_at,
                     )
                 )
+            elif include_traffic and isinstance(traffic_result, Exception):
+                # 实例同步可以成功而流量接口暂时失败；保留各实例原有流量值。
+                await add_log("warning", "traffic", f"[{account.name}] 流量同步失败，已保留上次有效数据: {traffic_result}")
             await db.commit()
     except Exception as error:
         # 后台任务不能把异常传播到事件循环；记录下来便于在日志页定位凭证、

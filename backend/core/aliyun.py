@@ -139,13 +139,16 @@ class AliyunClient:
             "ListCdtInternetTraffic", self.key_id, self.key_secret,
             "2021-08-13", {}
         )
-        try:
-            data = await _post("cdt.aliyuncs.com", params)
-            traffics = data.get("TrafficDetails", [])
-            total_bytes = sum(float(t.get("Traffic", 0)) for t in traffics)
-            return round(total_bytes / (1024 ** 3), 3)
-        except Exception:
-            return 0.0
+        # 网络、签名或权限错误必须向上抛出，调用方才能保留数据库中的
+        # 上一次有效值；不能把一次失败伪装成真实的 0 GB。
+        data = await _post("cdt.aliyuncs.com", params)
+        if "TrafficDetails" not in data:
+            raise ValueError("CDT API response missing TrafficDetails")
+        traffics = data.get("TrafficDetails") or []
+        if not isinstance(traffics, list):
+            raise ValueError("CDT API response has invalid TrafficDetails")
+        total_bytes = sum(_number(t.get("Traffic")) for t in traffics if isinstance(t, dict))
+        return round(total_bytes / (1024 ** 3), 3)
 
     async def get_instances(self) -> list:
         params = _build_params(
