@@ -259,6 +259,7 @@ async def sync_account(account_id: int, include_traffic: bool = False):
             raise instances_result
 
         synced_at = datetime.utcnow()
+        traffic_error = None
         async with AsyncSessionLocal() as db:
             for inst in instances_result:
                 result = await db.execute(
@@ -293,8 +294,10 @@ async def sync_account(account_id: int, include_traffic: bool = False):
                 )
             elif include_traffic and isinstance(traffic_result, Exception):
                 # 实例同步可以成功而流量接口暂时失败；保留各实例原有流量值。
-                await add_log("warning", "traffic", f"[{account.name}] 流量同步失败，已保留上次有效数据: {traffic_result}")
+                traffic_error = traffic_result
             await db.commit()
+        if traffic_error:
+            await add_log("warning", "traffic", f"[{account.name}] 流量同步失败，已保留上次有效数据: {traffic_error}")
     except Exception as error:
         # 后台任务不能把异常传播到事件循环；记录下来便于在日志页定位凭证、
         # 权限或网络问题。
