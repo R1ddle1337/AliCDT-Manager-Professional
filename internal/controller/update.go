@@ -16,12 +16,12 @@ const (
 )
 
 type UpdateStatus struct {
-	Status       string    `json:"status"`
-	Message      string    `json:"message,omitempty"`
-	RequestID    string    `json:"request_id,omitempty"`
-	TargetCommit string    `json:"target_commit,omitempty"`
-	StartedAt    time.Time `json:"started_at,omitempty"`
-	FinishedAt   time.Time `json:"finished_at,omitempty"`
+	Status       string     `json:"status"`
+	Message      string     `json:"message,omitempty"`
+	RequestID    string     `json:"request_id,omitempty"`
+	TargetCommit string     `json:"target_commit,omitempty"`
+	StartedAt    *time.Time `json:"started_at,omitempty"`
+	FinishedAt   *time.Time `json:"finished_at,omitempty"`
 }
 
 type updateRequest struct {
@@ -49,7 +49,7 @@ func (s *Server) requestSystemUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, errors.New("宿主机更新服务不可用，请检查 systemd 更新单元"))
 		return
 	}
-	status = UpdateStatus{Status: "pending", Message: "更新请求已提交，宿主机正在准备更新", RequestID: request.RequestID, StartedAt: request.RequestedAt}
+	status = UpdateStatus{Status: "pending", Message: "更新请求已提交，宿主机正在准备更新", RequestID: request.RequestID, StartedAt: &request.RequestedAt}
 	writeJSON(w, http.StatusAccepted, status)
 }
 

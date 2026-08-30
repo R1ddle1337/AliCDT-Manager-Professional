@@ -125,6 +125,7 @@ function logout() {
 }
 
 async function refreshUpdateStatus() {
+  if (isLogin.value || !localStorage.getItem('token')) return
   try {
     updateState.value = await relayStore.fetchUpdateStatus()
   } catch (_) {
