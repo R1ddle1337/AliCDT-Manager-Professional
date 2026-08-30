@@ -144,7 +144,7 @@
           <div><label class="field-label">AccessKey Secret</label><input v-model="form.access_key_secret" type="password" class="input" :required="!editTarget" :placeholder="editTarget ? '留空表示不修改' : ''" autocomplete="new-password" /></div>
           <div><label class="field-label">地域 ID</label><input v-model.trim="form.region_id" class="input" placeholder="cn-hongkong" required /></div>
           <div><label class="field-label">站点</label><select v-model="form.site_type" class="input"><option value="china">中国站</option><option value="international">国际站</option></select></div>
-          <div><label class="field-label">绑定实例 ID</label><input v-model.trim="form.instance_id" class="input" list="cloud-instance-options" placeholder="用于保活与定时任务" /></div>
+          <div class="field-wide"><label class="field-label">绑定实例 ID <span class="font-normal text-slate-400">（保活与停机保护共用）</span></label><input v-model.trim="form.instance_id" class="input" list="cloud-instance-options" placeholder="可选，输入 i-..." /><datalist id="cloud-instance-options"><option v-for="instance in store.cloud.instances" :key="instance.instance_id" :value="instance.instance_id">{{ instance.instance_name || instance.instance_id }}</option></datalist></div>
           <div><label class="field-label">CDT 流量限额（GB）</label><input v-model.number="form.traffic_limit_gb" type="number" min="1" class="input" required /></div>
           <div><label class="field-label">保护阈值（%）</label><input v-model.number="form.threshold_percent" type="number" min="1" max="100" class="input" required /></div>
           <div class="field-wide">
@@ -162,14 +162,7 @@
           </div>
           <div><label class="field-label">定时关机</label><input v-model="form.auto_stop_time" type="time" class="input" /></div>
           <div><label class="field-label">定时开机</label><input v-model="form.auto_start_time" type="time" class="input" /></div>
-          <div v-if="form.protection_mode === 'stop_ecs'" class="field-wide">
-            <label class="field-label">保护目标实例 ID</label>
-            <input v-model.trim="form.instance_id" class="input" list="cloud-instance-options" placeholder="i-xxxxxxxxxxxxxxxxx" required />
-            <datalist id="cloud-instance-options">
-              <option v-for="instance in store.cloud.instances" :key="instance.instance_id" :value="instance.instance_id">{{ instance.instance_name || instance.instance_id }}</option>
-            </datalist>
-            <p class="field-hint">仅在流量超过阈值后发送一次停机指令；失败会在下次有效同步时重试。</p>
-          </div>
+          <p v-if="form.protection_mode === 'stop_ecs'" class="field-wide field-hint">流量超过阈值后，会对上面绑定的实例发送一次停机指令；失败会在下次有效同步时重试。</p>
         </div>
         <div v-if="formError" class="notice notice-error">{{ formError }}</div>
         <div class="form-actions">
