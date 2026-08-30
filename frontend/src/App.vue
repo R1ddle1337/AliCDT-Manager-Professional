@@ -11,7 +11,6 @@
     <div v-else class="min-h-screen lg:flex">
       <aside class="app-sidebar">
         <div class="sidebar-brand">
-          <div class="brand-mark">AC</div>
           <div>
             <div class="brand-name">AliCDT Console</div>
             <div class="brand-caption">云资源与中转控制台</div>
@@ -60,7 +59,6 @@
           </div>
         </header>
         <header class="mobile-header">
-          <div class="brand-mark brand-mark-small">AC</div>
           <span class="font-semibold">AliCDT Console</span>
         </header>
         <div class="page-container">
