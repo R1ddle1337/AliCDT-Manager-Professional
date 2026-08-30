@@ -271,6 +271,7 @@ type DNSManagedRecord struct {
 	Value            string     `json:"value"`
 	TTL              int        `json:"ttl"`
 	Enabled          bool       `json:"enabled"`
+	DesiredEnabled   bool       `json:"desired_enabled,omitempty"`
 	ProviderRecordID string     `json:"provider_record_id,omitempty"`
 	Status           string     `json:"status"`
 	LastError        string     `json:"last_error,omitempty"`
@@ -280,12 +281,13 @@ type DNSManagedRecord struct {
 }
 
 type CreateDNSRecordRequest struct {
-	ProviderID string `json:"provider_id"`
-	Name       string `json:"name"`
-	Type       string `json:"type"`
-	Value      string `json:"value"`
-	TTL        int    `json:"ttl"`
-	Enabled    *bool  `json:"enabled,omitempty"`
+	ProviderID  string `json:"provider_id"`
+	RelayNodeID string `json:"relay_node_id"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Value       string `json:"value"`
+	TTL         int    `json:"ttl"`
+	Enabled     *bool  `json:"enabled,omitempty"`
 }
 
 type RelayPool struct {
@@ -532,6 +534,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			value TEXT NOT NULL,
 			ttl INTEGER NOT NULL DEFAULT 60,
 			enabled INTEGER NOT NULL DEFAULT 1,
+			desired_enabled INTEGER NOT NULL DEFAULT 1,
 			provider_record_id TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'pending',
 			last_error TEXT NOT NULL DEFAULT '',
@@ -633,6 +636,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	for _, column := range []struct{ name, definition string }{
 		{name: "pool_id", definition: "TEXT"},
 		{name: "relay_node_id", definition: "TEXT"},
+		{name: "desired_enabled", definition: "INTEGER NOT NULL DEFAULT 1"},
 	} {
 		if err := s.ensureColumn(ctx, "dns_managed_records", column.name, column.definition); err != nil {
 			return err

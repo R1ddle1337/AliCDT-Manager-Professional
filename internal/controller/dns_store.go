@@ -237,7 +237,7 @@ func (s *Store) MarkDNSProviderTest(ctx context.Context, id string, testErr erro
 }
 
 func (s *Store) ListDNSRecords(ctx context.Context, providerID string) ([]DNSManagedRecord, error) {
-	query := `SELECT id,provider_id,COALESCE(pool_id,''),COALESCE(relay_node_id,''),name,type,value,ttl,enabled,provider_record_id,status,last_error,last_synced_at,created_at,updated_at FROM dns_managed_records`
+	query := `SELECT id,provider_id,COALESCE(pool_id,''),COALESCE(relay_node_id,''),name,type,value,ttl,enabled,desired_enabled,provider_record_id,status,last_error,last_synced_at,created_at,updated_at FROM dns_managed_records`
 	args := []interface{}{}
 	if strings.TrimSpace(providerID) != "" {
 		query += ` WHERE provider_id=?`
@@ -252,12 +252,13 @@ func (s *Store) ListDNSRecords(ctx context.Context, providerID string) ([]DNSMan
 	result := make([]DNSManagedRecord, 0)
 	for rows.Next() {
 		var item DNSManagedRecord
-		var enabled int
+		var enabled, desiredEnabled int
 		var synced, created, updated sql.NullString
-		if err := rows.Scan(&item.ID, &item.ProviderID, &item.PoolID, &item.RelayNodeID, &item.Name, &item.Type, &item.Value, &item.TTL, &enabled, &item.ProviderRecordID, &item.Status, &item.LastError, &synced, &created, &updated); err != nil {
+		if err := rows.Scan(&item.ID, &item.ProviderID, &item.PoolID, &item.RelayNodeID, &item.Name, &item.Type, &item.Value, &item.TTL, &enabled, &desiredEnabled, &item.ProviderRecordID, &item.Status, &item.LastError, &synced, &created, &updated); err != nil {
 			return nil, err
 		}
 		item.Enabled = enabled != 0
+		item.DesiredEnabled = desiredEnabled != 0
 		item.CreatedAt = parseDatabaseTime(created.String)
 		item.UpdatedAt = parseDatabaseTime(updated.String)
 		if synced.Valid {
@@ -279,7 +280,23 @@ func (s *Store) CreateDNSRecord(ctx context.Context, request CreateDNSRecordRequ
 	if request.TTL <= 0 {
 		request.TTL = 60
 	}
-	if request.ProviderID == "" || request.Name == "" || request.Value == "" {
+	request.RelayNodeID = strings.TrimSpace(request.RelayNodeID)
+	if request.ProviderID == "" || request.Name == "" {
+		return DNSManagedRecord{}, errors.New("provider and record name are required")
+	}
+	if request.RelayNodeID != "" {
+		if !oneOf(request.Type, "A", "AAAA") {
+			return DNSManagedRecord{}, errors.New("a relay agent source requires an A or AAAA record")
+		}
+		var publicIP string
+		if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(public_ip,'') FROM relay_nodes WHERE id=?`, request.RelayNodeID).Scan(&publicIP); err != nil {
+			return DNSManagedRecord{}, errors.New("relay node not found")
+		}
+		request.Value = strings.TrimSpace(publicIP)
+		if request.Value == "" {
+			return DNSManagedRecord{}, errors.New("selected relay node has not reported a public IP")
+		}
+	} else if request.Value == "" {
 		return DNSManagedRecord{}, errors.New("provider, record name and value are required")
 	}
 	if !oneOf(request.Type, "A", "AAAA", "CNAME", "TXT") {
@@ -294,7 +311,7 @@ func (s *Store) CreateDNSRecord(ctx context.Context, request CreateDNSRecordRequ
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	id := randomID("record")
-	_, err := s.db.ExecContext(ctx, `INSERT INTO dns_managed_records(id,provider_id,name,type,value,ttl,enabled,status,last_error,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'pending','',?,?)`, id, request.ProviderID, request.Name, request.Type, request.Value, request.TTL, boolInt(enabled), now, now)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO dns_managed_records(id,provider_id,relay_node_id,name,type,value,ttl,enabled,desired_enabled,status,last_error,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,'pending','',?,?)`, id, request.ProviderID, nullIfEmpty(request.RelayNodeID), request.Name, request.Type, request.Value, request.TTL, boolInt(enabled), boolInt(enabled), now, now)
 	if err != nil {
 		return DNSManagedRecord{}, err
 	}
@@ -309,6 +326,7 @@ func (s *Store) UpdateDNSRecord(ctx context.Context, id string, request CreateDN
 	if oldPoolID != "" {
 		return DNSManagedRecord{}, errors.New("pool-managed DNS records must be changed from the relay pool")
 	}
+	request.RelayNodeID = strings.TrimSpace(request.RelayNodeID)
 	request.Name = strings.TrimSpace(request.Name)
 	request.Type = strings.ToUpper(strings.TrimSpace(request.Type))
 	request.Value = strings.TrimSpace(request.Value)
@@ -320,6 +338,21 @@ func (s *Store) UpdateDNSRecord(ctx context.Context, id string, request CreateDN
 	}
 	if request.ProviderID == "" {
 		return DNSManagedRecord{}, errors.New("provider is required")
+	}
+	if request.RelayNodeID != "" {
+		if !oneOf(request.Type, "A", "AAAA") {
+			return DNSManagedRecord{}, errors.New("a relay agent source requires an A or AAAA record")
+		}
+		var publicIP string
+		if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(public_ip,'') FROM relay_nodes WHERE id=?`, request.RelayNodeID).Scan(&publicIP); err != nil {
+			return DNSManagedRecord{}, errors.New("relay node not found")
+		}
+		request.Value = strings.TrimSpace(publicIP)
+		if request.Value == "" {
+			return DNSManagedRecord{}, errors.New("selected relay node has not reported a public IP")
+		}
+	} else if request.Value == "" {
+		return DNSManagedRecord{}, errors.New("record value is required when no relay agent is selected")
 	}
 	if !oneOf(request.Type, "A", "AAAA", "CNAME", "TXT") {
 		return DNSManagedRecord{}, errors.New("supported DNS record types are A, AAAA, CNAME and TXT")
@@ -336,7 +369,7 @@ func (s *Store) UpdateDNSRecord(ctx context.Context, id string, request CreateDN
 	if oldProviderID == request.ProviderID {
 		_ = s.db.QueryRowContext(ctx, `SELECT provider_record_id FROM dns_managed_records WHERE id=?`, id).Scan(&providerRecordID)
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE dns_managed_records SET provider_id=?,name=?,type=?,value=?,ttl=?,enabled=?,provider_record_id=?,status='pending',last_error='',updated_at=? WHERE id=?`, request.ProviderID, request.Name, request.Type, request.Value, request.TTL, boolInt(enabled), providerRecordID, now, id)
+	result, err := s.db.ExecContext(ctx, `UPDATE dns_managed_records SET provider_id=?,relay_node_id=?,name=?,type=?,value=?,ttl=?,enabled=?,desired_enabled=?,provider_record_id=?,status='pending',last_error='',updated_at=? WHERE id=?`, request.ProviderID, nullIfEmpty(request.RelayNodeID), request.Name, request.Type, request.Value, request.TTL, boolInt(enabled), boolInt(enabled), providerRecordID, now, id)
 	if err != nil {
 		return DNSManagedRecord{}, err
 	}

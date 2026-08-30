@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/R1ddle1337/AliCDT-Manager-Professional/internal/protocol"
 )
 
 func TestDNSProviderAndManagedRecordLifecycle(t *testing.T) {
@@ -86,5 +89,57 @@ func TestDNSProviderAPIValidatesCredentialsBeforePersisting(t *testing.T) {
 	requestJSON(t, httpServer.URL+"/api/v2/dns/providers", "admin", request, http.StatusCreated, &created)
 	if created.ID == "" || !created.TokenConfigured {
 		t.Fatalf("valid provider was not persisted: %+v", created)
+	}
+}
+
+func TestDNSRecordCanFollowRelayAgentPublicIP(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	provider, err := store.CreateDNSProvider(context.Background(), CreateDNSProviderRequest{Name: "cf", Type: "cloudflare", Zone: "example.com", APIToken: "token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateEnrollmentToken(context.Background(), "dns-agent", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	agent, err := store.EnrollAgent(context.Background(), protocol.AgentEnrollmentRequest{Token: "dns-agent", NodeName: "relay", PublicIP: "203.0.113.9", Architecture: "amd64", OS: "linux"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.CreateDNSRecord(context.Background(), CreateDNSRecordRequest{ProviderID: provider.ID, RelayNodeID: agent.AgentID, Name: "relay", Type: "A", TTL: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Value != "203.0.113.9" || record.RelayNodeID != agent.AgentID || !record.Enabled {
+		t.Fatalf("agent source was not resolved: %+v", record)
+	}
+	if _, err := store.db.Exec(`UPDATE relay_nodes SET public_ip='203.0.113.10',status='online' WHERE id=?`, agent.AgentID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RefreshRelayAgentDNSRecords(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	record, err = store.GetDNSRecord(context.Background(), record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Value != "203.0.113.10" {
+		t.Fatalf("agent IP was not refreshed: %+v", record)
+	}
+	if _, err := store.db.Exec(`UPDATE relay_nodes SET status='offline' WHERE id=?`, agent.AgentID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RefreshRelayAgentDNSRecords(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	record, err = store.GetDNSRecord(context.Background(), record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Enabled || !record.DesiredEnabled {
+		t.Fatalf("offline agent record state is incorrect: %+v", record)
 	}
 }

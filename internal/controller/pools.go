@@ -452,7 +452,7 @@ func (s *Store) RefreshRelayPoolDNS(ctx context.Context, poolID string) error {
 			if member.PublicIP == "" {
 				continue
 			}
-			_, err := s.db.ExecContext(ctx, `INSERT INTO dns_managed_records(id,provider_id,pool_id,relay_node_id,name,type,value,ttl,enabled,status,last_error,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,'pending','',?,?)`, randomID("record"), pool.DNSProviderID, pool.ID, member.RelayNodeID, recordName, "A", member.PublicIP, pool.DNSTTL, boolInt(enabled), time.Now().UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano))
+			_, err := s.db.ExecContext(ctx, `INSERT INTO dns_managed_records(id,provider_id,pool_id,relay_node_id,name,type,value,ttl,enabled,desired_enabled,status,last_error,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,'pending','',?,?)`, randomID("record"), pool.DNSProviderID, pool.ID, member.RelayNodeID, recordName, "A", member.PublicIP, pool.DNSTTL, boolInt(enabled), 1, time.Now().UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano))
 			if err != nil {
 				return err
 			}

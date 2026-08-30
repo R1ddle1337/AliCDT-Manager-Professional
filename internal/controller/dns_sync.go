@@ -98,6 +98,38 @@ func (s *Store) SyncAllDNS(ctx context.Context) (map[string]dnsprovider.SyncResu
 	return result, firstErr
 }
 
+// RefreshRelayAgentDNSRecords derives the value and active state of records
+// explicitly attached to a CDT Relay Agent. Pool records are handled by the
+// pool reconciler and are intentionally skipped here.
+func (s *Store) RefreshRelayAgentDNSRecords(ctx context.Context) error {
+	records, err := s.ListDNSRecords(ctx, "")
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		if record.PoolID != "" || record.RelayNodeID == "" {
+			continue
+		}
+		var publicIP, status string
+		var draining int
+		err := s.db.QueryRowContext(ctx, `SELECT COALESCE(rn.public_ip,''),CASE WHEN COALESCE(a.protection_triggered,0)=1 AND COALESCE(a.protection_mode,'alert_only')='drain_relay' THEN 'draining' ELSE rn.status END,CASE WHEN COALESCE(a.protection_triggered,0)=1 AND COALESCE(a.protection_mode,'alert_only')='drain_relay' THEN 1 ELSE 0 END FROM relay_nodes rn LEFT JOIN accounts a ON a.id=rn.cloud_account_id WHERE rn.id=?`, record.RelayNodeID).Scan(&publicIP, &status, &draining)
+		if err != nil {
+			continue
+		}
+		active := record.DesiredEnabled && strings.EqualFold(status, "online") && draining == 0 && validRelayIP(publicIP)
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		if publicIP != "" && publicIP != record.Value {
+			_, err = s.db.ExecContext(ctx, `UPDATE dns_managed_records SET value=?,enabled=?,status=CASE WHEN enabled<>? OR value<>? THEN 'pending' ELSE status END,last_error='',updated_at=? WHERE id=?`, publicIP, boolInt(active), boolInt(active), publicIP, now, record.ID)
+		} else {
+			_, err = s.db.ExecContext(ctx, `UPDATE dns_managed_records SET enabled=?,status=CASE WHEN enabled<>? THEN 'pending' ELSE status END,last_error='',updated_at=? WHERE id=?`, boolInt(active), boolInt(active), now, record.ID)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) TestDNSProvider(ctx context.Context, id string) error {
 	provider, err := s.DNSProvider(ctx, id)
 	if err != nil {
@@ -129,6 +161,7 @@ func (s *Server) RunDNSScheduler(ctx context.Context, interval time.Duration) {
 		interval = time.Minute
 	}
 	initialCtx, initialCancel := context.WithTimeout(ctx, 45*time.Second)
+	_ = s.store.RefreshRelayAgentDNSRecords(initialCtx)
 	_ = s.store.RefreshAllRelayPoolDNS(initialCtx)
 	_, _ = s.store.SyncAllDNS(initialCtx)
 	initialCancel()
@@ -140,6 +173,7 @@ func (s *Server) RunDNSScheduler(ctx context.Context, interval time.Duration) {
 			return
 		case <-ticker.C:
 			syncCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+			_ = s.store.RefreshRelayAgentDNSRecords(syncCtx)
 			_ = s.store.RefreshAllRelayPoolDNS(syncCtx)
 			_, _ = s.store.SyncAllDNS(syncCtx)
 			cancel()
