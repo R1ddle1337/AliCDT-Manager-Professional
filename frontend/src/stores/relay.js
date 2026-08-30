@@ -21,6 +21,8 @@ export const useRelayStore = defineStore('relay-platform', () => {
   const landingNodes = ref([])
   const services = ref([])
   const events = ref([])
+  const dnsProviders = ref([])
+  const dnsRecords = ref([])
   const cloud = ref({ accounts: [], instances: [], traffic: [] })
   const loading = ref(false)
   const updateStatus = ref({ status: 'idle', message: '暂无更新任务' })
@@ -51,6 +53,68 @@ export const useRelayStore = defineStore('relay-platform', () => {
     events.value = data || []
   }
 
+  async function fetchDNSProviders() {
+    const { data } = await api.get('/dns/providers')
+    dnsProviders.value = data || []
+  }
+
+  async function fetchDNSRecords(providerId = '') {
+    const { data } = await api.get('/dns/records', { params: providerId ? { provider_id: providerId } : {} })
+    dnsRecords.value = data || []
+  }
+
+  async function createDNSProvider(payload) {
+    const { data } = await api.post('/dns/providers', payload)
+    await fetchDNSProviders()
+    return data
+  }
+
+  async function updateDNSProvider(id, payload) {
+    const { data } = await api.put(`/dns/providers/${id}`, payload)
+    await fetchDNSProviders()
+    return data
+  }
+
+  async function deleteDNSProvider(id) {
+    await api.delete(`/dns/providers/${id}`)
+    await Promise.all([fetchDNSProviders(), fetchDNSRecords()])
+  }
+
+  async function testDNSProvider(id) {
+    const { data } = await api.post(`/dns/providers/${id}/test`)
+    await fetchDNSProviders()
+    return data
+  }
+
+  async function syncDNSProvider(id) {
+    const { data } = await api.post(`/dns/providers/${id}/sync`)
+    await Promise.all([fetchDNSProviders(), fetchDNSRecords()])
+    return data
+  }
+
+  async function syncAllDNS() {
+    const { data } = await api.post('/dns/sync')
+    await Promise.all([fetchDNSProviders(), fetchDNSRecords()])
+    return data
+  }
+
+  async function createDNSRecord(payload) {
+    const { data } = await api.post('/dns/records', payload)
+    await fetchDNSRecords()
+    return data
+  }
+
+  async function updateDNSRecord(id, payload) {
+    const { data } = await api.put(`/dns/records/${id}`, payload)
+    await fetchDNSRecords()
+    return data
+  }
+
+  async function deleteDNSRecord(id) {
+    await api.delete(`/dns/records/${id}`)
+    await fetchDNSRecords()
+  }
+
   async function fetchCloud() {
     const { data } = await api.get('/cloud/overview')
     cloud.value = data || { accounts: [], instances: [], traffic: [] }
@@ -59,7 +123,7 @@ export const useRelayStore = defineStore('relay-platform', () => {
   async function fetchAll() {
     loading.value = true
     try {
-      await Promise.all([fetchRelayNodes(), fetchLandingNodes(), fetchServices(), fetchEvents(), fetchCloud()])
+      await Promise.all([fetchRelayNodes(), fetchLandingNodes(), fetchServices(), fetchEvents(), fetchDNSProviders(), fetchDNSRecords(), fetchCloud()])
     } finally {
       loading.value = false
     }
@@ -150,10 +214,12 @@ export const useRelayStore = defineStore('relay-platform', () => {
   }
 
   return {
-    relayNodes, landingNodes, services, events, cloud, loading, updateStatus,
+    relayNodes, landingNodes, services, events, dnsProviders, dnsRecords, cloud, loading, updateStatus,
     login, fetchRelayNodes, fetchLandingNodes, fetchServices, fetchEvents, fetchCloud, fetchAll,
     createEnrollmentToken, createLandingNode, updateLandingNode, deleteLandingNode, fetchLandingRelayLinks,
     createService, updateService, deleteService,
+    fetchDNSProviders, fetchDNSRecords, createDNSProvider, updateDNSProvider, deleteDNSProvider,
+    testDNSProvider, syncDNSProvider, syncAllDNS, createDNSRecord, updateDNSRecord, deleteDNSRecord,
     syncCloud, createCloudAccount, updateCloudAccount, deleteCloudAccount, controlCloudInstance,
     fetchUpdateStatus, requestUpdate,
   }

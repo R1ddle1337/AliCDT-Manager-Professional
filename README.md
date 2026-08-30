@@ -30,6 +30,7 @@
 - 落地节点支持粘贴完整分享链接，自动生成仅替换中转 IP/端口的节点配置
 - 控制台采用浅色专业界面，去除 Emoji 图标和文案
 - 国内站暂不启用余额与账单功能，国际站账单功能保持可用
+- DNS 入口托管抽象层：支持阿里云 DNS 与 Cloudflare，多 A 记录自动同步与健康排空
 
 ## 所需 RAM 权限
 https://ram.console.alibabacloud.com/users

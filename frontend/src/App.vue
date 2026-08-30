@@ -97,6 +97,7 @@ const navItems = [
   { path: '/relay-services', code: 'L4', label: '转发服务' },
   { path: '/logs', code: 'LOG', label: '系统日志' },
   { path: '/settings', code: 'SET', label: '系统设置' },
+  { path: '/dns', code: 'DNS', label: 'DNS 入口' },
 ]
 
 const activeIndex = computed(() => {

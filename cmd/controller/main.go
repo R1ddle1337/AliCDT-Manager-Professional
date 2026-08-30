@@ -24,6 +24,7 @@ func main() {
 	updateRequestFile := flag.String("update-request-file", env("CDT_UPDATE_REQUEST_FILE", "/app/data/update.request"), "host update request marker")
 	updateStatusFile := flag.String("update-status-file", env("CDT_UPDATE_STATUS_FILE", "/app/data/update.status.json"), "host update status file")
 	cloudSyncInterval := flag.Duration("cloud-sync-interval", 2*time.Minute, "Aliyun ECS/CDT synchronization interval")
+	dnsSyncInterval := flag.Duration("dns-sync-interval", time.Minute, "managed DNS synchronization interval")
 	flag.Parse()
 
 	store, err := controller.OpenStore(*database)
@@ -49,6 +50,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go server.RunCloudScheduler(ctx, *cloudSyncInterval)
+	go server.RunDNSScheduler(ctx, *dnsSyncInterval)
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

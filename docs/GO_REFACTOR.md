@@ -165,6 +165,13 @@ The same workflow pushes the multi-architecture controller image to
 - `POST /api/v2/cloud/instances/{id}/start`
 - `POST /api/v2/cloud/instances/{id}/stop`
 - `GET /api/v2/landing-nodes/{id}/relay-links`
+- `GET|POST /api/v2/dns/providers`
+- `PUT|DELETE /api/v2/dns/providers/{id}`
+- `POST /api/v2/dns/providers/{id}/test`
+- `POST /api/v2/dns/providers/{id}/sync`
+- `GET|POST /api/v2/dns/records`
+- `PUT|DELETE /api/v2/dns/records/{id}`
+- `POST /api/v2/dns/sync`
 
 Landing nodes accept complete `vless://`, `ss://`/SS2022, `vmess://`,
 `trojan://`, `hysteria2://` and `tuic://` links. The generated relay link
@@ -178,6 +185,16 @@ The original console paths remain available for existing clients:
 
 The controller also serves the Vue SPA and the root SSH installer at
 `/agent/install.sh` when built with `Dockerfile.controller`.
+
+DNS management uses a provider-neutral reconciliation layer. The first
+release supports Aliyun DNS (AccessKey ID/Secret) and Cloudflare (scoped API
+Token). A provider stores only its own credentials; API responses expose
+configuration flags rather than secrets. Managed records are declared in the
+console and are reconciled every minute or on demand. Reconciliation updates
+or creates only those declared records and never performs a broad zone delete.
+Use a separate hostname such as `panel.example.com` for the console and
+`relay.example.com` for a multi-IP relay entry. Add one A record per healthy
+CDT Relay and keep TTL around 30--60 seconds.
 
 Admin APIs require `Authorization: Bearer $CDT_ADMIN_TOKEN`. Agent APIs use the
 per-node secret returned during one-time enrollment.

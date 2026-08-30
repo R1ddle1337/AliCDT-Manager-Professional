@@ -230,6 +230,61 @@ type CreateServiceTarget struct {
 	Enabled       *bool  `json:"enabled,omitempty"`
 }
 
+type DNSProvider struct {
+	ID               string     `json:"id"`
+	Name             string     `json:"name"`
+	Type             string     `json:"type"`
+	Zone             string     `json:"zone"`
+	ZoneID           string     `json:"zone_id,omitempty"`
+	Endpoint         string     `json:"endpoint,omitempty"`
+	AccessKeyID      string     `json:"access_key_id,omitempty"`
+	SecretConfigured bool       `json:"secret_configured"`
+	TokenConfigured  bool       `json:"token_configured"`
+	Enabled          bool       `json:"enabled"`
+	LastTestAt       *time.Time `json:"last_test_at,omitempty"`
+	LastError        string     `json:"last_error,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+}
+
+type CreateDNSProviderRequest struct {
+	Name            string `json:"name"`
+	Type            string `json:"type"`
+	Zone            string `json:"zone"`
+	ZoneID          string `json:"zone_id"`
+	Endpoint        string `json:"endpoint"`
+	AccessKeyID     string `json:"access_key_id"`
+	AccessKeySecret string `json:"access_key_secret"`
+	APIToken        string `json:"api_token"`
+	APIEmail        string `json:"api_email"`
+	Enabled         *bool  `json:"enabled,omitempty"`
+}
+
+type DNSManagedRecord struct {
+	ID               string     `json:"id"`
+	ProviderID       string     `json:"provider_id"`
+	Name             string     `json:"name"`
+	Type             string     `json:"type"`
+	Value            string     `json:"value"`
+	TTL              int        `json:"ttl"`
+	Enabled          bool       `json:"enabled"`
+	ProviderRecordID string     `json:"provider_record_id,omitempty"`
+	Status           string     `json:"status"`
+	LastError        string     `json:"last_error,omitempty"`
+	LastSyncedAt     *time.Time `json:"last_synced_at,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+}
+
+type CreateDNSRecordRequest struct {
+	ProviderID string `json:"provider_id"`
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	Value      string `json:"value"`
+	TTL        int    `json:"ttl"`
+	Enabled    *bool  `json:"enabled,omitempty"`
+}
+
 func OpenStore(path string) (*Store, error) {
 	if path == "" {
 		path = "/app/data/guard.db"
@@ -393,6 +448,39 @@ func (s *Store) migrate(ctx context.Context) error {
 			message TEXT NOT NULL,
 			created_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS dns_providers (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			type TEXT NOT NULL,
+			zone TEXT NOT NULL,
+			zone_id TEXT NOT NULL DEFAULT '',
+			endpoint TEXT NOT NULL DEFAULT '',
+			access_key_id TEXT NOT NULL DEFAULT '',
+			access_key_secret TEXT NOT NULL DEFAULT '',
+			api_token TEXT NOT NULL DEFAULT '',
+			api_email TEXT NOT NULL DEFAULT '',
+			enabled INTEGER NOT NULL DEFAULT 1,
+			last_test_at TEXT,
+			last_error TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS dns_managed_records (
+			id TEXT PRIMARY KEY,
+			provider_id TEXT NOT NULL REFERENCES dns_providers(id) ON DELETE CASCADE,
+			name TEXT NOT NULL,
+			type TEXT NOT NULL DEFAULT 'A',
+			value TEXT NOT NULL,
+			ttl INTEGER NOT NULL DEFAULT 60,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			provider_record_id TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'pending',
+			last_error TEXT NOT NULL DEFAULT '',
+			last_synced_at TEXT,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			UNIQUE(provider_id,name,type,value)
+		)`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
@@ -435,6 +523,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		if err := s.ensureColumn(ctx, "accounts", column.name, column.definition); err != nil {
 			return err
 		}
+	}
+	if err := s.ensureColumn(ctx, "dns_providers", "zone_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
 	}
 	// The Python version stored account-level CDT usage on every instance row.
 	// Seed only clearly valid, positive legacy values. An absent snapshot is
