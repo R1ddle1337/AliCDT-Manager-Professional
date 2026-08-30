@@ -809,6 +809,9 @@ func (s *Store) CreateLandingNode(ctx context.Context, request CreateLandingNode
 		}
 		if request.Name == "" {
 			request.Name = parsed.Name
+			if request.Name == "" {
+				request.Name = defaultNodeName(parsed)
+			}
 		}
 		request.Address, request.Port, request.Network, request.Protocol = parsed.Address, parsed.Port, parsed.Network, parsed.Protocol
 	}
@@ -836,7 +839,7 @@ func (s *Store) ListLandingNodes(ctx context.Context) ([]LandingNode, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var nodes []LandingNode
+	nodes := make([]LandingNode, 0)
 	for rows.Next() {
 		var node LandingNode
 		var enabled int
@@ -864,6 +867,9 @@ func (s *Store) UpdateLandingNode(ctx context.Context, id string, request Create
 		}
 		if request.Name == "" {
 			request.Name = parsed.Name
+			if request.Name == "" {
+				request.Name = defaultNodeName(parsed)
+			}
 		}
 		request.Address, request.Port, request.Network, request.Protocol = parsed.Address, parsed.Port, parsed.Network, parsed.Protocol
 	}

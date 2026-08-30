@@ -116,6 +116,13 @@ func parseNodeLink(raw string) (parsedNodeLink, error) {
 	return parsedNodeLink{Protocol: scheme, Address: address, Port: port, Network: network, Name: fragmentName(u.Fragment)}, nil
 }
 
+func defaultNodeName(node parsedNodeLink) string {
+	if node.Protocol == "" || node.Address == "" || node.Port <= 0 {
+		return "落地节点"
+	}
+	return fmt.Sprintf("%s · %s:%d", strings.ToUpper(node.Protocol), node.Address, node.Port)
+}
+
 func parseSSLink(raw string) (parsedNodeLink, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
