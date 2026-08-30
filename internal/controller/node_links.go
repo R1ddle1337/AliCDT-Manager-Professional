@@ -23,6 +23,8 @@ type parsedNodeLink struct {
 
 type relayLink struct {
 	ServiceID     string `json:"service_id"`
+	PoolID        string `json:"pool_id,omitempty"`
+	LandingNodeID string `json:"landing_node_id,omitempty"`
 	ServiceName   string `json:"service_name"`
 	RelayNodeID   string `json:"relay_node_id"`
 	RelayNodeName string `json:"relay_node_name"`
@@ -45,12 +47,11 @@ func (s *Store) LandingRelayLinks(ctx context.Context, landingID string) ([]rela
 		FROM relay_services rs JOIN service_targets st ON st.service_id=rs.id
 		JOIN relay_nodes rn ON rn.id=rs.relay_node_id
 		JOIN landing_nodes ln ON ln.id=st.landing_node_id
-		WHERE st.landing_node_id=? AND st.enabled=1 AND ln.enabled=1 AND rs.enabled=1
+		WHERE st.landing_node_id=? AND st.enabled=1 AND ln.enabled=1 AND rs.enabled=1 AND rs.pool_id IS NULL
 		ORDER BY rs.listen_port,rs.created_at`, landingID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	links := make([]relayLink, 0)
 	for rows.Next() {
 		var link relayLink
@@ -83,7 +84,72 @@ func (s *Store) LandingRelayLinks(ctx context.Context, landingID string) ([]rela
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	pools, err := s.RelayPoolLinks(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	for _, link := range pools {
+		if link.LandingNodeID == landingID {
+			links = append(links, link)
+		}
+	}
 	return links, nil
+}
+
+// RelayPoolLinks returns one logical link per landing target. Unlike a
+// concrete service link, the host is the pool hostname and DNS can resolve it
+// to any healthy CDT Relay member.
+func (s *Store) RelayPoolLinks(ctx context.Context, poolID string) ([]relayLink, error) {
+	pools, err := s.ListRelayPools(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]relayLink, 0)
+	for _, pool := range pools {
+		if poolID != "" && pool.ID != poolID {
+			continue
+		}
+		if !pool.Enabled {
+			continue
+		}
+		available := false
+		for _, member := range pool.Members {
+			if pool.Enabled && member.Enabled && strings.EqualFold(member.Status, "online") {
+				available = true
+				break
+			}
+		}
+		for _, target := range pool.Targets {
+			if !target.Enabled {
+				continue
+			}
+			var shareURI string
+			if err := s.db.QueryRowContext(ctx, `SELECT share_uri FROM landing_nodes WHERE id=?`, target.LandingNodeID).Scan(&shareURI); err != nil {
+				return nil, err
+			}
+			link := relayLink{PoolID: pool.ID, LandingNodeID: target.LandingNodeID, ServiceName: pool.Name, RelayNodeName: "入口池", Host: pool.Hostname, Port: pool.ListenPort, Available: available}
+			if strings.TrimSpace(shareURI) == "" {
+				link.Message = "落地节点没有完整分享链接"
+				result = append(result, link)
+				continue
+			}
+			generated, err := replaceNodeEndpoint(shareURI, pool.Hostname, pool.ListenPort)
+			if err != nil {
+				link.Message = "节点链接无法生成中转版本: " + err.Error()
+				result = append(result, link)
+				continue
+			}
+			link.URI = generated
+			if !available {
+				link.Message = "入口池当前没有在线 Relay，链接将在成员上线后生效"
+			}
+			result = append(result, link)
+		}
+	}
+	return result, nil
 }
 
 func parseNodeLink(raw string) (parsedNodeLink, error) {

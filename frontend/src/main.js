@@ -15,6 +15,7 @@ import Accounts from './views/Accounts.vue'
 import Logs from './views/Logs.vue'
 import Settings from './views/Settings.vue'
 import DNSProviders from './views/DNSProviders.vue'
+import RelayPools from './views/RelayPools.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -30,6 +31,7 @@ const router = createRouter({
     { path: '/logs', component: Logs, meta: { auth: true } },
     { path: '/settings', component: Settings, meta: { auth: true } },
     { path: '/dns', component: DNSProviders, meta: { auth: true } },
+    { path: '/relay-pools', component: RelayPools, meta: { auth: true } },
   ]
 })
 

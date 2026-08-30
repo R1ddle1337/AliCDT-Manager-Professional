@@ -20,6 +20,7 @@ export const useRelayStore = defineStore('relay-platform', () => {
   const relayNodes = ref([])
   const landingNodes = ref([])
   const services = ref([])
+  const pools = ref([])
   const events = ref([])
   const dnsProviders = ref([])
   const dnsRecords = ref([])
@@ -46,6 +47,33 @@ export const useRelayStore = defineStore('relay-platform', () => {
   async function fetchServices() {
     const { data } = await api.get('/relay-services')
     services.value = data || []
+  }
+
+  async function fetchPools() {
+    const { data } = await api.get('/relay-pools')
+    pools.value = data || []
+  }
+
+  async function createPool(payload) {
+    const { data } = await api.post('/relay-pools', payload)
+    await Promise.all([fetchPools(), fetchServices(), fetchRelayNodes(), fetchDNSRecords()])
+    return data
+  }
+
+  async function updatePool(id, payload) {
+    const { data } = await api.put(`/relay-pools/${id}`, payload)
+    await Promise.all([fetchPools(), fetchServices(), fetchRelayNodes(), fetchDNSRecords()])
+    return data
+  }
+
+  async function deletePool(id) {
+    await api.delete(`/relay-pools/${id}`)
+    await Promise.all([fetchPools(), fetchServices(), fetchRelayNodes(), fetchDNSRecords()])
+  }
+
+  async function fetchPoolRelayLinks(id) {
+    const { data } = await api.get(`/relay-pools/${id}/relay-links`)
+    return data || []
   }
 
   async function fetchEvents() {
@@ -123,7 +151,7 @@ export const useRelayStore = defineStore('relay-platform', () => {
   async function fetchAll() {
     loading.value = true
     try {
-      await Promise.all([fetchRelayNodes(), fetchLandingNodes(), fetchServices(), fetchEvents(), fetchDNSProviders(), fetchDNSRecords(), fetchCloud()])
+      await Promise.all([fetchRelayNodes(), fetchLandingNodes(), fetchServices(), fetchPools(), fetchEvents(), fetchDNSProviders(), fetchDNSRecords(), fetchCloud()])
     } finally {
       loading.value = false
     }
@@ -214,10 +242,11 @@ export const useRelayStore = defineStore('relay-platform', () => {
   }
 
   return {
-    relayNodes, landingNodes, services, events, dnsProviders, dnsRecords, cloud, loading, updateStatus,
+    relayNodes, landingNodes, services, pools, events, dnsProviders, dnsRecords, cloud, loading, updateStatus,
     login, fetchRelayNodes, fetchLandingNodes, fetchServices, fetchEvents, fetchCloud, fetchAll,
     createEnrollmentToken, createLandingNode, updateLandingNode, deleteLandingNode, fetchLandingRelayLinks,
     createService, updateService, deleteService,
+    fetchPools, createPool, updatePool, deletePool, fetchPoolRelayLinks,
     fetchDNSProviders, fetchDNSRecords, createDNSProvider, updateDNSProvider, deleteDNSProvider,
     testDNSProvider, syncDNSProvider, syncAllDNS, createDNSRecord, updateDNSRecord, deleteDNSRecord,
     syncCloud, createCloudAccount, updateCloudAccount, deleteCloudAccount, controlCloudInstance,

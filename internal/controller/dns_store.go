@@ -192,7 +192,7 @@ func (s *Store) MarkDNSProviderTest(ctx context.Context, id string, testErr erro
 }
 
 func (s *Store) ListDNSRecords(ctx context.Context, providerID string) ([]DNSManagedRecord, error) {
-	query := `SELECT id,provider_id,name,type,value,ttl,enabled,provider_record_id,status,last_error,last_synced_at,created_at,updated_at FROM dns_managed_records`
+	query := `SELECT id,provider_id,COALESCE(pool_id,''),COALESCE(relay_node_id,''),name,type,value,ttl,enabled,provider_record_id,status,last_error,last_synced_at,created_at,updated_at FROM dns_managed_records`
 	args := []interface{}{}
 	if strings.TrimSpace(providerID) != "" {
 		query += ` WHERE provider_id=?`
@@ -209,7 +209,7 @@ func (s *Store) ListDNSRecords(ctx context.Context, providerID string) ([]DNSMan
 		var item DNSManagedRecord
 		var enabled int
 		var synced, created, updated sql.NullString
-		if err := rows.Scan(&item.ID, &item.ProviderID, &item.Name, &item.Type, &item.Value, &item.TTL, &enabled, &item.ProviderRecordID, &item.Status, &item.LastError, &synced, &created, &updated); err != nil {
+		if err := rows.Scan(&item.ID, &item.ProviderID, &item.PoolID, &item.RelayNodeID, &item.Name, &item.Type, &item.Value, &item.TTL, &enabled, &item.ProviderRecordID, &item.Status, &item.LastError, &synced, &created, &updated); err != nil {
 			return nil, err
 		}
 		item.Enabled = enabled != 0
@@ -257,9 +257,12 @@ func (s *Store) CreateDNSRecord(ctx context.Context, request CreateDNSRecordRequ
 }
 
 func (s *Store) UpdateDNSRecord(ctx context.Context, id string, request CreateDNSRecordRequest) (DNSManagedRecord, error) {
-	var oldProviderID string
-	if err := s.db.QueryRowContext(ctx, `SELECT provider_id FROM dns_managed_records WHERE id=?`, id).Scan(&oldProviderID); err != nil {
+	var oldProviderID, oldPoolID string
+	if err := s.db.QueryRowContext(ctx, `SELECT provider_id,COALESCE(pool_id,'') FROM dns_managed_records WHERE id=?`, id).Scan(&oldProviderID, &oldPoolID); err != nil {
 		return DNSManagedRecord{}, err
+	}
+	if oldPoolID != "" {
+		return DNSManagedRecord{}, errors.New("pool-managed DNS records must be changed from the relay pool")
 	}
 	request.Name = strings.TrimSpace(request.Name)
 	request.Type = strings.ToUpper(strings.TrimSpace(request.Type))

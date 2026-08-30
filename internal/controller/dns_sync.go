@@ -129,6 +129,7 @@ func (s *Server) RunDNSScheduler(ctx context.Context, interval time.Duration) {
 		interval = time.Minute
 	}
 	initialCtx, initialCancel := context.WithTimeout(ctx, 45*time.Second)
+	_ = s.store.RefreshAllRelayPoolDNS(initialCtx)
 	_, _ = s.store.SyncAllDNS(initialCtx)
 	initialCancel()
 	ticker := time.NewTicker(interval)
@@ -139,6 +140,7 @@ func (s *Server) RunDNSScheduler(ctx context.Context, interval time.Duration) {
 			return
 		case <-ticker.C:
 			syncCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+			_ = s.store.RefreshAllRelayPoolDNS(syncCtx)
 			_, _ = s.store.SyncAllDNS(syncCtx)
 			cancel()
 		}

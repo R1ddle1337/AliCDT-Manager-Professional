@@ -159,6 +159,9 @@ The same workflow pushes the multi-architecture controller image to
 - `DELETE /api/v2/relay-services/{id}`
 - `PUT /api/v2/landing-nodes/{id}`
 - `PUT /api/v2/relay-services/{id}`
+- `GET|POST /api/v2/relay-pools`
+- `PUT|DELETE /api/v2/relay-pools/{id}`
+- `GET /api/v2/relay-pools/{id}/relay-links`
 - `GET /api/v2/cloud/overview`
 - `POST /api/v2/cloud/sync`
 - `POST|PUT|DELETE /api/v2/cloud/accounts`
@@ -195,6 +198,12 @@ or creates only those declared records and never performs a broad zone delete.
 Use a separate hostname such as `panel.example.com` for the console and
 `relay.example.com` for a multi-IP relay entry. Add one A record per healthy
 CDT Relay and keep TTL around 30--60 seconds.
+
+Relay pools replicate one logical service to each selected Agent. A pool can
+bind a DNS Provider; online members create managed A records, draining or
+offline members are disabled and removed on the next DNS reconciliation. The
+landing-node link generator emits the pool hostname and port, so users keep a
+single logical node instead of importing one link per Relay.
 
 Admin APIs require `Authorization: Bearer $CDT_ADMIN_TOKEN`. Agent APIs use the
 per-node secret returned during one-time enrollment.

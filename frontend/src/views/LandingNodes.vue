@@ -27,13 +27,13 @@
         <div class="relay-panel">
           <div class="relay-panel-head"><div><h3>中转后的节点</h3><p>仅替换 Host 和 Port，其余参数保持不变</p></div><span class="panel-code">{{ linksFor(node).length }} 个入口</span></div>
           <div v-if="linksFor(node).length" class="relay-link-list">
-            <div v-for="link in linksFor(node)" :key="link.service_id" class="relay-link-item">
+            <div v-for="link in linksFor(node)" :key="link.pool_id || link.service_id || `${link.host}:${link.port}:${link.service_name}`" class="relay-link-item">
               <div class="min-w-0"><strong class="block truncate text-xs text-slate-700">{{ link.service_name }}</strong><small class="mt-1 block truncate text-[10px] text-slate-400">{{ link.relay_node_name }} · {{ link.host || '未设置入口地址' }}:{{ link.port }}</small></div>
               <button v-if="link.uri" class="btn-ghost flex-none border border-slate-200 px-2 py-1 text-[10px]" @click="copyLink(link.uri)">复制</button>
               <code v-if="link.uri" class="relay-uri">{{ link.uri }}</code><span v-else class="col-span-full text-[10px] text-amber-700">{{ link.message || '暂时无法生成中转链接' }}</span>
             </div>
           </div>
-          <div v-else class="relay-empty">请先创建转发服务，并将此落地节点加入目标列表。</div>
+          <div v-else class="relay-empty">请先创建转发服务或逻辑入口池，并将此落地节点加入目标列表。</div>
         </div>
       </article>
     </div>

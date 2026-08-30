@@ -60,6 +60,7 @@ type LandingNode struct {
 type RelayService struct {
 	ID                    string          `json:"id"`
 	RelayNodeID           string          `json:"relay_node_id"`
+	PoolID                string          `json:"pool_id,omitempty"`
 	Name                  string          `json:"name"`
 	ListenHost            string          `json:"listen_host"`
 	ListenPort            int             `json:"listen_port"`
@@ -263,6 +264,8 @@ type CreateDNSProviderRequest struct {
 type DNSManagedRecord struct {
 	ID               string     `json:"id"`
 	ProviderID       string     `json:"provider_id"`
+	PoolID           string     `json:"pool_id,omitempty"`
+	RelayNodeID      string     `json:"relay_node_id,omitempty"`
 	Name             string     `json:"name"`
 	Type             string     `json:"type"`
 	Value            string     `json:"value"`
@@ -283,6 +286,61 @@ type CreateDNSRecordRequest struct {
 	Value      string `json:"value"`
 	TTL        int    `json:"ttl"`
 	Enabled    *bool  `json:"enabled,omitempty"`
+}
+
+type RelayPool struct {
+	ID                    string            `json:"id"`
+	Name                  string            `json:"name"`
+	Hostname              string            `json:"hostname"`
+	ListenPort            int               `json:"listen_port"`
+	Network               string            `json:"network"`
+	Mode                  string            `json:"mode"`
+	Enabled               bool              `json:"enabled"`
+	DNSProviderID         string            `json:"dns_provider_id,omitempty"`
+	DNSRecordName         string            `json:"dns_record_name,omitempty"`
+	DNSTTL                int               `json:"dns_ttl"`
+	DialTimeoutMillis     int               `json:"dial_timeout_ms"`
+	UDPIdleTimeoutSeconds int               `json:"udp_idle_timeout_seconds"`
+	Health                HealthSettings    `json:"health"`
+	Members               []RelayPoolMember `json:"members"`
+	Targets               []ServiceTarget   `json:"targets"`
+	CreatedAt             time.Time         `json:"created_at"`
+	UpdatedAt             time.Time         `json:"updated_at"`
+}
+
+type RelayPoolMember struct {
+	ID            string `json:"id"`
+	PoolID        string `json:"pool_id"`
+	RelayNodeID   string `json:"relay_node_id"`
+	RelayNodeName string `json:"relay_node_name"`
+	PublicIP      string `json:"public_ip,omitempty"`
+	Status        string `json:"status"`
+	Weight        int    `json:"weight"`
+	Enabled       bool   `json:"enabled"`
+	ServiceID     string `json:"service_id,omitempty"`
+}
+
+type CreateRelayPoolRequest struct {
+	Name                  string                  `json:"name"`
+	Hostname              string                  `json:"hostname"`
+	ListenPort            int                     `json:"listen_port"`
+	Network               string                  `json:"network"`
+	Mode                  string                  `json:"mode"`
+	Enabled               *bool                   `json:"enabled,omitempty"`
+	DNSProviderID         string                  `json:"dns_provider_id"`
+	DNSRecordName         string                  `json:"dns_record_name"`
+	DNSTTL                int                     `json:"dns_ttl"`
+	DialTimeoutMillis     int                     `json:"dial_timeout_ms"`
+	UDPIdleTimeoutSeconds int                     `json:"udp_idle_timeout_seconds"`
+	Health                HealthSettings          `json:"health"`
+	Members               []CreateRelayPoolMember `json:"members"`
+	Targets               []CreateServiceTarget   `json:"targets"`
+}
+
+type CreateRelayPoolMember struct {
+	RelayNodeID string `json:"relay_node_id"`
+	Weight      int    `json:"weight"`
+	Enabled     *bool  `json:"enabled,omitempty"`
 }
 
 func OpenStore(path string) (*Store, error) {
@@ -429,6 +487,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			recovery_cooldown_seconds INTEGER NOT NULL DEFAULT 60,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
+			pool_id TEXT REFERENCES relay_pools(id) ON DELETE SET NULL,
 			UNIQUE(relay_node_id, listen_host, listen_port, network)
 		)`,
 		`CREATE TABLE IF NOT EXISTS service_targets (
@@ -481,6 +540,47 @@ func (s *Store) migrate(ctx context.Context) error {
 			updated_at TEXT NOT NULL,
 			UNIQUE(provider_id,name,type,value)
 		)`,
+		`CREATE TABLE IF NOT EXISTS relay_pools (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			hostname TEXT NOT NULL,
+			listen_port INTEGER NOT NULL,
+			network TEXT NOT NULL,
+			mode TEXT NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			dns_provider_id TEXT REFERENCES dns_providers(id) ON DELETE SET NULL,
+			dns_record_name TEXT NOT NULL DEFAULT '',
+			dns_ttl INTEGER NOT NULL DEFAULT 60,
+			dial_timeout_ms INTEGER NOT NULL DEFAULT 2500,
+			udp_idle_timeout_seconds INTEGER NOT NULL DEFAULT 60,
+			health_enabled INTEGER NOT NULL DEFAULT 1,
+			health_interval_seconds INTEGER NOT NULL DEFAULT 4,
+			health_timeout_ms INTEGER NOT NULL DEFAULT 2000,
+			failure_threshold INTEGER NOT NULL DEFAULT 2,
+			success_threshold INTEGER NOT NULL DEFAULT 3,
+			recovery_cooldown_seconds INTEGER NOT NULL DEFAULT 60,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS relay_pool_members (
+			id TEXT PRIMARY KEY,
+			pool_id TEXT NOT NULL REFERENCES relay_pools(id) ON DELETE CASCADE,
+			relay_node_id TEXT NOT NULL REFERENCES relay_nodes(id) ON DELETE CASCADE,
+			service_id TEXT REFERENCES relay_services(id) ON DELETE SET NULL,
+			weight INTEGER NOT NULL DEFAULT 1,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			created_at TEXT NOT NULL,
+			UNIQUE(pool_id,relay_node_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS relay_pool_targets (
+			id TEXT PRIMARY KEY,
+			pool_id TEXT NOT NULL REFERENCES relay_pools(id) ON DELETE CASCADE,
+			landing_node_id TEXT NOT NULL REFERENCES landing_nodes(id) ON DELETE RESTRICT,
+			weight INTEGER NOT NULL DEFAULT 1,
+			priority INTEGER NOT NULL DEFAULT 0,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			UNIQUE(pool_id,landing_node_id)
+		)`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
@@ -498,6 +598,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		if err := s.ensureColumn(ctx, "relay_nodes", column.name, column.definition); err != nil {
 			return err
 		}
+	}
+	if err := s.ensureColumn(ctx, "relay_services", "pool_id", "TEXT"); err != nil {
+		return err
 	}
 	for _, column := range []struct {
 		name       string
@@ -526,6 +629,14 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 	if err := s.ensureColumn(ctx, "dns_providers", "zone_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
+	}
+	for _, column := range []struct{ name, definition string }{
+		{name: "pool_id", definition: "TEXT"},
+		{name: "relay_node_id", definition: "TEXT"},
+	} {
+		if err := s.ensureColumn(ctx, "dns_managed_records", column.name, column.definition); err != nil {
+			return err
+		}
 	}
 	// The Python version stored account-level CDT usage on every instance row.
 	// Seed only clearly valid, positive legacy values. An absent snapshot is
@@ -1087,9 +1198,12 @@ func (s *Store) CreateRelayService(ctx context.Context, request CreateRelayServi
 }
 
 func (s *Store) UpdateRelayService(ctx context.Context, id string, request CreateRelayServiceRequest) (RelayService, error) {
-	var existingNodeID string
-	if err := s.db.QueryRowContext(ctx, `SELECT relay_node_id FROM relay_services WHERE id=?`, id).Scan(&existingNodeID); err != nil {
+	var existingNodeID, poolID string
+	if err := s.db.QueryRowContext(ctx, `SELECT relay_node_id,COALESCE(pool_id,'') FROM relay_services WHERE id=?`, id).Scan(&existingNodeID, &poolID); err != nil {
 		return RelayService{}, err
+	}
+	if poolID != "" {
+		return RelayService{}, errors.New("pool-managed services must be changed from the relay pool")
 	}
 	if request.RelayNodeID == "" {
 		request.RelayNodeID = existingNodeID
@@ -1167,7 +1281,7 @@ func (s *Store) UpdateRelayService(ctx context.Context, id string, request Creat
 }
 
 func (s *Store) ListRelayServices(ctx context.Context, relayNodeID string) ([]RelayService, error) {
-	query := `SELECT id,relay_node_id,name,listen_host,listen_port,network,mode,enabled,dial_timeout_ms,udp_idle_timeout_seconds,health_enabled,health_interval_seconds,health_timeout_ms,failure_threshold,success_threshold,recovery_cooldown_seconds,created_at,updated_at FROM relay_services`
+	query := `SELECT id,relay_node_id,COALESCE(pool_id,''),name,listen_host,listen_port,network,mode,enabled,dial_timeout_ms,udp_idle_timeout_seconds,health_enabled,health_interval_seconds,health_timeout_ms,failure_threshold,success_threshold,recovery_cooldown_seconds,created_at,updated_at FROM relay_services`
 	var args []interface{}
 	if relayNodeID != "" {
 		query += ` WHERE relay_node_id=?`
@@ -1184,7 +1298,7 @@ func (s *Store) ListRelayServices(ctx context.Context, relayNodeID string) ([]Re
 		var service RelayService
 		var enabled, healthEnabled int
 		var created, updated string
-		if err := rows.Scan(&service.ID, &service.RelayNodeID, &service.Name, &service.ListenHost, &service.ListenPort, &service.Network, &service.Mode, &enabled,
+		if err := rows.Scan(&service.ID, &service.RelayNodeID, &service.PoolID, &service.Name, &service.ListenHost, &service.ListenPort, &service.Network, &service.Mode, &enabled,
 			&service.DialTimeoutMillis, &service.UDPIdleTimeoutSeconds, &healthEnabled, &service.Health.IntervalSeconds, &service.Health.TimeoutMillis,
 			&service.Health.FailureThreshold, &service.Health.SuccessThreshold, &service.Health.RecoveryCooldownSecs, &created, &updated); err != nil {
 			return nil, err
@@ -1235,9 +1349,12 @@ func (s *Store) DeleteRelayService(ctx context.Context, id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	var nodeID string
-	if err := tx.QueryRowContext(ctx, `SELECT relay_node_id FROM relay_services WHERE id=?`, id).Scan(&nodeID); err != nil {
+	var nodeID, poolID string
+	if err := tx.QueryRowContext(ctx, `SELECT relay_node_id,COALESCE(pool_id,'') FROM relay_services WHERE id=?`, id).Scan(&nodeID, &poolID); err != nil {
 		return err
+	}
+	if poolID != "" {
+		return errors.New("pool-managed services must be changed from the relay pool")
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM relay_services WHERE id=?`, id); err != nil {
 		return err

@@ -98,6 +98,11 @@ func (s *Server) routes() chi.Router {
 		router.Post("/api/v2/relay-services", s.createRelayService)
 		router.Put("/api/v2/relay-services/{serviceID}", s.updateRelayService)
 		router.Delete("/api/v2/relay-services/{serviceID}", s.deleteRelayService)
+		router.Get("/api/v2/relay-pools", s.listRelayPools)
+		router.Post("/api/v2/relay-pools", s.createRelayPool)
+		router.Put("/api/v2/relay-pools/{poolID}", s.updateRelayPool)
+		router.Delete("/api/v2/relay-pools/{poolID}", s.deleteRelayPool)
+		router.Get("/api/v2/relay-pools/{poolID}/relay-links", s.relayPoolLinks)
 		router.Get("/api/v2/events", s.listEvents)
 		router.Get("/api/v2/dns/providers", s.listDNSProviders)
 		router.Post("/api/v2/dns/providers", s.createDNSProvider)
@@ -412,7 +417,13 @@ func (s *Server) listRelayServices(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, services)
+	filtered := services[:0]
+	for _, service := range services {
+		if service.PoolID == "" {
+			filtered = append(filtered, service)
+		}
+	}
+	writeJSON(w, http.StatusOK, filtered)
 }
 
 func (s *Server) updateRelayService(w http.ResponseWriter, r *http.Request) {

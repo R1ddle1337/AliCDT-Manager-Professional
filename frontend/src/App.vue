@@ -95,6 +95,7 @@ const navItems = [
   { path: '/relay-nodes', code: 'CDT', label: '中转节点' },
   { path: '/landing-nodes', code: 'OUT', label: '落地节点' },
   { path: '/relay-services', code: 'L4', label: '转发服务' },
+  { path: '/relay-pools', code: 'POOL', label: '入口池' },
   { path: '/logs', code: 'LOG', label: '系统日志' },
   { path: '/settings', code: 'SET', label: '系统设置' },
   { path: '/dns', code: 'DNS', label: 'DNS 入口' },
