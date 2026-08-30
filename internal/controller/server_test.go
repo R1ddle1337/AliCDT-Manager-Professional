@@ -71,6 +71,74 @@ func TestControllerAgentLifecycle(t *testing.T) {
 	}
 }
 
+func TestDisabledLandingNodeIsExcludedFromAgentConfig(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.CreateEnrollmentToken(context.Background(), "landing-disable", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	enrolled, err := store.EnrollAgent(context.Background(), protocol.AgentEnrollmentRequest{Token: "landing-disable", NodeName: "relay"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	landing, err := store.CreateLandingNode(context.Background(), CreateLandingNodeRequest{Name: "landing", Address: "127.0.0.1", Port: 443, Network: "tcp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateRelayService(context.Background(), CreateRelayServiceRequest{
+		RelayNodeID: enrolled.AgentID, Name: "service", ListenPort: 18443, Network: "tcp", Mode: "failover",
+		Targets: []CreateServiceTarget{{LandingNodeID: landing.ID, Enabled: boolPtr(true)}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	disabled := false
+	if _, err := store.UpdateLandingNode(context.Background(), landing.ID, CreateLandingNodeRequest{Name: landing.Name, Address: landing.Address, Port: landing.Port, Network: landing.Network, Enabled: &disabled}); err != nil {
+		t.Fatal(err)
+	}
+	config, err := store.AgentConfig(context.Background(), enrolled.AgentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Services) != 1 || len(config.Services[0].Targets) != 1 || config.Services[0].Targets[0].Enabled {
+		t.Fatalf("disabled landing node remained eligible: %+v", config)
+	}
+}
+
+func TestStaleAgentIsMarkedOffline(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.CreateEnrollmentToken(context.Background(), "stale-agent", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	enrolled, err := store.EnrollAgent(context.Background(), protocol.AgentEnrollmentRequest{Token: "stale-agent", NodeName: "relay"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().UTC().Add(-2 * time.Minute).Format(time.RFC3339Nano)
+	if _, err := store.db.Exec(`UPDATE relay_nodes SET last_seen_at=? WHERE id=?`, old, enrolled.AgentID); err != nil {
+		t.Fatal(err)
+	}
+	marked, err := store.MarkStaleRelayNodes(context.Background(), time.Minute)
+	if err != nil || marked != 1 {
+		t.Fatalf("stale agent was not marked: count=%d err=%v", marked, err)
+	}
+	nodes, err := store.ListRelayNodes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || nodes[0].Status != "offline" {
+		t.Fatalf("unexpected stale node status: %+v", nodes)
+	}
+}
+
+func boolPtr(value bool) *bool { return &value }
+
 func requestJSON(t *testing.T, url, token string, payload interface{}, expected int, output interface{}) {
 	t.Helper()
 	encoded, err := json.Marshal(payload)
