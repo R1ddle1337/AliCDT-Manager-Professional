@@ -89,12 +89,31 @@ func (s *Server) legacySyncInstances(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) legacySyncInstance(w http.ResponseWriter, r *http.Request) {
-	result, err := s.cloud.SyncInstance(r.Context(), chi.URLParam(r, "instanceID"))
+	instanceID := chi.URLParam(r, "instanceID")
+	result, err := s.cloud.SyncInstance(r.Context(), instanceID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "同步完成", "result": result})
+	if result.Error != "" {
+		writeError(w, http.StatusBadRequest, errors.New(result.Error))
+		return
+	}
+	overview, err := s.store.CloudOverview(r.Context())
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	for _, instance := range overview.Instances {
+		if instance.InstanceID == instanceID {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"message": "同步完成", "status": instance.Status,
+				"traffic_gb": instance.TrafficUsedGB, "percent": instance.TrafficPercent,
+			})
+			return
+		}
+	}
+	writeError(w, http.StatusNotFound, errors.New("instance not found"))
 }
 
 func (s *Server) legacyRenameInstance(w http.ResponseWriter, r *http.Request) {

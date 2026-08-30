@@ -192,7 +192,10 @@ async function submit() {
 }
 
 function confirmDelete(acc) { deleteTarget.value = acc }
-function shellQuote(value) { return `'${String(value || '').replace(/'/g, `'\\''`)}'` }
+function shellQuote(value) {
+  const clean = String(value || '').replace(/[\r\n\t]+/g, ' ').trim()
+  return `'${clean.replace(/'/g, `'\\''`)}'`
+}
 async function openAgentInstall(acc) {
   installAccount.value = acc
   installCommand.value = ''
