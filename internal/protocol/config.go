@@ -41,12 +41,14 @@ type HealthConfig struct {
 }
 
 type AgentEnrollmentRequest struct {
-	Token        string `json:"token"`
-	NodeName     string `json:"node_name"`
-	PublicIP     string `json:"public_ip,omitempty"`
-	Architecture string `json:"architecture"`
-	OS           string `json:"os"`
-	AgentVersion string `json:"agent_version"`
+	Token         string `json:"token"`
+	NodeName      string `json:"node_name"`
+	PublicIP      string `json:"public_ip,omitempty"`
+	ECSInstanceID string `json:"ecs_instance_id,omitempty"`
+	RegionID      string `json:"region_id,omitempty"`
+	Architecture  string `json:"architecture"`
+	OS            string `json:"os"`
+	AgentVersion  string `json:"agent_version"`
 }
 
 type AgentEnrollmentResponse struct {

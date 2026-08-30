@@ -30,6 +30,7 @@ type Server struct {
 	adminToken         string
 	frontendDir        string
 	agentInstallerPath string
+	cloud              *CloudService
 	router             chi.Router
 }
 
@@ -40,7 +41,7 @@ func NewServer(store *Store, opts ServerOptions) (*Server, error) {
 	if strings.TrimSpace(opts.AdminToken) == "" {
 		return nil, errors.New("admin token is required")
 	}
-	server := &Server{store: store, adminToken: opts.AdminToken, frontendDir: opts.FrontendDir, agentInstallerPath: opts.AgentInstallerPath}
+	server := &Server{store: store, adminToken: opts.AdminToken, frontendDir: opts.FrontendDir, agentInstallerPath: opts.AgentInstallerPath, cloud: NewCloudService(store)}
 	server.router = server.routes()
 	return server, nil
 }
@@ -85,6 +86,13 @@ func (s *Server) routes() chi.Router {
 		router.Put("/api/v2/relay-services/{serviceID}", s.updateRelayService)
 		router.Delete("/api/v2/relay-services/{serviceID}", s.deleteRelayService)
 		router.Get("/api/v2/events", s.listEvents)
+		router.Get("/api/v2/cloud/overview", s.cloudOverview)
+		router.Post("/api/v2/cloud/sync", s.syncCloud)
+		router.Post("/api/v2/cloud/accounts", s.createCloudAccount)
+		router.Put("/api/v2/cloud/accounts/{accountID}", s.updateCloudAccount)
+		router.Delete("/api/v2/cloud/accounts/{accountID}", s.deleteCloudAccount)
+		router.Post("/api/v2/cloud/instances/{instanceID}/start", s.startCloudInstance)
+		router.Post("/api/v2/cloud/instances/{instanceID}/stop", s.stopCloudInstance)
 	})
 	if s.frontendDir != "" {
 		router.NotFound(s.serveFrontend)
@@ -366,6 +374,94 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, events)
+}
+
+func (s *Server) cloudOverview(w http.ResponseWriter, r *http.Request) {
+	overview, err := s.store.CloudOverview(r.Context())
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, overview)
+}
+
+func (s *Server) syncCloud(w http.ResponseWriter, r *http.Request) {
+	results, err := s.cloud.SyncAll(r.Context())
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, results)
+}
+
+func (s *Server) createCloudAccount(w http.ResponseWriter, r *http.Request) {
+	var request CloudAccountRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	account, err := s.store.CreateCloudAccount(r.Context(), request)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, account)
+}
+
+func (s *Server) updateCloudAccount(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "accountID"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, errors.New("invalid account id"))
+		return
+	}
+	var request CloudAccountRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	account, err := s.store.UpdateCloudAccount(r.Context(), id, request)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeStoreError(w, err)
+		} else {
+			writeError(w, http.StatusBadRequest, err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, account)
+}
+
+func (s *Server) deleteCloudAccount(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "accountID"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, errors.New("invalid account id"))
+		return
+	}
+	if err := s.store.DeleteCloudAccount(r.Context(), id); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) startCloudInstance(w http.ResponseWriter, r *http.Request) {
+	if err := s.cloud.StartInstance(r.Context(), chi.URLParam(r, "instanceID")); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"message": "start command sent"})
+}
+
+func (s *Server) stopCloudInstance(w http.ResponseWriter, r *http.Request) {
+	if err := s.cloud.StopInstance(r.Context(), chi.URLParam(r, "instanceID")); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"message": "stop command sent"})
+}
+
+func (s *Server) RunCloudScheduler(ctx context.Context, interval time.Duration) {
+	s.cloud.RunScheduler(ctx, interval)
 }
 
 func bearerToken(r *http.Request) string {

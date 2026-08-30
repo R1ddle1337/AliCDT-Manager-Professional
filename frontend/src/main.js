@@ -9,6 +9,7 @@ import RelayOverview from './views/RelayOverview.vue'
 import RelayNodes from './views/RelayNodes.vue'
 import LandingNodes from './views/LandingNodes.vue'
 import RelayServices from './views/RelayServices.vue'
+import CloudResources from './views/CloudResources.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -18,6 +19,7 @@ const router = createRouter({
     { path: '/relay-nodes', component: RelayNodes, meta: { auth: true } },
     { path: '/landing-nodes', component: LandingNodes, meta: { auth: true } },
     { path: '/relay-services', component: RelayServices, meta: { auth: true } },
+    { path: '/cloud-resources', component: CloudResources, meta: { auth: true } },
   ]
 })
 

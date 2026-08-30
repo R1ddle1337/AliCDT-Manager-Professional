@@ -26,6 +26,9 @@ type RelayNode struct {
 	ID              string          `json:"id"`
 	Name            string          `json:"name"`
 	PublicIP        string          `json:"public_ip"`
+	ECSInstanceID   string          `json:"ecs_instance_id,omitempty"`
+	RegionID        string          `json:"region_id,omitempty"`
+	CloudAccountID  *int64          `json:"cloud_account_id,omitempty"`
 	Architecture    string          `json:"architecture"`
 	OS              string          `json:"os"`
 	AgentVersion    string          `json:"agent_version"`
@@ -70,6 +73,71 @@ type RelayEvent struct {
 	Category    string    `json:"category"`
 	Message     string    `json:"message"`
 	CreatedAt   time.Time `json:"created_at"`
+}
+
+type CloudAccount struct {
+	ID                   int64   `json:"id"`
+	Name                 string  `json:"name"`
+	AccessKeyID          string  `json:"access_key_id"`
+	AccessKeySecret      string  `json:"-"`
+	RegionID             string  `json:"region_id"`
+	SiteType             string  `json:"site_type"`
+	TrafficLimitGB       float64 `json:"traffic_limit_gb"`
+	ThresholdPercent     float64 `json:"threshold_percent"`
+	OutstandingThreshold float64 `json:"outstanding_threshold"`
+	ShutdownMode         string  `json:"shutdown_mode"`
+	Enabled              bool    `json:"enabled"`
+}
+
+type CloudAccountRequest struct {
+	Name                 string  `json:"name"`
+	AccessKeyID          string  `json:"access_key_id"`
+	AccessKeySecret      string  `json:"access_key_secret"`
+	RegionID             string  `json:"region_id"`
+	SiteType             string  `json:"site_type"`
+	TrafficLimitGB       float64 `json:"traffic_limit_gb"`
+	ThresholdPercent     float64 `json:"threshold_percent"`
+	OutstandingThreshold float64 `json:"outstanding_threshold"`
+	ShutdownMode         string  `json:"shutdown_mode"`
+	Enabled              *bool   `json:"enabled,omitempty"`
+}
+
+type CloudInstance struct {
+	ID            int64      `json:"id"`
+	AccountID     int64      `json:"account_id"`
+	InstanceID    string     `json:"instance_id"`
+	InstanceName  string     `json:"instance_name"`
+	RegionID      string     `json:"region_id"`
+	Status        string     `json:"status"`
+	PublicIP      string     `json:"public_ip"`
+	InstanceType  string     `json:"instance_type"`
+	BandwidthMbps int        `json:"bandwidth_mbps"`
+	IsSpot        bool       `json:"is_spot"`
+	LastSynced    *time.Time `json:"last_synced,omitempty"`
+}
+
+type AccountTraffic struct {
+	AccountID int64      `json:"account_id"`
+	UsedGB    float64    `json:"used_gb"`
+	SyncedAt  *time.Time `json:"synced_at,omitempty"`
+	LastError string     `json:"last_error,omitempty"`
+}
+
+type CloudOverview struct {
+	Accounts  []CloudAccount   `json:"accounts"`
+	Instances []CloudInstance  `json:"instances"`
+	Traffic   []AccountTraffic `json:"traffic"`
+}
+
+type CloudInstanceUpdate struct {
+	InstanceID    string
+	InstanceName  string
+	RegionID      string
+	Status        string
+	PublicIP      string
+	InstanceType  string
+	BandwidthMbps int
+	IsSpot        bool
 }
 
 type HealthSettings struct {
@@ -168,6 +236,49 @@ func (s *Store) migrate(ctx context.Context) error {
 			key TEXT PRIMARY KEY,
 			value TEXT
 		)`,
+		`CREATE TABLE IF NOT EXISTS accounts (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL,
+			access_key_id TEXT NOT NULL,
+			access_key_secret TEXT NOT NULL,
+			region_id TEXT NOT NULL,
+			site_type TEXT DEFAULT 'international',
+			instance_id TEXT,
+			traffic_limit_gb REAL DEFAULT 200,
+			threshold_percent REAL DEFAULT 95,
+			outstanding_threshold REAL DEFAULT 0,
+			shutdown_mode TEXT DEFAULT 'StopCharging',
+			keep_alive INTEGER DEFAULT 0,
+			auto_start_time TEXT,
+			auto_stop_time TEXT,
+			manual_stopped INTEGER DEFAULT 0,
+			nostock_notified INTEGER DEFAULT 0,
+			enabled INTEGER DEFAULT 1,
+			created_at TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS instances (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			account_id INTEGER NOT NULL,
+			instance_id TEXT NOT NULL UNIQUE,
+			instance_name TEXT,
+			region_id TEXT,
+			status TEXT DEFAULT 'Unknown',
+			public_ip TEXT,
+			instance_type TEXT,
+			bandwidth_mbps INTEGER DEFAULT 0,
+			traffic_used_gb REAL DEFAULT 0,
+			traffic_percent REAL DEFAULT 0,
+			is_spot INTEGER DEFAULT 0,
+			last_synced TEXT,
+			updated_at TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS account_traffic_snapshots (
+			account_id INTEGER PRIMARY KEY,
+			used_gb REAL NOT NULL DEFAULT 0,
+			synced_at TEXT,
+			last_error TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS admin_sessions (
 			token_hash TEXT PRIMARY KEY,
 			username TEXT NOT NULL,
@@ -233,7 +344,60 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("migration failed: %w", err)
 		}
 	}
+	for _, column := range []struct {
+		name       string
+		definition string
+	}{
+		{name: "ecs_instance_id", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "region_id", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "cloud_account_id", definition: "INTEGER"},
+	} {
+		if err := s.ensureColumn(ctx, "relay_nodes", column.name, column.definition); err != nil {
+			return err
+		}
+	}
+	// The Python version stored account-level CDT usage on every instance row.
+	// Seed only clearly valid, positive legacy values. An absent snapshot is
+	// preferable to presenting an unknown or previously failed request as 0 GB.
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO account_traffic_snapshots(account_id,used_gb,synced_at,last_error,updated_at)
+		SELECT account_id,MAX(COALESCE(traffic_used_gb,0)),MAX(last_synced),'',?
+		FROM instances
+		GROUP BY account_id
+		HAVING MAX(COALESCE(traffic_used_gb,0)) > 0
+		ON CONFLICT(account_id) DO NOTHING`, now); err != nil {
+		return fmt.Errorf("seed legacy traffic snapshots: %w", err)
+	}
 	return nil
+}
+
+func (s *Store) ensureColumn(ctx context.Context, table, column, definition string) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue interface{}
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == column {
+			found = true
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	_, err = s.db.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN `+column+` `+definition)
+	return err
 }
 
 func (s *Store) IsAdminInitialized(ctx context.Context) (bool, error) {
@@ -372,8 +536,9 @@ func (s *Store) EnrollAgent(ctx context.Context, request protocol.AgentEnrollmen
 	agentID := randomID("relay")
 	secret := randomSecret(32)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO relay_nodes(id,name,public_ip,architecture,os,agent_version,secret_hash,status,last_seen_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		agentID, strings.TrimSpace(request.NodeName), request.PublicIP, request.Architecture, request.OS, request.AgentVersion, hashSecret(secret), "online", now, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO relay_nodes(id,name,public_ip,ecs_instance_id,region_id,cloud_account_id,architecture,os,agent_version,secret_hash,status,last_seen_at,created_at)
+		VALUES(?,?,?,?,?,(SELECT account_id FROM instances WHERE instance_id=?),?,?,?,?,?,?,?)`,
+		agentID, strings.TrimSpace(request.NodeName), request.PublicIP, request.ECSInstanceID, request.RegionID, request.ECSInstanceID, request.Architecture, request.OS, request.AgentVersion, hashSecret(secret), "online", now, now); err != nil {
 		return protocol.AgentEnrollmentResponse{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE enrollment_tokens SET used_at=? WHERE token_hash=?`, now, hashSecret(request.Token)); err != nil {
@@ -521,7 +686,7 @@ func (s *Store) AgentConfig(ctx context.Context, id string) (protocol.AgentConfi
 }
 
 func (s *Store) ListRelayNodes(ctx context.Context) ([]RelayNode, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,public_ip,architecture,os,agent_version,status,last_seen_at,current_revision,desired_revision,service_status_json FROM relay_nodes ORDER BY created_at`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,public_ip,COALESCE(ecs_instance_id,''),COALESCE(region_id,''),cloud_account_id,architecture,os,agent_version,status,last_seen_at,current_revision,desired_revision,service_status_json FROM relay_nodes ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -530,9 +695,13 @@ func (s *Store) ListRelayNodes(ctx context.Context) ([]RelayNode, error) {
 	for rows.Next() {
 		var node RelayNode
 		var lastSeen sql.NullString
+		var cloudAccountID sql.NullInt64
 		var statusJSON string
-		if err := rows.Scan(&node.ID, &node.Name, &node.PublicIP, &node.Architecture, &node.OS, &node.AgentVersion, &node.Status, &lastSeen, &node.CurrentRevision, &node.DesiredRevision, &statusJSON); err != nil {
+		if err := rows.Scan(&node.ID, &node.Name, &node.PublicIP, &node.ECSInstanceID, &node.RegionID, &cloudAccountID, &node.Architecture, &node.OS, &node.AgentVersion, &node.Status, &lastSeen, &node.CurrentRevision, &node.DesiredRevision, &statusJSON); err != nil {
 			return nil, err
+		}
+		if cloudAccountID.Valid {
+			node.CloudAccountID = &cloudAccountID.Int64
 		}
 		if lastSeen.Valid {
 			parsed, _ := time.Parse(time.RFC3339Nano, lastSeen.String)
@@ -873,6 +1042,269 @@ func (s *Store) DeleteRelayService(ctx context.Context, id string) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func (s *Store) ListCloudAccounts(ctx context.Context, enabledOnly bool) ([]CloudAccount, error) {
+	query := `SELECT id,name,access_key_id,access_key_secret,region_id,COALESCE(site_type,'international'),COALESCE(traffic_limit_gb,200),COALESCE(threshold_percent,95),COALESCE(outstanding_threshold,0),COALESCE(shutdown_mode,'StopCharging'),COALESCE(enabled,1) FROM accounts`
+	if enabledOnly {
+		query += ` WHERE enabled=1`
+	}
+	query += ` ORDER BY id`
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	accounts := make([]CloudAccount, 0)
+	for rows.Next() {
+		var account CloudAccount
+		var enabled int
+		if err := rows.Scan(&account.ID, &account.Name, &account.AccessKeyID, &account.AccessKeySecret, &account.RegionID, &account.SiteType, &account.TrafficLimitGB, &account.ThresholdPercent, &account.OutstandingThreshold, &account.ShutdownMode, &enabled); err != nil {
+			return nil, err
+		}
+		account.Enabled = enabled != 0
+		accounts = append(accounts, account)
+	}
+	return accounts, rows.Err()
+}
+
+func (s *Store) CreateCloudAccount(ctx context.Context, request CloudAccountRequest) (CloudAccount, error) {
+	request, enabled, err := normalizeCloudAccountRequest(request, false)
+	if err != nil {
+		return CloudAccount{}, err
+	}
+	result, err := s.db.ExecContext(ctx, `INSERT INTO accounts(name,access_key_id,access_key_secret,region_id,site_type,traffic_limit_gb,threshold_percent,outstanding_threshold,shutdown_mode,enabled,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		request.Name, request.AccessKeyID, request.AccessKeySecret, request.RegionID, request.SiteType, request.TrafficLimitGB, request.ThresholdPercent, request.OutstandingThreshold, request.ShutdownMode, boolInt(enabled), time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return CloudAccount{}, err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return CloudAccount{}, err
+	}
+	return CloudAccount{ID: id, Name: request.Name, AccessKeyID: request.AccessKeyID, RegionID: request.RegionID, SiteType: request.SiteType, TrafficLimitGB: request.TrafficLimitGB, ThresholdPercent: request.ThresholdPercent, OutstandingThreshold: request.OutstandingThreshold, ShutdownMode: request.ShutdownMode, Enabled: enabled}, nil
+}
+
+func (s *Store) UpdateCloudAccount(ctx context.Context, id int64, request CloudAccountRequest) (CloudAccount, error) {
+	request, enabled, err := normalizeCloudAccountRequest(request, true)
+	if err != nil {
+		return CloudAccount{}, err
+	}
+	var result sql.Result
+	if request.AccessKeySecret == "" {
+		result, err = s.db.ExecContext(ctx, `UPDATE accounts SET name=?,access_key_id=?,region_id=?,site_type=?,traffic_limit_gb=?,threshold_percent=?,outstanding_threshold=?,shutdown_mode=?,enabled=? WHERE id=?`,
+			request.Name, request.AccessKeyID, request.RegionID, request.SiteType, request.TrafficLimitGB, request.ThresholdPercent, request.OutstandingThreshold, request.ShutdownMode, boolInt(enabled), id)
+	} else {
+		result, err = s.db.ExecContext(ctx, `UPDATE accounts SET name=?,access_key_id=?,access_key_secret=?,region_id=?,site_type=?,traffic_limit_gb=?,threshold_percent=?,outstanding_threshold=?,shutdown_mode=?,enabled=? WHERE id=?`,
+			request.Name, request.AccessKeyID, request.AccessKeySecret, request.RegionID, request.SiteType, request.TrafficLimitGB, request.ThresholdPercent, request.OutstandingThreshold, request.ShutdownMode, boolInt(enabled), id)
+	}
+	if err != nil {
+		return CloudAccount{}, err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return CloudAccount{}, sql.ErrNoRows
+	}
+	accounts, err := s.ListCloudAccounts(ctx, false)
+	if err != nil {
+		return CloudAccount{}, err
+	}
+	for _, account := range accounts {
+		if account.ID == id {
+			account.AccessKeySecret = ""
+			return account, nil
+		}
+	}
+	return CloudAccount{}, sql.ErrNoRows
+}
+
+func (s *Store) DeleteCloudAccount(ctx context.Context, id int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM instances WHERE account_id=?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM account_traffic_snapshots WHERE account_id=?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET cloud_account_id=NULL WHERE cloud_account_id=?`, id); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM accounts WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return sql.ErrNoRows
+	}
+	return tx.Commit()
+}
+
+func (s *Store) CloudOverview(ctx context.Context) (CloudOverview, error) {
+	accounts, err := s.ListCloudAccounts(ctx, false)
+	if err != nil {
+		return CloudOverview{}, err
+	}
+	for index := range accounts {
+		accounts[index].AccessKeySecret = ""
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,account_id,instance_id,COALESCE(instance_name,''),COALESCE(region_id,''),COALESCE(status,'Unknown'),COALESCE(public_ip,''),COALESCE(instance_type,''),COALESCE(bandwidth_mbps,0),COALESCE(is_spot,0),last_synced FROM instances ORDER BY account_id,id`)
+	if err != nil {
+		return CloudOverview{}, err
+	}
+	instances := make([]CloudInstance, 0)
+	for rows.Next() {
+		var instance CloudInstance
+		var isSpot int
+		var lastSynced sql.NullString
+		if err := rows.Scan(&instance.ID, &instance.AccountID, &instance.InstanceID, &instance.InstanceName, &instance.RegionID, &instance.Status, &instance.PublicIP, &instance.InstanceType, &instance.BandwidthMbps, &isSpot, &lastSynced); err != nil {
+			rows.Close()
+			return CloudOverview{}, err
+		}
+		instance.IsSpot = isSpot != 0
+		if lastSynced.Valid {
+			parsed := parseDatabaseTime(lastSynced.String)
+			instance.LastSynced = &parsed
+		}
+		instances = append(instances, instance)
+	}
+	if err := rows.Close(); err != nil {
+		return CloudOverview{}, err
+	}
+	trafficRows, err := s.db.QueryContext(ctx, `SELECT account_id,used_gb,synced_at,last_error FROM account_traffic_snapshots ORDER BY account_id`)
+	if err != nil {
+		return CloudOverview{}, err
+	}
+	defer trafficRows.Close()
+	traffic := make([]AccountTraffic, 0)
+	for trafficRows.Next() {
+		var snapshot AccountTraffic
+		var synced sql.NullString
+		if err := trafficRows.Scan(&snapshot.AccountID, &snapshot.UsedGB, &synced, &snapshot.LastError); err != nil {
+			return CloudOverview{}, err
+		}
+		if synced.Valid {
+			parsed := parseDatabaseTime(synced.String)
+			snapshot.SyncedAt = &parsed
+		}
+		traffic = append(traffic, snapshot)
+	}
+	return CloudOverview{Accounts: accounts, Instances: instances, Traffic: traffic}, trafficRows.Err()
+}
+
+func (s *Store) SaveCloudSync(ctx context.Context, account CloudAccount, instances []CloudInstanceUpdate, instancesValid bool, instanceError string, trafficGB float64, trafficValid bool, trafficError string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC()
+	if instancesValid {
+		seen := make([]string, 0, len(instances))
+		for _, instance := range instances {
+			seen = append(seen, instance.InstanceID)
+			if _, err := tx.ExecContext(ctx, `INSERT INTO instances(account_id,instance_id,instance_name,region_id,status,public_ip,instance_type,bandwidth_mbps,is_spot,last_synced,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+				ON CONFLICT(instance_id) DO UPDATE SET account_id=excluded.account_id,instance_name=excluded.instance_name,region_id=excluded.region_id,status=excluded.status,public_ip=excluded.public_ip,instance_type=excluded.instance_type,bandwidth_mbps=excluded.bandwidth_mbps,is_spot=excluded.is_spot,last_synced=excluded.last_synced,updated_at=excluded.updated_at`,
+				account.ID, instance.InstanceID, instance.InstanceName, instance.RegionID, instance.Status, instance.PublicIP, instance.InstanceType, instance.BandwidthMbps, boolInt(instance.IsSpot), now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET cloud_account_id=?,region_id=?,public_ip=CASE WHEN public_ip='' THEN ? ELSE public_ip END WHERE ecs_instance_id=?`, account.ID, instance.RegionID, instance.PublicIP, instance.InstanceID); err != nil {
+				return err
+			}
+		}
+		if len(seen) == 0 {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM instances WHERE account_id=?`, account.ID); err != nil {
+				return err
+			}
+		} else {
+			placeholders := strings.TrimSuffix(strings.Repeat("?,", len(seen)), ",")
+			args := make([]interface{}, 0, len(seen)+1)
+			args = append(args, account.ID)
+			for _, id := range seen {
+				args = append(args, id)
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM instances WHERE account_id=? AND instance_id NOT IN (`+placeholders+`)`, args...); err != nil {
+				return err
+			}
+		}
+	} else if instanceError != "" {
+		if err := insertEvent(ctx, tx, "", "warning", "cloud", fmt.Sprintf("[%s] ECS sync failed: %s", account.Name, instanceError), now); err != nil {
+			return err
+		}
+	}
+	if trafficValid {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO account_traffic_snapshots(account_id,used_gb,synced_at,last_error,updated_at) VALUES(?,?,?,?,?)
+			ON CONFLICT(account_id) DO UPDATE SET used_gb=excluded.used_gb,synced_at=excluded.synced_at,last_error='',updated_at=excluded.updated_at`,
+			account.ID, trafficGB, now.Format(time.RFC3339Nano), "", now.Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+	} else if trafficError != "" {
+		// Preserve the last valid used_gb. On the first failure, create a row with
+		// an explicit error so 0 is never presented as a successful measurement.
+		if _, err := tx.ExecContext(ctx, `INSERT INTO account_traffic_snapshots(account_id,used_gb,synced_at,last_error,updated_at) VALUES(?,0,NULL,?,?)
+			ON CONFLICT(account_id) DO UPDATE SET last_error=excluded.last_error,updated_at=excluded.updated_at`, account.ID, trafficError, now.Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) CloudAccountForInstance(ctx context.Context, instanceID string) (CloudAccount, error) {
+	var accountID int64
+	if err := s.db.QueryRowContext(ctx, `SELECT account_id FROM instances WHERE instance_id=?`, instanceID).Scan(&accountID); err != nil {
+		return CloudAccount{}, err
+	}
+	accounts, err := s.ListCloudAccounts(ctx, false)
+	if err != nil {
+		return CloudAccount{}, err
+	}
+	for _, account := range accounts {
+		if account.ID == accountID {
+			return account, nil
+		}
+	}
+	return CloudAccount{}, sql.ErrNoRows
+}
+
+func parseDatabaseTime(value string) time.Time {
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02 15:04:05.999999", "2006-01-02 15:04:05"} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed
+		}
+	}
+	return time.Time{}
+}
+
+func normalizeCloudAccountRequest(request CloudAccountRequest, secretOptional bool) (CloudAccountRequest, bool, error) {
+	request.Name = strings.TrimSpace(request.Name)
+	request.AccessKeyID = strings.TrimSpace(request.AccessKeyID)
+	request.RegionID = strings.TrimSpace(request.RegionID)
+	request.SiteType = strings.ToLower(strings.TrimSpace(request.SiteType))
+	if request.Name == "" || request.AccessKeyID == "" || request.RegionID == "" || (!secretOptional && request.AccessKeySecret == "") {
+		return request, false, errors.New("name, AccessKey ID, secret and region are required")
+	}
+	if !oneOf(request.SiteType, "china", "international") {
+		return request, false, errors.New("site type must be china or international")
+	}
+	if request.TrafficLimitGB <= 0 {
+		request.TrafficLimitGB = 200
+	}
+	if request.ThresholdPercent <= 0 {
+		request.ThresholdPercent = 95
+	}
+	if request.ShutdownMode == "" {
+		request.ShutdownMode = "StopCharging"
+	}
+	if request.SiteType == "china" {
+		request.OutstandingThreshold = 0
+	}
+	enabled := true
+	if request.Enabled != nil {
+		enabled = *request.Enabled
+	}
+	return request, enabled, nil
 }
 
 func normalizeHealth(value HealthSettings) HealthSettings {

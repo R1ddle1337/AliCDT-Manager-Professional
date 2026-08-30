@@ -21,6 +21,7 @@ export const useRelayStore = defineStore('relay-platform', () => {
   const landingNodes = ref([])
   const services = ref([])
   const events = ref([])
+  const cloud = ref({ accounts: [], instances: [], traffic: [] })
   const loading = ref(false)
 
   async function login(username, password) {
@@ -49,10 +50,15 @@ export const useRelayStore = defineStore('relay-platform', () => {
     events.value = data || []
   }
 
+  async function fetchCloud() {
+    const { data } = await api.get('/cloud/overview')
+    cloud.value = data || { accounts: [], instances: [], traffic: [] }
+  }
+
   async function fetchAll() {
     loading.value = true
     try {
-      await Promise.all([fetchRelayNodes(), fetchLandingNodes(), fetchServices(), fetchEvents()])
+      await Promise.all([fetchRelayNodes(), fetchLandingNodes(), fetchServices(), fetchEvents(), fetchCloud()])
     } finally {
       loading.value = false
     }
@@ -97,10 +103,39 @@ export const useRelayStore = defineStore('relay-platform', () => {
     await Promise.all([fetchServices(), fetchRelayNodes()])
   }
 
+  async function syncCloud() {
+    const { data } = await api.post('/cloud/sync')
+    await fetchCloud()
+    return data
+  }
+
+  async function createCloudAccount(payload) {
+    const { data } = await api.post('/cloud/accounts', payload)
+    await fetchCloud()
+    return data
+  }
+
+  async function updateCloudAccount(id, payload) {
+    const { data } = await api.put(`/cloud/accounts/${id}`, payload)
+    await fetchCloud()
+    return data
+  }
+
+  async function deleteCloudAccount(id) {
+    await api.delete(`/cloud/accounts/${id}`)
+    await fetchCloud()
+  }
+
+  async function controlCloudInstance(instanceId, action) {
+    const { data } = await api.post(`/cloud/instances/${instanceId}/${action}`)
+    return data
+  }
+
   return {
-    relayNodes, landingNodes, services, events, loading,
-    login, fetchRelayNodes, fetchLandingNodes, fetchServices, fetchEvents, fetchAll,
+    relayNodes, landingNodes, services, events, cloud, loading,
+    login, fetchRelayNodes, fetchLandingNodes, fetchServices, fetchEvents, fetchCloud, fetchAll,
     createEnrollmentToken, createLandingNode, updateLandingNode, deleteLandingNode,
     createService, updateService, deleteService,
+    syncCloud, createCloudAccount, updateCloudAccount, deleteCloudAccount, controlCloudInstance,
   }
 })

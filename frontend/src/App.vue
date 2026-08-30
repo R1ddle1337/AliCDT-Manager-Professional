@@ -77,6 +77,7 @@ const navItems = [
   { path: '/relay-nodes', code: 'CDT', label: '中转节点' },
   { path: '/landing-nodes', code: 'OUT', label: '落地节点' },
   { path: '/relay-services', code: 'L4', label: '转发服务' },
+  { path: '/cloud-resources', code: 'ECS', label: '云资源' },
 ]
 
 const activeIndex = computed(() => {

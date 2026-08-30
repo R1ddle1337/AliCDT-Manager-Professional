@@ -21,6 +21,7 @@ func main() {
 	bootstrapToken := flag.String("enroll-token", env("CDT_BOOTSTRAP_ENROLL_TOKEN", ""), "optional initial one-time agent token")
 	frontendDir := flag.String("frontend-dir", env("CDT_FRONTEND_DIR", ""), "optional built frontend directory")
 	agentInstaller := flag.String("agent-installer", env("CDT_AGENT_INSTALLER", ""), "optional agent installer script")
+	cloudSyncInterval := flag.Duration("cloud-sync-interval", 2*time.Minute, "Aliyun ECS/CDT synchronization interval")
 	flag.Parse()
 
 	store, err := controller.OpenStore(*database)
@@ -45,6 +46,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go server.RunCloudScheduler(ctx, *cloudSyncInterval)
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
