@@ -43,9 +43,10 @@
           <span class="tag tag-muted">{{ acc.shutdown_mode === 'StopCharging' ? '节省停机' : '普通停机' }}</span>
           <span v-if="acc.auto_stop_time" class="tag tag-muted">{{ acc.auto_stop_time }} 关机</span>
           <span v-if="acc.auto_start_time" class="tag tag-muted">{{ acc.auto_start_time }} 开机</span>
-          <span class="ml-auto flex gap-1">
-            <button type="button" @click="openEdit(acc)" class="btn-ghost px-2.5 py-1.5 text-xs">编辑</button>
-            <button type="button" @click="confirmDelete(acc)" class="btn-danger px-2.5 py-1.5 text-xs">删除</button>
+            <span class="ml-auto flex flex-wrap justify-end gap-1">
+              <button type="button" @click="openAgentInstall(acc)" class="btn-ghost border border-blue-100 px-2.5 py-1.5 text-xs text-accent">安装 Agent</button>
+              <button type="button" @click="openEdit(acc)" class="btn-ghost px-2.5 py-1.5 text-xs">编辑</button>
+              <button type="button" @click="confirmDelete(acc)" class="btn-danger px-2.5 py-1.5 text-xs">删除</button>
           </span>
         </div>
       </article>
@@ -63,8 +64,8 @@
 
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div class="sm:col-span-2"><label class="field-label" for="account-name">备注名 <span class="text-danger">*</span></label><input id="account-name" v-model="form.name" class="input" placeholder="例如：生产环境" /></div>
-          <div><label class="field-label" for="access-key-id">AccessKey ID <span class="text-danger">*</span></label><input id="access-key-id" v-model="form.access_key_id" class="input" autocomplete="off" placeholder="LTAI..." /></div>
-          <div><label class="field-label" for="access-key-secret">AccessKey Secret <span v-if="!editTarget" class="text-danger">*</span></label><input id="access-key-secret" v-model="form.access_key_secret" type="password" class="input" autocomplete="new-password" :placeholder="editTarget ? '留空表示不修改' : '请输入密钥'" /></div>
+          <div><label class="field-label" for="access-key-id">CDT API Key ID <span class="text-danger">*</span></label><input id="access-key-id" v-model="form.access_key_id" class="input" autocomplete="off" placeholder="LTAI..." /></div>
+          <div><label class="field-label" for="access-key-secret">CDT API Key Secret <span v-if="!editTarget" class="text-danger">*</span></label><input id="access-key-secret" v-model="form.access_key_secret" type="password" class="input" autocomplete="new-password" :placeholder="editTarget ? '留空表示不修改' : '请输入密钥'" /></div>
           <div><label class="field-label" for="region-id">地域 ID <span class="text-danger">*</span></label><input id="region-id" v-model="form.region_id" class="input" placeholder="ap-southeast-1" /></div>
           <div><label class="field-label" for="site-type">站点类型</label><select id="site-type" v-model="form.site_type" class="input"><option value="international">国际站</option><option value="china">中国站</option></select></div>
           <div class="sm:col-span-2"><label class="field-label" for="instance-id">实例 ID <span class="font-normal text-slate-400">（用于保活与定时任务，可选）</span></label><input id="instance-id" v-model="form.instance_id" class="input" placeholder="i-..." /></div>
@@ -99,21 +100,43 @@
         <div class="flex gap-3"><button type="button" @click="deleteTarget = null" class="btn-ghost flex-1 border border-slate-200">取消</button><button type="button" @click="doDelete" class="btn-danger flex-1">确认删除</button></div>
       </div>
     </Modal>
+
+    <Modal v-if="installAccount" @close="closeAgentInstall">
+      <div class="space-y-5">
+        <div class="flex items-start justify-between gap-4">
+          <div><div class="eyebrow">RELAY AGENT</div><h2 class="mt-1 text-lg font-bold text-slate-900">为 {{ installAccount.name }} 安装 Agent</h2><p class="mt-2 text-sm leading-6 text-slate-500">在目标 CDT 机器上使用 root SSH 登录后，执行下面的一键命令。注册码 30 分钟内有效且只能使用一次。</p></div>
+          <button type="button" class="btn-ghost px-2 text-lg leading-none" aria-label="关闭" @click="closeAgentInstall">×</button>
+        </div>
+        <div v-if="installLoading" class="notice notice-info">正在生成一次性安装命令...</div>
+        <div v-if="installError" class="notice notice-error">{{ installError }}</div>
+        <div v-if="installCommand" class="space-y-3">
+          <div class="flex items-center justify-between gap-3"><span class="text-xs font-semibold text-slate-600">root SSH 执行命令</span><button type="button" class="btn-ghost border border-slate-200 text-xs" @click="copyAgentCommand">复制命令</button></div>
+          <pre class="command-box">{{ installCommand }}</pre>
+          <p class="text-xs leading-5 text-slate-400">安装完成后，Agent 会通过 HTTPS 回连控制台；面板不会获取或保存目标服务器的 SSH 密码、私钥。</p>
+        </div>
+      </div>
+    </Modal>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useStore } from '../stores'
+import { useRelayStore } from '../stores/relay'
 import Modal from '../components/Modal.vue'
 
 const store = useStore()
+const relayStore = useRelayStore()
 const showForm = ref(false)
 const editTarget = ref(null)
 const deleteTarget = ref(null)
 const submitting = ref(false)
 const formError = ref('')
 const saveMessage = ref('')
+const installAccount = ref(null)
+const installCommand = ref('')
+const installLoading = ref(false)
+const installError = ref('')
 
 const defaultForm = () => ({ name: '', access_key_id: '', access_key_secret: '', region_id: 'ap-southeast-1', site_type: 'international', instance_id: '', traffic_limit_gb: 200, threshold_percent: 95, outstanding_threshold: 0, shutdown_mode: 'StopCharging', keep_alive: false, auto_stop_time: null, auto_start_time: null })
 const form = ref(defaultForm())
@@ -169,6 +192,24 @@ async function submit() {
 }
 
 function confirmDelete(acc) { deleteTarget.value = acc }
+function shellQuote(value) { return `'${String(value || '').replace(/'/g, `'\\''`)}'` }
+async function openAgentInstall(acc) {
+  installAccount.value = acc
+  installCommand.value = ''
+  installError.value = ''
+  installLoading.value = true
+  try {
+    const data = await relayStore.createEnrollmentToken(30)
+    const nodeName = acc.name ? `cdt-${acc.name}` : 'cdt-relay-agent'
+    installCommand.value = `curl -fsSL https://${window.location.host}/agent/install.sh | sh -s -- --server https://${window.location.host} --token ${shellQuote(data.token)} --node-name ${shellQuote(nodeName)}`
+  } catch (e) {
+    installError.value = e.response?.data?.error || '生成安装命令失败，请稍后重试'
+  } finally {
+    installLoading.value = false
+  }
+}
+function closeAgentInstall() { installAccount.value = null; installCommand.value = ''; installError.value = '' }
+async function copyAgentCommand() { if (installCommand.value) await navigator.clipboard.writeText(installCommand.value) }
 async function doDelete() {
   try { await store.deleteAccount(deleteTarget.value.id); deleteTarget.value = null } catch (e) { saveMessage.value = e.response?.data?.detail || '删除失败' }
 }
@@ -191,6 +232,7 @@ async function doDelete() {
 .tag { border-radius: 999px; padding: 4px 8px; font-size: 10px; font-weight: 650; }
 .tag-blue { background: #eff6ff; color: #2563eb; }
 .tag-muted { background: #f1f5f9; color: #64748b; }
+.command-box { overflow: auto; border-radius: 9px; background: #0f172a; padding: 14px; color: #dbeafe; font-size: 11px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
 .toggle { position: relative; display: inline-flex; width: 40px; height: 23px; flex: 0 0 auto; border-radius: 999px; background: #cbd5e1; transition: background .15s ease; }
 .toggle span { position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(15,23,42,.2); transition: transform .15s ease; }
 .toggle-on { background: #2563eb; }
