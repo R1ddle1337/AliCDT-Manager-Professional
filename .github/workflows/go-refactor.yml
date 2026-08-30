@@ -1,0 +1,32 @@
+name: Go Relay Platform CI
+
+on:
+  push:
+    branches: [main, refactor/go-relay-platform]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache: true
+      - name: Go tests
+        run: go test -race ./...
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Frontend build
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+      - name: Build controller and agent
+        run: |
+          CGO_ENABLED=0 go build -o /tmp/alicdt-controller ./cmd/controller
+          CGO_ENABLED=0 go build -o /tmp/cdt-relay-agent ./cmd/relay-agent

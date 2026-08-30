@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -18,13 +20,17 @@ import (
 )
 
 type ServerOptions struct {
-	AdminToken string
+	AdminToken         string
+	FrontendDir        string
+	AgentInstallerPath string
 }
 
 type Server struct {
-	store      *Store
-	adminToken string
-	router     chi.Router
+	store              *Store
+	adminToken         string
+	frontendDir        string
+	agentInstallerPath string
+	router             chi.Router
 }
 
 func NewServer(store *Store, opts ServerOptions) (*Server, error) {
@@ -34,7 +40,7 @@ func NewServer(store *Store, opts ServerOptions) (*Server, error) {
 	if strings.TrimSpace(opts.AdminToken) == "" {
 		return nil, errors.New("admin token is required")
 	}
-	server := &Server{store: store, adminToken: opts.AdminToken}
+	server := &Server{store: store, adminToken: opts.AdminToken, frontendDir: opts.FrontendDir, agentInstallerPath: opts.AgentInstallerPath}
 	server.router = server.routes()
 	return server, nil
 }
@@ -50,6 +56,12 @@ func (s *Server) routes() chi.Router {
 	router.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "service": "alicdt-controller"})
 	})
+	if s.agentInstallerPath != "" {
+		router.Get("/agent/install.sh", s.serveAgentInstaller)
+	}
+	router.Get("/api/v2/auth/initialized", s.adminInitialized)
+	router.Post("/api/v2/auth/init", s.initAdmin)
+	router.Post("/api/v2/auth/login", s.loginAdmin)
 
 	router.Route("/api/v2/agents", func(router chi.Router) {
 		router.Post("/enroll", s.enrollAgent)
@@ -66,22 +78,98 @@ func (s *Server) routes() chi.Router {
 		router.Get("/api/v2/relay-nodes", s.listRelayNodes)
 		router.Get("/api/v2/landing-nodes", s.listLandingNodes)
 		router.Post("/api/v2/landing-nodes", s.createLandingNode)
+		router.Put("/api/v2/landing-nodes/{landingID}", s.updateLandingNode)
+		router.Delete("/api/v2/landing-nodes/{landingID}", s.deleteLandingNode)
 		router.Get("/api/v2/relay-services", s.listRelayServices)
 		router.Post("/api/v2/relay-services", s.createRelayService)
+		router.Put("/api/v2/relay-services/{serviceID}", s.updateRelayService)
 		router.Delete("/api/v2/relay-services/{serviceID}", s.deleteRelayService)
 	})
+	if s.frontendDir != "" {
+		router.NotFound(s.serveFrontend)
+	}
 	return router
+}
+
+func (s *Server) serveAgentInstaller(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	http.ServeFile(w, r, s.agentInstallerPath)
+}
+
+func (s *Server) serveFrontend(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		writeError(w, http.StatusNotFound, errors.New("API route not found"))
+		return
+	}
+	clean := strings.TrimPrefix(filepath.Clean(r.URL.Path), string(filepath.Separator))
+	if clean == "." || clean == "" {
+		clean = "index.html"
+	}
+	candidate := filepath.Join(s.frontendDir, clean)
+	relative, err := filepath.Rel(s.frontendDir, candidate)
+	if err == nil && !strings.HasPrefix(relative, "..") {
+		if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
+			http.ServeFile(w, r, candidate)
+			return
+		}
+	}
+	http.ServeFile(w, r, filepath.Join(s.frontendDir, "index.html"))
 }
 
 func (s *Server) adminAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := bearerToken(r)
-		if subtle.ConstantTimeCompare([]byte(token), []byte(s.adminToken)) != 1 {
+		staticValid := subtle.ConstantTimeCompare([]byte(token), []byte(s.adminToken)) == 1
+		if !staticValid && s.store.AuthenticateAdminSession(r.Context(), token) != nil {
 			writeError(w, http.StatusUnauthorized, errors.New("invalid admin token"))
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (s *Server) adminInitialized(w http.ResponseWriter, r *http.Request) {
+	initialized, err := s.store.IsAdminInitialized(r.Context())
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"initialized": initialized})
+}
+
+func (s *Server) initAdmin(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	token, err := s.store.InitAdmin(r.Context(), request.Username, request.Password)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"token": token, "username": request.Username})
+}
+
+func (s *Server) loginAdmin(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	token, err := s.store.LoginAdmin(r.Context(), request.Username, request.Password)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"token": token, "username": request.Username})
 }
 
 func (s *Server) agentAuth(next http.Handler) http.Handler {
@@ -194,6 +282,32 @@ func (s *Server) listLandingNodes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, nodes)
 }
 
+func (s *Server) updateLandingNode(w http.ResponseWriter, r *http.Request) {
+	var request CreateLandingNodeRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	node, err := s.store.UpdateLandingNode(r.Context(), chi.URLParam(r, "landingID"), request)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeStoreError(w, err)
+		} else {
+			writeError(w, http.StatusBadRequest, err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, node)
+}
+
+func (s *Server) deleteLandingNode(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.DeleteLandingNode(r.Context(), chi.URLParam(r, "landingID")); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) createRelayService(w http.ResponseWriter, r *http.Request) {
 	var request CreateRelayServiceRequest
 	if err := decodeJSON(r, &request); err != nil {
@@ -215,6 +329,24 @@ func (s *Server) listRelayServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, services)
+}
+
+func (s *Server) updateRelayService(w http.ResponseWriter, r *http.Request) {
+	var request CreateRelayServiceRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	service, err := s.store.UpdateRelayService(r.Context(), chi.URLParam(r, "serviceID"), request)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeStoreError(w, err)
+		} else {
+			writeError(w, http.StatusBadRequest, err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, service)
 }
 
 func (s *Server) deleteRelayService(w http.ResponseWriter, r *http.Request) {

@@ -51,11 +51,11 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { useStore } from '../stores'
+import { useRelayStore } from '../stores/relay'
 import axios from 'axios'
 
 const router = useRouter()
-const store = useStore()
+const store = useRelayStore()
 const isInit = ref(false)
 const loading = ref(false)
 const error = ref('')
@@ -63,7 +63,7 @@ const form = ref({ username: '', password: '', confirm: '' })
 
 onMounted(async () => {
   try {
-    const { data } = await axios.get('/api/auth/initialized')
+    const { data } = await axios.get('/api/v2/auth/initialized')
     isInit.value = !data.initialized
   } catch (e) {
     error.value = '无法连接服务，请稍后重试'
@@ -89,7 +89,7 @@ async function submit() {
   loading.value = true
   try {
     if (isInit.value) {
-      const { data } = await axios.post('/api/auth/init', { username: form.value.username, password: form.value.password })
+      const { data } = await axios.post('/api/v2/auth/init', { username: form.value.username, password: form.value.password })
       localStorage.setItem('token', data.token)
     } else {
       await store.login(form.value.username, form.value.password)

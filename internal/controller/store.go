@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/R1ddle1337/AliCDT-Manager-Professional/internal/protocol"
+	"golang.org/x/crypto/bcrypt"
 	_ "modernc.org/sqlite"
 )
 
@@ -154,6 +155,16 @@ func (s *Store) migrate(ctx context.Context) error {
 			service_status_json TEXT NOT NULL DEFAULT '[]',
 			created_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS settings (
+			key TEXT PRIMARY KEY,
+			value TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS admin_sessions (
+			token_hash TEXT PRIMARY KEY,
+			username TEXT NOT NULL,
+			expires_at TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS enrollment_tokens (
 			token_hash TEXT PRIMARY KEY,
 			expires_at TEXT NOT NULL,
@@ -214,6 +225,103 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (s *Store) IsAdminInitialized(ctx context.Context) (bool, error) {
+	var value string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key='admin_password_hash'`).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil && value != "", err
+}
+
+func (s *Store) InitAdmin(ctx context.Context, username, password string) (string, error) {
+	initialized, err := s.IsAdminInitialized(ctx)
+	if err != nil {
+		return "", err
+	}
+	if initialized {
+		return "", errors.New("administrator is already initialized")
+	}
+	username = strings.TrimSpace(username)
+	if username == "" || len(password) < 8 {
+		return "", errors.New("username and password of at least 8 characters are required")
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES('admin_username',?),('admin_password_hash',?)`, username, string(hash)); err != nil {
+		return "", err
+	}
+	token, err := createAdminSession(ctx, tx, username)
+	if err != nil {
+		return "", err
+	}
+	return token, tx.Commit()
+}
+
+func (s *Store) LoginAdmin(ctx context.Context, username, password string) (string, error) {
+	var storedUsername, passwordHash string
+	if err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key='admin_username'`).Scan(&storedUsername); err != nil {
+		return "", errors.New("administrator is not initialized")
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key='admin_password_hash'`).Scan(&passwordHash); err != nil {
+		return "", errors.New("administrator is not initialized")
+	}
+	if subtleStringCompare(username, storedUsername) == false || bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)) != nil {
+		return "", errors.New("invalid username or password")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	token, err := createAdminSession(ctx, tx, storedUsername)
+	if err != nil {
+		return "", err
+	}
+	return token, tx.Commit()
+}
+
+func (s *Store) AuthenticateAdminSession(ctx context.Context, token string) error {
+	if token == "" {
+		return errors.New("missing session")
+	}
+	var expires string
+	if err := s.db.QueryRowContext(ctx, `SELECT expires_at FROM admin_sessions WHERE token_hash=?`, hashSecret(token)).Scan(&expires); err != nil {
+		return errors.New("invalid session")
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, expires)
+	if err != nil || time.Now().UTC().After(expiresAt) {
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM admin_sessions WHERE token_hash=?`, hashSecret(token))
+		return errors.New("session expired")
+	}
+	return nil
+}
+
+func createAdminSession(ctx context.Context, tx *sql.Tx, username string) (string, error) {
+	raw := randomSecret(32)
+	now := time.Now().UTC()
+	_, err := tx.ExecContext(ctx, `INSERT INTO admin_sessions(token_hash,username,expires_at,created_at) VALUES(?,?,?,?)`, hashSecret(raw), username, now.Add(7*24*time.Hour).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+	return raw, err
+}
+
+func subtleStringCompare(left, right string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	var result byte
+	for index := range left {
+		result |= left[index] ^ right[index]
+	}
+	return result == 0
 }
 
 func (s *Store) CreateEnrollmentToken(ctx context.Context, raw string, ttl time.Duration) error {
@@ -397,6 +505,63 @@ func (s *Store) ListLandingNodes(ctx context.Context) ([]LandingNode, error) {
 	return nodes, rows.Err()
 }
 
+func (s *Store) UpdateLandingNode(ctx context.Context, id string, request CreateLandingNodeRequest) (LandingNode, error) {
+	request.Name = strings.TrimSpace(request.Name)
+	request.Address = strings.TrimSpace(request.Address)
+	request.Network = strings.ToLower(strings.TrimSpace(request.Network))
+	if request.Name == "" || request.Address == "" || request.Port < 1 || request.Port > 65535 {
+		return LandingNode{}, errors.New("valid name, address and port are required")
+	}
+	if !oneOf(request.Network, "tcp", "udp", "tcp+udp") {
+		return LandingNode{}, errors.New("network must be tcp, udp or tcp+udp")
+	}
+	enabled := true
+	if request.Enabled != nil {
+		enabled = *request.Enabled
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return LandingNode{}, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE landing_nodes SET name=?,address=?,port=?,network=?,enabled=? WHERE id=?`, request.Name, request.Address, request.Port, request.Network, boolInt(enabled), id)
+	if err != nil {
+		return LandingNode{}, err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return LandingNode{}, sql.ErrNoRows
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET desired_revision=desired_revision+1 WHERE id IN (
+		SELECT DISTINCT rs.relay_node_id FROM relay_services rs JOIN service_targets st ON st.service_id=rs.id WHERE st.landing_node_id=?
+	)`, id); err != nil {
+		return LandingNode{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return LandingNode{}, err
+	}
+	nodes, err := s.ListLandingNodes(ctx)
+	if err != nil {
+		return LandingNode{}, err
+	}
+	for _, node := range nodes {
+		if node.ID == id {
+			return node, nil
+		}
+	}
+	return LandingNode{}, sql.ErrNoRows
+}
+
+func (s *Store) DeleteLandingNode(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM landing_nodes WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (s *Store) CreateRelayService(ctx context.Context, request CreateRelayServiceRequest) (RelayService, error) {
 	if request.RelayNodeID == "" || strings.TrimSpace(request.Name) == "" || request.ListenPort < 1 || request.ListenPort > 65535 {
 		return RelayService{}, errors.New("relay node, name and valid listen port are required")
@@ -464,6 +629,86 @@ func (s *Store) CreateRelayService(ctx context.Context, request CreateRelayServi
 		}
 	}
 	return RelayService{}, errors.New("service was created but could not be loaded")
+}
+
+func (s *Store) UpdateRelayService(ctx context.Context, id string, request CreateRelayServiceRequest) (RelayService, error) {
+	var existingNodeID string
+	if err := s.db.QueryRowContext(ctx, `SELECT relay_node_id FROM relay_services WHERE id=?`, id).Scan(&existingNodeID); err != nil {
+		return RelayService{}, err
+	}
+	if request.RelayNodeID == "" {
+		request.RelayNodeID = existingNodeID
+	}
+	if request.RelayNodeID != existingNodeID {
+		return RelayService{}, errors.New("moving a service to another relay node is not supported")
+	}
+	if strings.TrimSpace(request.Name) == "" || request.ListenPort < 1 || request.ListenPort > 65535 {
+		return RelayService{}, errors.New("name and valid listen port are required")
+	}
+	if request.ListenHost == "" {
+		request.ListenHost = "0.0.0.0"
+	}
+	request.Network = strings.ToLower(request.Network)
+	request.Mode = strings.ToLower(request.Mode)
+	if !oneOf(request.Network, "tcp", "udp", "tcp+udp") || !oneOf(request.Mode, "failover", "round_robin", "ip_hash", "weighted") {
+		return RelayService{}, errors.New("invalid network or mode")
+	}
+	if len(request.Targets) == 0 {
+		return RelayService{}, errors.New("at least one target is required")
+	}
+	if request.DialTimeoutMillis <= 0 {
+		request.DialTimeoutMillis = 2500
+	}
+	if request.UDPIdleTimeoutSeconds <= 0 {
+		request.UDPIdleTimeoutSeconds = 60
+	}
+	request.Health = normalizeHealth(request.Health)
+	enabled := true
+	if request.Enabled != nil {
+		enabled = *request.Enabled
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return RelayService{}, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE relay_services SET name=?,listen_host=?,listen_port=?,network=?,mode=?,enabled=?,dial_timeout_ms=?,udp_idle_timeout_seconds=?,health_enabled=?,health_interval_seconds=?,health_timeout_ms=?,failure_threshold=?,success_threshold=?,recovery_cooldown_seconds=?,updated_at=? WHERE id=?`,
+		strings.TrimSpace(request.Name), request.ListenHost, request.ListenPort, request.Network, request.Mode, boolInt(enabled), request.DialTimeoutMillis, request.UDPIdleTimeoutSeconds,
+		boolInt(request.Health.Enabled), request.Health.IntervalSeconds, request.Health.TimeoutMillis, request.Health.FailureThreshold, request.Health.SuccessThreshold, request.Health.RecoveryCooldownSecs, now, id); err != nil {
+		return RelayService{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM service_targets WHERE service_id=?`, id); err != nil {
+		return RelayService{}, err
+	}
+	for _, target := range request.Targets {
+		targetEnabled := true
+		if target.Enabled != nil {
+			targetEnabled = *target.Enabled
+		}
+		if target.Weight <= 0 {
+			target.Weight = 1
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO service_targets(id,service_id,landing_node_id,weight,priority,enabled) VALUES(?,?,?,?,?,?)`, randomID("target"), id, target.LandingNodeID, target.Weight, target.Priority, boolInt(targetEnabled)); err != nil {
+			return RelayService{}, err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET desired_revision=desired_revision+1 WHERE id=?`, existingNodeID); err != nil {
+		return RelayService{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return RelayService{}, err
+	}
+	services, err := s.ListRelayServices(ctx, existingNodeID)
+	if err != nil {
+		return RelayService{}, err
+	}
+	for _, service := range services {
+		if service.ID == id {
+			return service, nil
+		}
+	}
+	return RelayService{}, sql.ErrNoRows
 }
 
 func (s *Store) ListRelayServices(ctx context.Context, relayNodeID string) ([]RelayService, error) {

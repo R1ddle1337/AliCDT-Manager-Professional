@@ -64,6 +64,11 @@ the initial installation.
 - `GET|POST /api/v2/landing-nodes`
 - `GET|POST /api/v2/relay-services`
 - `DELETE /api/v2/relay-services/{id}`
+- `PUT /api/v2/landing-nodes/{id}`
+- `PUT /api/v2/relay-services/{id}`
+
+The controller also serves the Vue SPA and the root SSH installer at
+`/agent/install.sh` when built with `Dockerfile.controller`.
 
 Admin APIs require `Authorization: Bearer $CDT_ADMIN_TOKEN`. Agent APIs use the
 per-node secret returned during one-time enrollment.

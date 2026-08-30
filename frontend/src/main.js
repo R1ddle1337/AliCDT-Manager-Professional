@@ -4,20 +4,20 @@ import { createRouter, createWebHistory } from 'vue-router'
 import App from './App.vue'
 import './style.css'
 
-import Dashboard from './views/Dashboard.vue'
 import Login from './views/Login.vue'
-import Accounts from './views/Accounts.vue'
-import Logs from './views/Logs.vue'
-import Settings from './views/Settings.vue'
+import RelayOverview from './views/RelayOverview.vue'
+import RelayNodes from './views/RelayNodes.vue'
+import LandingNodes from './views/LandingNodes.vue'
+import RelayServices from './views/RelayServices.vue'
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/login', component: Login },
-    { path: '/', component: Dashboard, meta: { auth: true } },
-    { path: '/accounts', component: Accounts, meta: { auth: true } },
-    { path: '/logs', component: Logs, meta: { auth: true } },
-    { path: '/settings', component: Settings, meta: { auth: true } },
+    { path: '/', component: RelayOverview, meta: { auth: true } },
+    { path: '/relay-nodes', component: RelayNodes, meta: { auth: true } },
+    { path: '/landing-nodes', component: LandingNodes, meta: { auth: true } },
+    { path: '/relay-services', component: RelayServices, meta: { auth: true } },
   ]
 })
 

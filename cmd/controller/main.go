@@ -19,6 +19,8 @@ func main() {
 	database := flag.String("database", env("CDT_DATABASE", "/app/data/guard.db"), "SQLite database path")
 	adminToken := flag.String("admin-token", env("CDT_ADMIN_TOKEN", ""), "admin API bearer token")
 	bootstrapToken := flag.String("enroll-token", env("CDT_BOOTSTRAP_ENROLL_TOKEN", ""), "optional initial one-time agent token")
+	frontendDir := flag.String("frontend-dir", env("CDT_FRONTEND_DIR", ""), "optional built frontend directory")
+	agentInstaller := flag.String("agent-installer", env("CDT_AGENT_INSTALLER", ""), "optional agent installer script")
 	flag.Parse()
 
 	store, err := controller.OpenStore(*database)
@@ -31,7 +33,7 @@ func main() {
 			fatal(err)
 		}
 	}
-	server, err := controller.NewServer(store, controller.ServerOptions{AdminToken: *adminToken})
+	server, err := controller.NewServer(store, controller.ServerOptions{AdminToken: *adminToken, FrontendDir: *frontendDir, AgentInstallerPath: *agentInstaller})
 	if err != nil {
 		fatal(err)
 	}

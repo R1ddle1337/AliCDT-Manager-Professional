@@ -13,8 +13,8 @@
         <div class="sidebar-brand">
           <div class="brand-mark">AC</div>
           <div>
-            <div class="brand-name">AliCDT Manager</div>
-            <div class="brand-caption">云资源控制台</div>
+            <div class="brand-name">AliCDT Relay</div>
+            <div class="brand-caption">智能中转控制台</div>
           </div>
         </div>
 
@@ -50,7 +50,7 @@
       <main class="app-main">
         <header class="mobile-header">
           <div class="brand-mark brand-mark-small">AC</div>
-          <span class="font-semibold">AliCDT Manager</span>
+          <span class="font-semibold">AliCDT Relay</span>
         </header>
         <div class="page-container">
           <router-view v-slot="{ Component }">
@@ -74,9 +74,9 @@ const isLogin = computed(() => route.path === '/login')
 
 const navItems = [
   { path: '/', code: 'OV', label: '总览' },
-  { path: '/accounts', code: 'AC', label: '账户管理' },
-  { path: '/logs', code: 'LG', label: '系统日志' },
-  { path: '/settings', code: 'ST', label: '系统设置' },
+  { path: '/relay-nodes', code: 'CDT', label: '中转节点' },
+  { path: '/landing-nodes', code: 'OUT', label: '落地节点' },
+  { path: '/relay-services', code: 'L4', label: '转发服务' },
 ]
 
 const activeIndex = computed(() => {
