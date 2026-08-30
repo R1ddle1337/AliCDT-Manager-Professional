@@ -185,7 +185,7 @@ async function submit() {
     showForm.value = false
     window.setTimeout(() => { saveMessage.value = '' }, 8000)
   } catch (e) {
-    formError.value = e.response?.data?.detail || '保存失败，请检查网络和账户参数'
+    formError.value = e.response?.data?.error || e.response?.data?.detail || '保存失败，请检查网络和账户参数'
   } finally {
     submitting.value = false
   }
@@ -211,7 +211,7 @@ async function openAgentInstall(acc) {
 function closeAgentInstall() { installAccount.value = null; installCommand.value = ''; installError.value = '' }
 async function copyAgentCommand() { if (installCommand.value) await navigator.clipboard.writeText(installCommand.value) }
 async function doDelete() {
-  try { await store.deleteAccount(deleteTarget.value.id); deleteTarget.value = null } catch (e) { saveMessage.value = e.response?.data?.detail || '删除失败' }
+  try { await store.deleteAccount(deleteTarget.value.id); deleteTarget.value = null } catch (e) { saveMessage.value = e.response?.data?.error || e.response?.data?.detail || '删除失败' }
 }
 </script>
 

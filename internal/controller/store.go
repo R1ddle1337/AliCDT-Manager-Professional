@@ -1477,7 +1477,7 @@ func (s *Store) MarkTrafficProtectionAction(ctx context.Context, accountID int64
 	}
 	now := time.Now().UTC()
 	if actionError == nil {
-		if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_action_completed=1,protection_last_error='' WHERE id=?`, accountID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_action_completed=1,manual_stopped=1,protection_last_error='' WHERE id=?`, accountID); err != nil {
 			return err
 		}
 		if err := insertEvent(ctx, tx, "", "warning", "traffic_protection", fmt.Sprintf("[%s] 流量保护已发送 ECS 停机指令", name), now); err != nil {
