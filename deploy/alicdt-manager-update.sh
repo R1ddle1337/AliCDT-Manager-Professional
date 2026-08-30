@@ -31,9 +31,11 @@ payload = {
     "message": message,
     "request_id": request_id,
     "target_commit": commit,
-    "started_at": started,
-    "finished_at": finished,
 }
+if started:
+    payload["started_at"] = started
+if finished:
+    payload["finished_at"] = finished
 directory = os.path.dirname(path)
 os.makedirs(directory, mode=0o700, exist_ok=True)
 fd, temporary = tempfile.mkstemp(prefix=".update-status-", dir=directory)
