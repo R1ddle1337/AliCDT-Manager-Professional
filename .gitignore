@@ -7,4 +7,5 @@ frontend/dist/
 *.db
 .DS_Store
 data-go/
+data-go-staging/
 data-agent/

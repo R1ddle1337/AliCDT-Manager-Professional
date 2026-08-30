@@ -81,6 +81,11 @@ docker compose -f deploy/docker-compose.go.yml up --build
 The development controller listens on `127.0.0.1:18010`. The existing
 production application remains unchanged.
 
+For a real ECS test that keeps the current public panel online, follow
+[`GREY_DEPLOYMENT.md`](GREY_DEPLOYMENT.md).
+After that matrix passes, use [`PRODUCTION_CUTOVER.md`](PRODUCTION_CUTOVER.md)
+for the reversible same-port cutover.
+
 ## Agent installation
 
 Create a one-time enrollment token in the panel, then connect to the CDT ECS by
