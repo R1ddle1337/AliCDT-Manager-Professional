@@ -29,7 +29,6 @@
               :class="activeIndex === index ? 'nav-item-active' : ''"
               @click="navigate(item.path)"
             >
-              <span class="nav-code" :class="activeIndex === index ? 'nav-code-active' : ''">{{ item.code }}</span>
               <span>{{ item.label }}</span>
             </button>
           </div>
@@ -41,7 +40,6 @@
             <span>服务运行正常</span>
           </div>
           <button type="button" @click="logout" class="nav-item nav-item-muted">
-            <span class="nav-code">OUT</span>
             <span>退出登录</span>
           </button>
         </div>
@@ -88,17 +86,17 @@ const relayStore = useRelayStore()
 const isLogin = computed(() => route.path === '/login')
 
 const navItems = [
-  { path: '/', code: 'OV', label: '中转总览' },
-  { path: '/instances', code: 'ECS', label: '实例工作区' },
-  { path: '/accounts', code: 'AK', label: '云账户' },
-  { path: '/cloud-resources', code: 'SAFE', label: '流量保护' },
-  { path: '/relay-nodes', code: 'CDT', label: '中转节点' },
-  { path: '/landing-nodes', code: 'OUT', label: '落地节点' },
-  { path: '/relay-services', code: 'L4', label: '转发服务' },
-  { path: '/relay-pools', code: 'POOL', label: '入口池' },
-  { path: '/logs', code: 'LOG', label: '系统日志' },
-  { path: '/settings', code: 'SET', label: '系统设置' },
-  { path: '/dns', code: 'DNS', label: 'DNS 入口' },
+  { path: '/', label: '中转总览' },
+  { path: '/instances', label: '实例工作区' },
+  { path: '/accounts', label: '云账户' },
+  { path: '/cloud-resources', label: '流量保护' },
+  { path: '/relay-nodes', label: '中转节点' },
+  { path: '/landing-nodes', label: '落地节点' },
+  { path: '/relay-services', label: '转发服务' },
+  { path: '/relay-pools', label: '入口池' },
+  { path: '/logs', label: '系统日志' },
+  { path: '/settings', label: '系统设置' },
+  { path: '/dns', label: 'DNS 入口' },
 ]
 
 const activeIndex = computed(() => {
