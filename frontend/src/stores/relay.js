@@ -87,6 +87,11 @@ export const useRelayStore = defineStore('relay-platform', () => {
     await fetchLandingNodes()
   }
 
+  async function fetchLandingRelayLinks(id) {
+    const { data } = await api.get(`/landing-nodes/${id}/relay-links`)
+    return data || []
+  }
+
   async function createService(payload) {
     const { data } = await api.post('/relay-services', payload)
     await Promise.all([fetchServices(), fetchRelayNodes()])
@@ -147,7 +152,7 @@ export const useRelayStore = defineStore('relay-platform', () => {
   return {
     relayNodes, landingNodes, services, events, cloud, loading, updateStatus,
     login, fetchRelayNodes, fetchLandingNodes, fetchServices, fetchEvents, fetchCloud, fetchAll,
-    createEnrollmentToken, createLandingNode, updateLandingNode, deleteLandingNode,
+    createEnrollmentToken, createLandingNode, updateLandingNode, deleteLandingNode, fetchLandingRelayLinks,
     createService, updateService, deleteService,
     syncCloud, createCloudAccount, updateCloudAccount, deleteCloudAccount, controlCloudInstance,
     fetchUpdateStatus, requestUpdate,

@@ -90,6 +90,7 @@ func (s *Server) routes() chi.Router {
 		router.Post("/api/v2/enrollment-tokens", s.createEnrollmentToken)
 		router.Get("/api/v2/relay-nodes", s.listRelayNodes)
 		router.Get("/api/v2/landing-nodes", s.listLandingNodes)
+		router.Get("/api/v2/landing-nodes/{landingID}/relay-links", s.landingRelayLinks)
 		router.Post("/api/v2/landing-nodes", s.createLandingNode)
 		router.Put("/api/v2/landing-nodes/{landingID}", s.updateLandingNode)
 		router.Delete("/api/v2/landing-nodes/{landingID}", s.deleteLandingNode)
@@ -334,6 +335,15 @@ func (s *Server) createLandingNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, node)
+}
+
+func (s *Server) landingRelayLinks(w http.ResponseWriter, r *http.Request) {
+	links, err := s.store.LandingRelayLinks(r.Context(), chi.URLParam(r, "landingID"))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, links)
 }
 
 func (s *Server) listLandingNodes(w http.ResponseWriter, r *http.Request) {

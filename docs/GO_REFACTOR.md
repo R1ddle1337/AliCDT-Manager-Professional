@@ -164,6 +164,12 @@ The same workflow pushes the multi-architecture controller image to
 - `POST|PUT|DELETE /api/v2/cloud/accounts`
 - `POST /api/v2/cloud/instances/{id}/start`
 - `POST /api/v2/cloud/instances/{id}/stop`
+- `GET /api/v2/landing-nodes/{id}/relay-links`
+
+Landing nodes accept complete `vless://`, `ss://`/SS2022, `vmess://`,
+`trojan://`, `hysteria2://` and `tuic://` links. The generated relay link
+changes only the authority host and port; protocol credentials, Reality
+parameters and transport query fields are retained.
 
 The original console paths remain available for existing clients:
 

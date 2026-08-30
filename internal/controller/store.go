@@ -51,6 +51,8 @@ type LandingNode struct {
 	Address   string    `json:"address"`
 	Port      int       `json:"port"`
 	Network   string    `json:"network"`
+	Protocol  string    `json:"protocol,omitempty"`
+	ShareURI  string    `json:"share_uri,omitempty"`
 	Enabled   bool      `json:"enabled"`
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -198,11 +200,13 @@ type ServiceTarget struct {
 }
 
 type CreateLandingNodeRequest struct {
-	Name    string `json:"name"`
-	Address string `json:"address"`
-	Port    int    `json:"port"`
-	Network string `json:"network"`
-	Enabled *bool  `json:"enabled,omitempty"`
+	Name     string `json:"name"`
+	Address  string `json:"address"`
+	Port     int    `json:"port"`
+	Network  string `json:"network"`
+	Protocol string `json:"protocol"`
+	ShareURI string `json:"share_uri"`
+	Enabled  *bool  `json:"enabled,omitempty"`
 }
 
 type CreateRelayServiceRequest struct {
@@ -346,6 +350,8 @@ func (s *Store) migrate(ctx context.Context) error {
 			address TEXT NOT NULL,
 			port INTEGER NOT NULL,
 			network TEXT NOT NULL,
+			protocol TEXT NOT NULL DEFAULT '',
+			share_uri TEXT NOT NULL DEFAULT '',
 			enabled INTEGER NOT NULL DEFAULT 1,
 			created_at TEXT NOT NULL
 		)`,
@@ -402,6 +408,17 @@ func (s *Store) migrate(ctx context.Context) error {
 		{name: "cloud_account_id", definition: "INTEGER"},
 	} {
 		if err := s.ensureColumn(ctx, "relay_nodes", column.name, column.definition); err != nil {
+			return err
+		}
+	}
+	for _, column := range []struct {
+		name       string
+		definition string
+	}{
+		{name: "protocol", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "share_uri", definition: "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := s.ensureColumn(ctx, "landing_nodes", column.name, column.definition); err != nil {
 			return err
 		}
 	}
@@ -783,8 +800,20 @@ func (s *Store) CreateLandingNode(ctx context.Context, request CreateLandingNode
 	request.Name = strings.TrimSpace(request.Name)
 	request.Address = strings.TrimSpace(request.Address)
 	request.Network = strings.ToLower(strings.TrimSpace(request.Network))
+	request.ShareURI = strings.TrimSpace(request.ShareURI)
+	request.Protocol = strings.ToLower(strings.TrimSpace(request.Protocol))
+	if request.ShareURI != "" {
+		parsed, err := parseNodeLink(request.ShareURI)
+		if err != nil {
+			return LandingNode{}, err
+		}
+		if request.Name == "" {
+			request.Name = parsed.Name
+		}
+		request.Address, request.Port, request.Network, request.Protocol = parsed.Address, parsed.Port, parsed.Network, parsed.Protocol
+	}
 	if request.Name == "" || request.Address == "" || request.Port < 1 || request.Port > 65535 {
-		return LandingNode{}, errors.New("valid name, address and port are required")
+		return LandingNode{}, errors.New("请填写完整节点链接，或提供有效的地址和端口")
 	}
 	switch request.Network {
 	case "tcp", "udp", "tcp+udp":
@@ -795,14 +824,14 @@ func (s *Store) CreateLandingNode(ctx context.Context, request CreateLandingNode
 	if request.Enabled != nil {
 		enabled = *request.Enabled
 	}
-	node := LandingNode{ID: randomID("landing"), Name: request.Name, Address: request.Address, Port: request.Port, Network: request.Network, Enabled: enabled, CreatedAt: time.Now().UTC()}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO landing_nodes(id,name,address,port,network,enabled,created_at) VALUES(?,?,?,?,?,?,?)`,
-		node.ID, node.Name, node.Address, node.Port, node.Network, boolInt(node.Enabled), node.CreatedAt.Format(time.RFC3339Nano))
+	node := LandingNode{ID: randomID("landing"), Name: request.Name, Address: request.Address, Port: request.Port, Network: request.Network, Protocol: request.Protocol, ShareURI: request.ShareURI, Enabled: enabled, CreatedAt: time.Now().UTC()}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO landing_nodes(id,name,address,port,network,protocol,share_uri,enabled,created_at) VALUES(?,?,?,?,?,?,?,?,?)`,
+		node.ID, node.Name, node.Address, node.Port, node.Network, node.Protocol, node.ShareURI, boolInt(node.Enabled), node.CreatedAt.Format(time.RFC3339Nano))
 	return node, err
 }
 
 func (s *Store) ListLandingNodes(ctx context.Context) ([]LandingNode, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,address,port,network,enabled,created_at FROM landing_nodes ORDER BY created_at`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,address,port,network,COALESCE(protocol,''),COALESCE(share_uri,''),enabled,created_at FROM landing_nodes ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -812,7 +841,7 @@ func (s *Store) ListLandingNodes(ctx context.Context) ([]LandingNode, error) {
 		var node LandingNode
 		var enabled int
 		var created string
-		if err := rows.Scan(&node.ID, &node.Name, &node.Address, &node.Port, &node.Network, &enabled, &created); err != nil {
+		if err := rows.Scan(&node.ID, &node.Name, &node.Address, &node.Port, &node.Network, &node.Protocol, &node.ShareURI, &enabled, &created); err != nil {
 			return nil, err
 		}
 		node.Enabled = enabled != 0
@@ -826,8 +855,20 @@ func (s *Store) UpdateLandingNode(ctx context.Context, id string, request Create
 	request.Name = strings.TrimSpace(request.Name)
 	request.Address = strings.TrimSpace(request.Address)
 	request.Network = strings.ToLower(strings.TrimSpace(request.Network))
+	request.ShareURI = strings.TrimSpace(request.ShareURI)
+	request.Protocol = strings.ToLower(strings.TrimSpace(request.Protocol))
+	if request.ShareURI != "" {
+		parsed, err := parseNodeLink(request.ShareURI)
+		if err != nil {
+			return LandingNode{}, err
+		}
+		if request.Name == "" {
+			request.Name = parsed.Name
+		}
+		request.Address, request.Port, request.Network, request.Protocol = parsed.Address, parsed.Port, parsed.Network, parsed.Protocol
+	}
 	if request.Name == "" || request.Address == "" || request.Port < 1 || request.Port > 65535 {
-		return LandingNode{}, errors.New("valid name, address and port are required")
+		return LandingNode{}, errors.New("请填写完整节点链接，或提供有效的地址和端口")
 	}
 	if !oneOf(request.Network, "tcp", "udp", "tcp+udp") {
 		return LandingNode{}, errors.New("network must be tcp, udp or tcp+udp")
@@ -841,7 +882,7 @@ func (s *Store) UpdateLandingNode(ctx context.Context, id string, request Create
 		return LandingNode{}, err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE landing_nodes SET name=?,address=?,port=?,network=?,enabled=? WHERE id=?`, request.Name, request.Address, request.Port, request.Network, boolInt(enabled), id)
+	result, err := tx.ExecContext(ctx, `UPDATE landing_nodes SET name=?,address=?,port=?,network=?,protocol=?,share_uri=?,enabled=? WHERE id=?`, request.Name, request.Address, request.Port, request.Network, request.Protocol, request.ShareURI, boolInt(enabled), id)
 	if err != nil {
 		return LandingNode{}, err
 	}
