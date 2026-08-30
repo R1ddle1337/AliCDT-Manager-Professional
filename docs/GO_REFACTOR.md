@@ -31,6 +31,23 @@ The relay is protocol-transparent. SS2022, VLESS, REALITY, WebSocket, gRPC and
 other TCP/UDP protocols remain encrypted end-to-end between client and landing
 server.
 
+## Protocol validation
+
+An isolated Docker environment was used to exercise the real protocol cores,
+not only generic echo servers:
+
+- Xray 26.3.27: VLESS + XTLS Vision + REALITY completed an HTTP request through
+  `Xray client -> Go Relay Agent -> Xray server -> landing HTTP service`.
+- sing-box 1.13.20: Shadowsocks 2022
+  `2022-blake3-aes-128-gcm` completed both an HTTP-over-TCP request and a real
+  SOCKS5 UDP Associate round trip through a `tcp+udp` relay service.
+- The SS2022 run reported non-zero Agent counters in both directions and the
+  controller converged to desired/current revision `1/1`.
+
+These checks prove protocol-transparent forwarding and Agent accounting. They
+do not replace a grey test on a real CDT ECS, which is still required to measure
+mainland return-path quality, packet loss and client reconnection behavior.
+
 ## Development run
 
 ```bash
