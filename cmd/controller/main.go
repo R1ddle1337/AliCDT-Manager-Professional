@@ -1,0 +1,68 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/R1ddle1337/AliCDT-Manager-Professional/internal/controller"
+)
+
+func main() {
+	listen := flag.String("listen", env("CDT_CONTROLLER_LISTEN", ":8080"), "HTTP listen address")
+	database := flag.String("database", env("CDT_DATABASE", "/app/data/guard.db"), "SQLite database path")
+	adminToken := flag.String("admin-token", env("CDT_ADMIN_TOKEN", ""), "admin API bearer token")
+	bootstrapToken := flag.String("enroll-token", env("CDT_BOOTSTRAP_ENROLL_TOKEN", ""), "optional initial one-time agent token")
+	flag.Parse()
+
+	store, err := controller.OpenStore(*database)
+	if err != nil {
+		fatal(err)
+	}
+	defer store.Close()
+	if *bootstrapToken != "" {
+		if err := store.CreateEnrollmentToken(context.Background(), *bootstrapToken, 24*time.Hour); err != nil {
+			fatal(err)
+		}
+	}
+	server, err := controller.NewServer(store, controller.ServerOptions{AdminToken: *adminToken})
+	if err != nil {
+		fatal(err)
+	}
+	httpServer := &http.Server{
+		Addr:              *listen,
+		Handler:           server.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = httpServer.Shutdown(shutdownCtx)
+	}()
+	fmt.Printf("AliCDT controller listening on %s\n", *listen)
+	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		fatal(err)
+	}
+}
+
+func env(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func fatal(err error) {
+	fmt.Fprintln(os.Stderr, "alicdt-controller:", err)
+	os.Exit(1)
+}

@@ -6,3 +6,5 @@ node_modules/
 frontend/dist/
 *.db
 .DS_Store
+data-go/
+data-agent/

@@ -1,0 +1,36 @@
+services:
+  controller:
+    build:
+      context: ..
+      dockerfile: Dockerfile.controller
+    image: alicdt-controller:dev
+    container_name: alicdt-controller-dev
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18010:8080"
+    volumes:
+      - ../data-go:/app/data
+    environment:
+      CDT_ADMIN_TOKEN: ${CDT_ADMIN_TOKEN:?set CDT_ADMIN_TOKEN}
+      CDT_BOOTSTRAP_ENROLL_TOKEN: ${CDT_BOOTSTRAP_ENROLL_TOKEN:?set CDT_BOOTSTRAP_ENROLL_TOKEN}
+      CDT_DATABASE: /app/data/guard.db
+      TZ: Asia/Shanghai
+
+  relay-agent:
+    build:
+      context: ..
+      dockerfile: Dockerfile.agent
+    image: cdt-relay-agent:dev
+    container_name: cdt-relay-agent-dev
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - controller
+    volumes:
+      - ../data-agent:/var/lib/cdt-relay
+    environment:
+      CDT_CONTROLLER_URL: http://127.0.0.1:18010
+      CDT_ENROLL_TOKEN: ${CDT_BOOTSTRAP_ENROLL_TOKEN:?set CDT_BOOTSTRAP_ENROLL_TOKEN}
+      CDT_NODE_NAME: local-relay-dev
+      CDT_AGENT_DATA_DIR: /var/lib/cdt-relay
+      TZ: Asia/Shanghai
