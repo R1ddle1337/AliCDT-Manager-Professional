@@ -84,6 +84,7 @@ func (s *Server) routes() chi.Router {
 		router.Post("/api/v2/relay-services", s.createRelayService)
 		router.Put("/api/v2/relay-services/{serviceID}", s.updateRelayService)
 		router.Delete("/api/v2/relay-services/{serviceID}", s.deleteRelayService)
+		router.Get("/api/v2/events", s.listEvents)
 	})
 	if s.frontendDir != "" {
 		router.NotFound(s.serveFrontend)
@@ -355,6 +356,16 @@ func (s *Server) deleteRelayService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	events, err := s.store.ListEvents(r.Context(), limit)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, events)
 }
 
 func bearerToken(r *http.Request) string {

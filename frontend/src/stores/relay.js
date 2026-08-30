@@ -20,6 +20,7 @@ export const useRelayStore = defineStore('relay-platform', () => {
   const relayNodes = ref([])
   const landingNodes = ref([])
   const services = ref([])
+  const events = ref([])
   const loading = ref(false)
 
   async function login(username, password) {
@@ -43,10 +44,15 @@ export const useRelayStore = defineStore('relay-platform', () => {
     services.value = data || []
   }
 
+  async function fetchEvents() {
+    const { data } = await api.get('/events', { params: { limit: 30 } })
+    events.value = data || []
+  }
+
   async function fetchAll() {
     loading.value = true
     try {
-      await Promise.all([fetchRelayNodes(), fetchLandingNodes(), fetchServices()])
+      await Promise.all([fetchRelayNodes(), fetchLandingNodes(), fetchServices(), fetchEvents()])
     } finally {
       loading.value = false
     }
@@ -92,8 +98,8 @@ export const useRelayStore = defineStore('relay-platform', () => {
   }
 
   return {
-    relayNodes, landingNodes, services, loading,
-    login, fetchRelayNodes, fetchLandingNodes, fetchServices, fetchAll,
+    relayNodes, landingNodes, services, events, loading,
+    login, fetchRelayNodes, fetchLandingNodes, fetchServices, fetchEvents, fetchAll,
     createEnrollmentToken, createLandingNode, updateLandingNode, deleteLandingNode,
     createService, updateService, deleteService,
   }

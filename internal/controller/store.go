@@ -63,6 +63,15 @@ type RelayService struct {
 	UpdatedAt             time.Time       `json:"updated_at"`
 }
 
+type RelayEvent struct {
+	ID          string    `json:"id"`
+	RelayNodeID string    `json:"relay_node_id,omitempty"`
+	Level       string    `json:"level"`
+	Category    string    `json:"category"`
+	Message     string    `json:"message"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 type HealthSettings struct {
 	Enabled              bool `json:"enabled"`
 	IntervalSeconds      int  `json:"interval_seconds"`
@@ -392,9 +401,82 @@ func (s *Store) UpdateHeartbeat(ctx context.Context, id string, heartbeat protoc
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE relay_nodes SET status='online', last_seen_at=?, agent_version=?, current_revision=?, service_status_json=? WHERE id=?`,
-		time.Now().UTC().Format(time.RFC3339Nano), heartbeat.AgentVersion, heartbeat.CurrentRevision, string(encoded), id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var oldRevision int64
+	var oldJSON string
+	if err := tx.QueryRowContext(ctx, `SELECT current_revision,service_status_json FROM relay_nodes WHERE id=?`, id).Scan(&oldRevision, &oldJSON); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET status='online', last_seen_at=?, agent_version=?, current_revision=?, service_status_json=? WHERE id=?`,
+		now.Format(time.RFC3339Nano), heartbeat.AgentVersion, heartbeat.CurrentRevision, string(encoded), id); err != nil {
+		return err
+	}
+	if oldRevision != heartbeat.CurrentRevision {
+		if err := insertEvent(ctx, tx, id, "info", "deployment", fmt.Sprintf("Agent applied configuration revision %d", heartbeat.CurrentRevision), now); err != nil {
+			return err
+		}
+	}
+	oldHealth := flattenTargetHealth(oldJSON)
+	for _, service := range heartbeat.Services {
+		for _, target := range service.Targets {
+			key := service.ID + "/" + target.ID
+			previous, existed := oldHealth[key]
+			if existed && previous != target.Healthy {
+				level, state := "warning", "unhealthy"
+				if target.Healthy {
+					level, state = "info", "recovered"
+				}
+				if err := insertEvent(ctx, tx, id, level, "health", fmt.Sprintf("Target %s for service %s is %s", target.ID, service.Name, state), now); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) ListEvents(ctx context.Context, limit int) ([]RelayEvent, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(relay_node_id,''),level,category,message,created_at FROM relay_events ORDER BY created_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []RelayEvent
+	for rows.Next() {
+		var event RelayEvent
+		var created string
+		if err := rows.Scan(&event.ID, &event.RelayNodeID, &event.Level, &event.Category, &event.Message, &created); err != nil {
+			return nil, err
+		}
+		event.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+		events = append(events, event)
+	}
+	return events, rows.Err()
+}
+
+func insertEvent(ctx context.Context, tx *sql.Tx, relayNodeID, level, category, message string, createdAt time.Time) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO relay_events(id,relay_node_id,level,category,message,created_at) VALUES(?,?,?,?,?,?)`, randomID("event"), relayNodeID, level, category, message, createdAt.Format(time.RFC3339Nano))
 	return err
+}
+
+func flattenTargetHealth(raw string) map[string]bool {
+	var services []protocol.ServiceStatus
+	_ = json.Unmarshal([]byte(raw), &services)
+	result := make(map[string]bool)
+	for _, service := range services {
+		for _, target := range service.Targets {
+			result[service.ID+"/"+target.ID] = target.Healthy
+		}
+	}
+	return result
 }
 
 func (s *Store) AgentConfig(ctx context.Context, id string) (protocol.AgentConfig, error) {
