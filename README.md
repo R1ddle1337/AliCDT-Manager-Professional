@@ -26,6 +26,7 @@
 - 添加账户先保存后同步，避免等待阿里云接口返回
 - 账户卡片直接生成 root SSH Agent 安装命令，注册码一次性使用
 - Agent 自动升级：HTTPS 下载、SHA-256 校验、原子替换、失败自动回滚
+- Agent 默认每天北京时间 04:00 检查 GitHub Release；控制器会缓存已验证版本，GitHub 暂时不可用时不影响现有转发
 - TCP/UDP/TCP+UDP 透明转发，支持主备、轮询、加权和源 IP Hash
 - TCP 长连接与 UDP 会话固定落地目标，健康异常时新连接自动切换
 - 落地节点支持粘贴完整分享链接，自动生成仅替换中转 IP/端口的节点配置
@@ -33,6 +34,11 @@
 - 国内站暂不启用余额与账单功能，国际站账单功能保持可用
 - DNS 入口托管抽象层：支持阿里云 DNS 与 Cloudflare，多 A 记录自动同步与健康排空
 - 逻辑入口池：一份用户节点绑定多台 CDT Relay，成员上线/排空状态自动同步到 DNS
+
+Agent 更新说明：生产控制器通过 `CDT_AGENT_RELEASE_SOURCE=github` 从
+`CDT_AGENT_RELEASE_REPO` 的 GitHub Release 获取并校验 AMD64/ARM64 二进制，缓存目录默认为
+`/app/data/agent-releases`。GitHub 暂时不可用时继续提供最近一次校验成功的缓存版本，首次无缓存时使用镜像内置版本。
+Agent 安装脚本默认设置 `CDT_AGENT_UPDATE_TIME=04:00` 和 `CDT_AGENT_UPDATE_LOCATION=Asia/Shanghai`，每天只检查一次；如需兼容旧配置，可显式设置 `CDT_AGENT_UPDATE_INTERVAL`。
 
 ## 所需 RAM 权限
 https://ram.console.alibabacloud.com/users

@@ -27,6 +27,16 @@ if [ -z "$EXPECTED" ]; then echo "Checksum for ${ASSET} was not found." >&2; exi
 if command -v sha256sum >/dev/null 2>&1; then ACTUAL="$(sha256sum "${TMP_DIR}/${ASSET}" | awk '{print $1}')"; else ACTUAL="$(shasum -a 256 "${TMP_DIR}/${ASSET}" | awk '{print $1}')"; fi
 if [ "$ACTUAL" != "$EXPECTED" ]; then echo "Agent checksum verification failed." >&2; exit 1; fi
 
+# Migrate older installations from the 10-minute polling default to the
+# daily Beijing schedule. Existing explicit interval overrides are retained
+# only when the administrator has removed the legacy line themselves.
+ENV_FILE="/etc/cdt-relay/agent.env"
+if [ -f "$ENV_FILE" ]; then
+  sed -i '/^CDT_AGENT_UPDATE_INTERVAL=/d' "$ENV_FILE"
+  if ! grep -q '^CDT_AGENT_UPDATE_TIME=' "$ENV_FILE"; then echo 'CDT_AGENT_UPDATE_TIME=04:00' >> "$ENV_FILE"; fi
+  if ! grep -q '^CDT_AGENT_UPDATE_LOCATION=' "$ENV_FILE"; then echo 'CDT_AGENT_UPDATE_LOCATION=Asia/Shanghai' >> "$ENV_FILE"; fi
+fi
+
 install -d -m 700 /var/lib/cdt-relay /var/lib/cdt-relay/backups
 if [ -f "$BINARY" ]; then install -m 0700 "$BINARY" "/var/lib/cdt-relay/backups/agent-$(date +%s).bin"; fi
 install -m 0755 "${TMP_DIR}/${ASSET}" "${BINARY}.new"

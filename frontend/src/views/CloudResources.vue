@@ -45,6 +45,9 @@
           </div>
           <div class="account-badges">
             <span v-if="account.protection_triggered" class="protection-tag protection-tag-active">保护已触发</span>
+            <span class="site-tag" :class="account.agent_installed ? 'agent-tag-installed' : 'agent-tag-missing'">
+              {{ account.agent_installed ? `Agent 已安装 · ${account.online_agent_count || 0}/${account.agent_count || 0} 在线` : 'Agent 未安装' }}
+            </span>
             <span class="site-tag">{{ account.site_type === 'china' ? '中国站' : '国际站' }}</span>
           </div>
         </div>

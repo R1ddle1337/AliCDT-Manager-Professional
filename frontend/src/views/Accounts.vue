@@ -43,8 +43,11 @@
           <span class="tag tag-muted">{{ acc.shutdown_mode === 'StopCharging' ? '节省停机' : '普通停机' }}</span>
           <span v-if="acc.auto_stop_time" class="tag tag-muted">{{ acc.auto_stop_time }} 关机</span>
           <span v-if="acc.auto_start_time" class="tag tag-muted">{{ acc.auto_start_time }} 开机</span>
+          <span class="tag" :class="acc.agent_installed ? 'tag-blue' : 'tag-muted'">
+            {{ acc.agent_installed ? `Agent 已安装 · 在线 ${acc.online_agent_count || 0}/${acc.agent_count || 0}` : 'Agent 未安装' }}
+          </span>
             <span class="ml-auto flex flex-wrap justify-end gap-1">
-              <button type="button" @click="openAgentInstall(acc)" class="btn-ghost border border-blue-100 px-2.5 py-1.5 text-xs text-accent">安装 Agent</button>
+              <button type="button" @click="openAgentInstall(acc)" class="btn-ghost border border-blue-100 px-2.5 py-1.5 text-xs text-accent">{{ acc.agent_installed ? '添加 Agent' : '安装 Agent' }}</button>
               <button type="button" @click="openEdit(acc)" class="btn-ghost px-2.5 py-1.5 text-xs">编辑</button>
               <button type="button" @click="confirmDelete(acc)" class="btn-danger px-2.5 py-1.5 text-xs">删除</button>
           </span>
@@ -202,7 +205,7 @@ async function openAgentInstall(acc) {
   installError.value = ''
   installLoading.value = true
   try {
-    const data = await relayStore.createEnrollmentToken(30)
+    const data = await relayStore.createEnrollmentToken(30, acc.id)
     const nodeName = acc.name ? `cdt-${acc.name}` : 'cdt-relay-agent'
     installCommand.value = `curl -fsSL https://${window.location.host}/agent/install.sh | sh -s -- --server https://${window.location.host} --token ${shellQuote(data.token)} --node-name ${shellQuote(nodeName)}`
   } catch (e) {

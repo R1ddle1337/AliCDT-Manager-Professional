@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/R1ddle1337/AliCDT-Manager-Professional/internal/protocol"
@@ -20,25 +21,37 @@ import (
 )
 
 type ServerOptions struct {
-	AdminToken         string
-	FrontendDir        string
-	AgentInstallerPath string
-	AgentVersion       string
-	UpdateRequestFile  string
-	UpdateStatusFile   string
+	AdminToken           string
+	FrontendDir          string
+	AgentInstallerPath   string
+	AgentVersion         string
+	AgentReleaseSource   string
+	AgentReleaseRepo     string
+	AgentReleaseChannel  string
+	AgentReleaseCacheDir string
+	UpdateRequestFile    string
+	UpdateStatusFile     string
 }
 
 type Server struct {
-	store              *Store
-	adminToken         string
-	frontendDir        string
-	agentInstallerPath string
-	agentAssetsDir     string
-	updateRequestFile  string
-	updateStatusFile   string
-	agentVersion       string
-	cloud              *CloudService
-	router             chi.Router
+	store                 *Store
+	adminToken            string
+	frontendDir           string
+	agentInstallerPath    string
+	agentAssetsDir        string
+	updateRequestFile     string
+	updateStatusFile      string
+	agentVersion          string
+	agentReleaseSource    string
+	agentReleaseRepo      string
+	agentReleaseChannel   string
+	agentReleaseCacheDir  string
+	agentReleaseMu        sync.Mutex
+	agentReleaseCheckedAt time.Time
+	agentReleaseVersion   string
+	agentReleaseErr       error
+	cloud                 *CloudService
+	router                chi.Router
 }
 
 func NewServer(store *Store, opts ServerOptions) (*Server, error) {
@@ -52,7 +65,26 @@ func NewServer(store *Store, opts ServerOptions) (*Server, error) {
 	if agentVersion == "" {
 		agentVersion = "dev"
 	}
-	server := &Server{store: store, adminToken: opts.AdminToken, frontendDir: opts.FrontendDir, agentInstallerPath: opts.AgentInstallerPath, updateRequestFile: opts.UpdateRequestFile, updateStatusFile: opts.UpdateStatusFile, agentVersion: agentVersion, cloud: NewCloudService(store)}
+	releaseSource := strings.ToLower(strings.TrimSpace(opts.AgentReleaseSource))
+	if releaseSource == "" {
+		releaseSource = "embedded"
+	}
+	releaseRepo := strings.TrimSpace(opts.AgentReleaseRepo)
+	if releaseRepo == "" {
+		releaseRepo = "R1ddle1337/AliCDT-Manager-Professional"
+	}
+	releaseChannel := strings.TrimSpace(opts.AgentReleaseChannel)
+	if releaseChannel == "" {
+		releaseChannel = "latest"
+	}
+	releaseCacheDir := strings.TrimSpace(opts.AgentReleaseCacheDir)
+	if releaseCacheDir == "" {
+		releaseCacheDir = "/app/data/agent-releases"
+	}
+	server := &Server{store: store, adminToken: opts.AdminToken, frontendDir: opts.FrontendDir, agentInstallerPath: opts.AgentInstallerPath, updateRequestFile: opts.UpdateRequestFile, updateStatusFile: opts.UpdateStatusFile, agentVersion: agentVersion, agentReleaseSource: releaseSource, agentReleaseRepo: releaseRepo, agentReleaseChannel: releaseChannel, agentReleaseCacheDir: releaseCacheDir, cloud: NewCloudService(store)}
+	if cachedVersion, err := os.ReadFile(filepath.Join(releaseCacheDir, "version")); err == nil {
+		server.agentReleaseVersion = strings.TrimSpace(string(cachedVersion))
+	}
 	if opts.AgentInstallerPath != "" {
 		server.agentAssetsDir = filepath.Dir(opts.AgentInstallerPath)
 	}
@@ -187,13 +219,34 @@ func (s *Server) serveAgentAsset(w http.ResponseWriter, r *http.Request) {
 		"checksums.txt":               "text/plain; charset=utf-8",
 	}
 	contentType, ok := allowed[asset]
-	if !ok || s.agentAssetsDir == "" {
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if asset != "checksums.txt" {
+		_ = s.refreshAgentRelease(r.Context())
+	}
+	path := ""
+	if asset == "checksums.txt" {
+		if s.agentReleaseCacheDir != "" {
+			candidate := filepath.Join(s.agentReleaseCacheDir, asset)
+			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+				path = candidate
+			}
+		}
+		if path == "" && s.agentAssetsDir != "" {
+			path = filepath.Join(s.agentAssetsDir, asset)
+		}
+	} else {
+		path, _ = s.agentAssetPath(asset)
+	}
+	if path == "" {
 		http.NotFound(w, r)
 		return
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "public, max-age=300")
-	http.ServeFile(w, r, filepath.Join(s.agentAssetsDir, asset))
+	http.ServeFile(w, r, path)
 }
 
 func (s *Server) serveFrontend(w http.ResponseWriter, r *http.Request) {
@@ -340,7 +393,8 @@ func (s *Server) agentUpdateState(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createEnrollmentToken(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		TTLMinutes int `json:"ttl_minutes"`
+		TTLMinutes int    `json:"ttl_minutes"`
+		AccountID  *int64 `json:"account_id,omitempty"`
 	}
 	if r.ContentLength > 0 {
 		if err := decodeJSON(r, &request); err != nil {
@@ -352,7 +406,11 @@ func (s *Server) createEnrollmentToken(w http.ResponseWriter, r *http.Request) {
 		request.TTLMinutes = 30
 	}
 	raw := randomSecret(24)
-	if err := s.store.CreateEnrollmentToken(r.Context(), raw, time.Duration(request.TTLMinutes)*time.Minute); err != nil {
+	var accountIDs []int64
+	if request.AccountID != nil && *request.AccountID > 0 {
+		accountIDs = []int64{*request.AccountID}
+	}
+	if err := s.store.CreateEnrollmentToken(r.Context(), raw, time.Duration(request.TTLMinutes)*time.Minute, accountIDs...); err != nil {
 		writeStoreError(w, err)
 		return
 	}

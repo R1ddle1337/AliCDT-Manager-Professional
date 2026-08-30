@@ -19,6 +19,10 @@ services:
     environment:
       CDT_ADMIN_TOKEN: ${CDT_ADMIN_TOKEN:?set CDT_ADMIN_TOKEN}
       CDT_DATABASE: /app/data/guard.db
+      CDT_AGENT_RELEASE_SOURCE: github
+      CDT_AGENT_RELEASE_REPO: R1ddle1337/AliCDT-Manager-Professional
+      CDT_AGENT_RELEASE_CHANNEL: latest
+      CDT_AGENT_RELEASE_CACHE_DIR: /app/data/agent-releases
       TZ: Asia/Shanghai
     command:
       - -listen

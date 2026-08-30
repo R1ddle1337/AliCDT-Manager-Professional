@@ -67,12 +67,12 @@ type AgentHeartbeat struct {
 }
 
 type AgentRelease struct {
-	Available     bool   `json:"available"`
-	Version       string `json:"version"`
-	Architecture  string `json:"architecture"`
-	SHA256        string `json:"sha256"`
-	URL           string `json:"url"`
-	Size          int64  `json:"size"`
+	Available    bool   `json:"available"`
+	Version      string `json:"version"`
+	Architecture string `json:"architecture"`
+	SHA256       string `json:"sha256"`
+	URL          string `json:"url"`
+	Size         int64  `json:"size"`
 }
 
 type ServiceStatus struct {

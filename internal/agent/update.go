@@ -246,10 +246,9 @@ func (c *Client) recoverPendingUpdate() error {
 		return fmt.Errorf("parse update marker: %w", err)
 	}
 	currentHash, hashErr := fileSHA256(c.opts.BinaryPath)
-	if hashErr == nil && strings.EqualFold(currentHash, marker.TargetSHA256) {
-		c.setUpdateState("updating", "")
-		return nil
-	}
+	// Count every startup while the marker is present. A binary can have the
+	// expected checksum yet still fail before sending its first heartbeat; in
+	// that case repeatedly accepting the marker would make rollback impossible.
 	marker.Attempts++
 	if marker.Attempts >= 3 {
 		backup, readErr := os.ReadFile(marker.BackupPath)
@@ -264,11 +263,17 @@ func (c *Client) recoverPendingUpdate() error {
 		c.setUpdateState("failed", "agent update failed repeatedly; rolled back")
 		return nil
 	}
+	if hashErr != nil {
+		c.setUpdateState("failed", "updated agent binary could not be inspected")
+	} else if !strings.EqualFold(currentHash, marker.TargetSHA256) {
+		c.setUpdateState("failed", "agent update did not start successfully")
+	} else {
+		c.setUpdateState("updating", "")
+	}
 	encoded, _ := json.MarshalIndent(marker, "", "  ")
 	if err := writeFileAtomic(c.updateMarkerPath(), encoded, 0600); err != nil {
 		return err
 	}
-	c.setUpdateState("failed", "agent update did not start successfully")
 	return nil
 }
 

@@ -111,6 +111,9 @@ type CloudAccount struct {
 	ProtectionActionCompleted bool       `json:"protection_action_completed"`
 	ProtectionLastError       string     `json:"protection_last_error,omitempty"`
 	Enabled                   bool       `json:"enabled"`
+	AgentInstalled            bool       `json:"agent_installed"`
+	AgentCount                int        `json:"agent_count"`
+	OnlineAgentCount          int        `json:"online_agent_count"`
 	CreatedAt                 *time.Time `json:"created_at,omitempty"`
 }
 
@@ -463,6 +466,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		)`,
 		`CREATE TABLE IF NOT EXISTS enrollment_tokens (
 			token_hash TEXT PRIMARY KEY,
+			account_id INTEGER,
 			expires_at TEXT NOT NULL,
 			used_at TEXT,
 			created_at TEXT NOT NULL
@@ -614,6 +618,9 @@ func (s *Store) migrate(ctx context.Context) error {
 			return err
 		}
 	}
+	if err := s.ensureColumn(ctx, "enrollment_tokens", "account_id", "INTEGER"); err != nil {
+		return err
+	}
 	if err := s.ensureColumn(ctx, "relay_services", "pool_id", "TEXT"); err != nil {
 		return err
 	}
@@ -653,6 +660,12 @@ func (s *Store) migrate(ctx context.Context) error {
 		if err := s.ensureColumn(ctx, "dns_managed_records", column.name, column.definition); err != nil {
 			return err
 		}
+	}
+	// Older Agents were associated through ECS metadata only. Backfill the
+	// account relationship from the synchronized instance inventory so those
+	// Agents are visible under the correct cloud account after an upgrade.
+	if _, err := s.db.ExecContext(ctx, `UPDATE relay_nodes SET cloud_account_id=(SELECT account_id FROM instances WHERE instances.instance_id=relay_nodes.ecs_instance_id) WHERE (cloud_account_id IS NULL OR cloud_account_id=0) AND COALESCE(ecs_instance_id,'')<>''`); err != nil {
+		return err
 	}
 	// The Python version stored account-level CDT usage on every instance row.
 	// Seed only clearly valid, positive legacy values. An absent snapshot is
@@ -795,7 +808,10 @@ func subtleStringCompare(left, right string) bool {
 	return result == 0
 }
 
-func (s *Store) CreateEnrollmentToken(ctx context.Context, raw string, ttl time.Duration) error {
+// CreateEnrollmentToken creates a one-time token. The optional account ID is
+// embedded in the token so an Agent installed from an account card is shown
+// on that account immediately, even if ECS metadata is unavailable.
+func (s *Store) CreateEnrollmentToken(ctx context.Context, raw string, ttl time.Duration, accountIDs ...int64) error {
 	if raw == "" {
 		return errors.New("token is required")
 	}
@@ -803,9 +819,22 @@ func (s *Store) CreateEnrollmentToken(ctx context.Context, raw string, ttl time.
 		ttl = 30 * time.Minute
 	}
 	now := time.Now().UTC()
+	var accountID interface{}
+	if len(accountIDs) > 0 && accountIDs[0] > 0 {
+		var validatedAccountID int64
+		if err := s.db.QueryRowContext(ctx, `SELECT id FROM accounts WHERE id=?`, accountIDs[0]).Scan(&validatedAccountID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return errors.New("cloud account not found")
+			}
+			return err
+		}
+		accountID = validatedAccountID
+	} else {
+		accountID = nil
+	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT OR REPLACE INTO enrollment_tokens(token_hash, expires_at, used_at, created_at) VALUES(?, ?, NULL, ?)`,
-		hashSecret(raw), now.Add(ttl).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano),
+		`INSERT OR REPLACE INTO enrollment_tokens(token_hash, account_id, expires_at, used_at, created_at) VALUES(?, ?, ?, NULL, ?)`,
+		hashSecret(raw), accountID, now.Add(ttl).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano),
 	)
 	return err
 }
@@ -821,7 +850,8 @@ func (s *Store) EnrollAgent(ctx context.Context, request protocol.AgentEnrollmen
 	defer tx.Rollback()
 	var expires string
 	var used sql.NullString
-	if err := tx.QueryRowContext(ctx, `SELECT expires_at, used_at FROM enrollment_tokens WHERE token_hash=?`, hashSecret(request.Token)).Scan(&expires, &used); err != nil {
+	var tokenAccountID sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT expires_at, used_at, account_id FROM enrollment_tokens WHERE token_hash=?`, hashSecret(request.Token)).Scan(&expires, &used, &tokenAccountID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return protocol.AgentEnrollmentResponse{}, errors.New("invalid enrollment token")
 		}
@@ -834,9 +864,15 @@ func (s *Store) EnrollAgent(ctx context.Context, request protocol.AgentEnrollmen
 	agentID := randomID("relay")
 	secret := randomSecret(32)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	accountExpression := `(SELECT account_id FROM instances WHERE instance_id=?)`
+	var accountValue interface{} = request.ECSInstanceID
+	if tokenAccountID.Valid {
+		accountExpression = `?`
+		accountValue = tokenAccountID.Int64
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO relay_nodes(id,name,public_ip,ecs_instance_id,region_id,cloud_account_id,architecture,os,agent_version,secret_hash,status,last_seen_at,created_at)
-		VALUES(?,?,?,?,?,(SELECT account_id FROM instances WHERE instance_id=?),?,?,?,?,?,?,?)`,
-		agentID, strings.TrimSpace(request.NodeName), request.PublicIP, request.ECSInstanceID, request.RegionID, request.ECSInstanceID, request.Architecture, request.OS, request.AgentVersion, hashSecret(secret), "online", now, now); err != nil {
+		VALUES(?,?,?,?,?,`+accountExpression+`,?,?,?,?,?,?,?)`,
+		agentID, strings.TrimSpace(request.NodeName), request.PublicIP, request.ECSInstanceID, request.RegionID, accountValue, request.Architecture, request.OS, request.AgentVersion, hashSecret(secret), "online", now, now); err != nil {
 		return protocol.AgentEnrollmentResponse{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE enrollment_tokens SET used_at=? WHERE token_hash=?`, now, hashSecret(request.Token)); err != nil {
@@ -1390,13 +1426,19 @@ func (s *Store) DeleteRelayService(ctx context.Context, id string) error {
 }
 
 func (s *Store) ListCloudAccounts(ctx context.Context, enabledOnly bool) ([]CloudAccount, error) {
-	query := `SELECT id,name,access_key_id,access_key_secret,region_id,COALESCE(site_type,'international'),COALESCE(instance_id,''),
+	query := `SELECT a.id,a.name,a.access_key_id,a.access_key_secret,a.region_id,COALESCE(a.site_type,'international'),COALESCE(a.instance_id,''),
 		COALESCE(traffic_limit_gb,200),COALESCE(threshold_percent,95),COALESCE(outstanding_threshold,0),COALESCE(shutdown_mode,'StopCharging'),
 		COALESCE(keep_alive,0),COALESCE(auto_start_time,''),COALESCE(auto_stop_time,''),COALESCE(manual_stopped,0),COALESCE(nostock_notified,0),
 		COALESCE(protection_mode,'alert_only'),COALESCE(protection_triggered,0),protection_triggered_at,
-		COALESCE(protection_action_completed,0),COALESCE(protection_last_error,''),COALESCE(enabled,1),created_at FROM accounts`
+		COALESCE(protection_action_completed,0),COALESCE(a.protection_last_error,''),COALESCE(a.enabled,1),a.created_at,
+		(SELECT COUNT(*) FROM relay_nodes rn LEFT JOIN instances ri ON ri.instance_id=rn.ecs_instance_id
+		 WHERE rn.cloud_account_id=a.id OR (rn.cloud_account_id IS NULL AND ri.account_id=a.id)),
+		(SELECT COUNT(*) FROM relay_nodes rn LEFT JOIN instances ri ON ri.instance_id=rn.ecs_instance_id
+		 WHERE (rn.cloud_account_id=a.id OR (rn.cloud_account_id IS NULL AND ri.account_id=a.id)) AND rn.status='online'
+		 AND rn.last_seen_at IS NOT NULL AND julianday(rn.last_seen_at) >= julianday('now','-35 seconds')
+		) FROM accounts a`
 	if enabledOnly {
-		query += ` WHERE enabled=1`
+		query += ` WHERE a.enabled=1`
 	}
 	query += ` ORDER BY id`
 	rows, err := s.db.QueryContext(ctx, query)
@@ -1408,11 +1450,12 @@ func (s *Store) ListCloudAccounts(ctx context.Context, enabledOnly bool) ([]Clou
 	for rows.Next() {
 		var account CloudAccount
 		var enabled, keepAlive, manualStopped, noStockNotified, triggered, actionCompleted int
+		var agentCount, onlineAgentCount int
 		var triggeredAt, createdAt sql.NullString
 		if err := rows.Scan(&account.ID, &account.Name, &account.AccessKeyID, &account.AccessKeySecret, &account.RegionID, &account.SiteType,
 			&account.ProtectedInstanceID, &account.TrafficLimitGB, &account.ThresholdPercent, &account.OutstandingThreshold, &account.ShutdownMode,
 			&keepAlive, &account.AutoStartTime, &account.AutoStopTime, &manualStopped, &noStockNotified,
-			&account.ProtectionMode, &triggered, &triggeredAt, &actionCompleted, &account.ProtectionLastError, &enabled, &createdAt); err != nil {
+			&account.ProtectionMode, &triggered, &triggeredAt, &actionCompleted, &account.ProtectionLastError, &enabled, &createdAt, &agentCount, &onlineAgentCount); err != nil {
 			return nil, err
 		}
 		account.Enabled = enabled != 0
@@ -1421,6 +1464,9 @@ func (s *Store) ListCloudAccounts(ctx context.Context, enabledOnly bool) ([]Clou
 		account.NoStockNotified = noStockNotified != 0
 		account.ProtectionTriggered = triggered != 0
 		account.ProtectionActionCompleted = actionCompleted != 0
+		account.AgentCount = agentCount
+		account.OnlineAgentCount = onlineAgentCount
+		account.AgentInstalled = agentCount > 0
 		if triggeredAt.Valid {
 			parsed := parseDatabaseTime(triggeredAt.String)
 			account.ProtectionTriggeredAt = &parsed

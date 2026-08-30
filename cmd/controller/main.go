@@ -22,6 +22,10 @@ func main() {
 	frontendDir := flag.String("frontend-dir", env("CDT_FRONTEND_DIR", ""), "optional built frontend directory")
 	agentInstaller := flag.String("agent-installer", env("CDT_AGENT_INSTALLER", ""), "optional agent installer script")
 	agentVersion := flag.String("agent-version", env("CDT_AGENT_VERSION", "dev"), "Agent release label exposed to enrolled agents")
+	agentReleaseSource := flag.String("agent-release-source", env("CDT_AGENT_RELEASE_SOURCE", "github"), "Agent update source: github or embedded")
+	agentReleaseRepo := flag.String("agent-release-repo", env("CDT_AGENT_RELEASE_REPO", "R1ddle1337/AliCDT-Manager-Professional"), "GitHub repository containing Agent releases")
+	agentReleaseChannel := flag.String("agent-release-channel", env("CDT_AGENT_RELEASE_CHANNEL", "latest"), "GitHub release tag or latest")
+	agentReleaseCacheDir := flag.String("agent-release-cache-dir", env("CDT_AGENT_RELEASE_CACHE_DIR", "/app/data/agent-releases"), "Agent release cache directory")
 	updateRequestFile := flag.String("update-request-file", env("CDT_UPDATE_REQUEST_FILE", "/app/data/update.request"), "host update request marker")
 	updateStatusFile := flag.String("update-status-file", env("CDT_UPDATE_STATUS_FILE", "/app/data/update.status.json"), "host update status file")
 	cloudSyncInterval := flag.Duration("cloud-sync-interval", 2*time.Minute, "Aliyun ECS/CDT synchronization interval")
@@ -38,7 +42,7 @@ func main() {
 			fatal(err)
 		}
 	}
-	server, err := controller.NewServer(store, controller.ServerOptions{AdminToken: *adminToken, FrontendDir: *frontendDir, AgentInstallerPath: *agentInstaller, AgentVersion: *agentVersion, UpdateRequestFile: *updateRequestFile, UpdateStatusFile: *updateStatusFile})
+	server, err := controller.NewServer(store, controller.ServerOptions{AdminToken: *adminToken, FrontendDir: *frontendDir, AgentInstallerPath: *agentInstaller, AgentVersion: *agentVersion, AgentReleaseSource: *agentReleaseSource, AgentReleaseRepo: *agentReleaseRepo, AgentReleaseChannel: *agentReleaseChannel, AgentReleaseCacheDir: *agentReleaseCacheDir, UpdateRequestFile: *updateRequestFile, UpdateStatusFile: *updateStatusFile})
 	if err != nil {
 		fatal(err)
 	}

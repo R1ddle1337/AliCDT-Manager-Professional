@@ -157,8 +157,10 @@ export const useRelayStore = defineStore('relay-platform', () => {
     }
   }
 
-  async function createEnrollmentToken(ttlMinutes = 30) {
-    const { data } = await api.post('/enrollment-tokens', { ttl_minutes: ttlMinutes })
+  async function createEnrollmentToken(ttlMinutes = 30, accountId = null) {
+    const payload = { ttl_minutes: ttlMinutes }
+    if (accountId) payload.account_id = accountId
+    const { data } = await api.post('/enrollment-tokens', payload)
     return data
   }
 

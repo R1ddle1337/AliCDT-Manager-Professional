@@ -225,6 +225,33 @@ func TestAgentEnrollmentImmediatelyAssociatesSyncedECS(t *testing.T) {
 	}
 }
 
+func TestAccountEnrollmentTokenAssociatesAgentWithoutECSMetadata(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	account, err := store.CreateCloudAccount(context.Background(), CloudAccountRequest{
+		Name: "account-bound", AccessKeyID: "key", AccessKeySecret: "secret", RegionID: "cn-hongkong", SiteType: "china",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateEnrollmentToken(context.Background(), "account-token", time.Hour, account.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.EnrollAgent(context.Background(), protocol.AgentEnrollmentRequest{Token: "account-token", NodeName: "relay-no-metadata", Architecture: "amd64", OS: "linux"}); err != nil {
+		t.Fatal(err)
+	}
+	accounts, err := store.ListCloudAccounts(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accounts) != 1 || !accounts[0].AgentInstalled || accounts[0].AgentCount != 1 || accounts[0].OnlineAgentCount != 1 {
+		t.Fatalf("account did not report its enrolled Agent: %+v", accounts)
+	}
+}
+
 func TestDrainRelayProtectionIsIdempotentAndRecovers(t *testing.T) {
 	store, err := OpenStore(":memory:")
 	if err != nil {

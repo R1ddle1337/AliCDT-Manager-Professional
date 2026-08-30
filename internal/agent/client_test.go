@@ -74,6 +74,23 @@ func TestRunRestoresCachedConfigWhenControllerIsUnavailable(t *testing.T) {
 	}
 }
 
+func TestDailyUpdateScheduleUsesBeijingTime(t *testing.T) {
+	client, err := New(Options{ControllerURL: "https://controller.invalid", UpdateTime: "04:00", UpdateLocation: "Asia/Shanghai"}, relay.NewEngine())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.engine.Close()
+	location, _ := time.LoadLocation("Asia/Shanghai")
+	before := time.Date(2026, 8, 30, 3, 59, 0, 0, location)
+	if got := client.durationUntilNextUpdate(before); got != time.Minute {
+		t.Fatalf("expected one minute until 04:00, got %s", got)
+	}
+	after := time.Date(2026, 8, 30, 4, 1, 0, 0, location)
+	if got := client.durationUntilNextUpdate(after); got < 23*time.Hour || got > 24*time.Hour {
+		t.Fatalf("expected next day update, got %s", got)
+	}
+}
+
 func TestPollConfigRollsBackWhenNewRevisionCannotBeApplied(t *testing.T) {
 	occupied, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

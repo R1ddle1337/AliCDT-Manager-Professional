@@ -31,6 +31,8 @@ type Options struct {
 	AutoUpdate          bool
 	AutoUpdateSet       bool
 	UpdateCheckInterval time.Duration
+	UpdateTime          string
+	UpdateLocation      string
 	BinaryPath          string
 	ServiceName         string
 }
@@ -74,8 +76,11 @@ func New(opts Options, engine *relay.Engine) (*Client, error) {
 	if !opts.AutoUpdateSet {
 		opts.AutoUpdate = true
 	}
-	if opts.UpdateCheckInterval <= 0 {
-		opts.UpdateCheckInterval = 10 * time.Minute
+	if strings.TrimSpace(opts.UpdateTime) == "" {
+		opts.UpdateTime = "04:00"
+	}
+	if strings.TrimSpace(opts.UpdateLocation) == "" {
+		opts.UpdateLocation = "Asia/Shanghai"
 	}
 	if opts.BinaryPath == "" {
 		opts.BinaryPath, _ = os.Executable()
@@ -115,15 +120,30 @@ func (c *Client) Run(ctx context.Context) error {
 		// serving even when the controller is temporarily unavailable.
 		fmt.Fprintf(os.Stderr, "initial config poll failed: %v\n", err)
 	}
-	_ = c.sendHeartbeat(ctx)
-	_ = c.confirmPendingUpdate()
+	// Only clear the rollback marker after the controller has accepted a
+	// heartbeat from this process. If the controller is unreachable or startup
+	// is otherwise unhealthy, the marker survives the restart and the next
+	// launch can count another failed attempt and roll back safely.
+	if err := c.sendHeartbeat(ctx); err == nil {
+		_ = c.confirmPendingUpdate()
+	}
 
 	pollTicker := time.NewTicker(c.opts.PollInterval)
 	heartbeatTicker := time.NewTicker(c.opts.HeartbeatEvery)
-	updateTicker := time.NewTicker(c.opts.UpdateCheckInterval)
 	defer pollTicker.Stop()
 	defer heartbeatTicker.Stop()
-	defer updateTicker.Stop()
+	var updateTicker *time.Ticker
+	var updateTimer *time.Timer
+	var updateC <-chan time.Time
+	if c.opts.UpdateCheckInterval > 0 {
+		updateTicker = time.NewTicker(c.opts.UpdateCheckInterval)
+		defer updateTicker.Stop()
+		updateC = updateTicker.C
+	} else {
+		updateTimer = time.NewTimer(c.durationUntilNextUpdate(time.Now()))
+		defer updateTimer.Stop()
+		updateC = updateTimer.C
+	}
 
 	for {
 		select {
@@ -136,15 +156,47 @@ func (c *Client) Run(ctx context.Context) error {
 		case <-heartbeatTicker.C:
 			if err := c.sendHeartbeat(ctx); err != nil {
 				fmt.Fprintf(os.Stderr, "heartbeat failed: %v\n", err)
+			} else {
+				_ = c.confirmPendingUpdate()
 			}
-		case <-updateTicker.C:
+		case <-updateC:
 			if c.opts.AutoUpdate {
 				if err := c.checkForUpdate(ctx); err != nil {
+					if errors.Is(err, ErrRestartRequested) {
+						// The executable has been replaced atomically. Exit so
+						// systemd (or the container supervisor) starts the new
+						// process; the pending marker protects against bad boots.
+						return err
+					}
 					fmt.Fprintf(os.Stderr, "agent update check failed: %v\n", err)
 				}
 			}
+			if updateTimer != nil {
+				updateTimer.Reset(c.durationUntilNextUpdate(time.Now().Add(time.Minute)))
+			}
 		}
 	}
+}
+
+func (c *Client) durationUntilNextUpdate(now time.Time) time.Duration {
+	location, err := time.LoadLocation(c.opts.UpdateLocation)
+	if err != nil {
+		location, _ = time.LoadLocation("Asia/Shanghai")
+	}
+	localNow := now.In(location)
+	var hour, minute int
+	if _, err := fmt.Sscanf(strings.TrimSpace(c.opts.UpdateTime), "%d:%d", &hour, &minute); err != nil || hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+		hour, minute = 4, 0
+	}
+	next := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), hour, minute, 0, 0, location)
+	if !next.After(localNow) {
+		next = next.Add(24 * time.Hour)
+	}
+	delay := next.Sub(localNow)
+	if delay < time.Second {
+		return time.Second
+	}
+	return delay
 }
 
 func (c *Client) credentialPath() string {

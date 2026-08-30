@@ -24,7 +24,9 @@ func main() {
 	poll := flag.Duration("poll", 5*time.Second, "desired config polling interval")
 	heartbeat := flag.Duration("heartbeat", 10*time.Second, "heartbeat interval")
 	autoUpdate := flag.Bool("auto-update", envBool("CDT_AGENT_AUTO_UPDATE", true), "automatically update the Agent binary")
-	updateInterval := flag.Duration("update-interval", envDuration("CDT_AGENT_UPDATE_INTERVAL", 10*time.Minute), "Agent update check interval")
+	updateInterval := flag.Duration("update-interval", envDuration("CDT_AGENT_UPDATE_INTERVAL", 0), "Optional legacy Agent update check interval")
+	updateTime := flag.String("update-time", env("CDT_AGENT_UPDATE_TIME", "04:00"), "Daily Agent update time")
+	updateLocation := flag.String("update-location", env("CDT_AGENT_UPDATE_LOCATION", "Asia/Shanghai"), "Timezone used for the daily Agent update")
 	flag.Parse()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -43,6 +45,8 @@ func main() {
 		AutoUpdate:          *autoUpdate,
 		AutoUpdateSet:       true,
 		UpdateCheckInterval: *updateInterval,
+		UpdateTime:          *updateTime,
+		UpdateLocation:      *updateLocation,
 	}, engine)
 	if err != nil {
 		fatal(err)
