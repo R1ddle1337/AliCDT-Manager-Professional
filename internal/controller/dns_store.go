@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -271,6 +272,7 @@ func (s *Store) ListDNSRecords(ctx context.Context, providerID string) ([]DNSMan
 }
 
 func (s *Store) CreateDNSRecord(ctx context.Context, request CreateDNSRecordRequest) (DNSManagedRecord, error) {
+	request.ProviderID = strings.TrimSpace(request.ProviderID)
 	request.Name = strings.TrimSpace(request.Name)
 	request.Type = strings.ToUpper(strings.TrimSpace(request.Type))
 	request.Value = strings.TrimSpace(request.Value)
@@ -280,24 +282,43 @@ func (s *Store) CreateDNSRecord(ctx context.Context, request CreateDNSRecordRequ
 	if request.TTL <= 0 {
 		request.TTL = 60
 	}
-	request.RelayNodeID = strings.TrimSpace(request.RelayNodeID)
 	if request.ProviderID == "" || request.Name == "" {
 		return DNSManagedRecord{}, errors.New("provider and record name are required")
 	}
-	if request.RelayNodeID != "" {
+	relayNodeIDs := normalizeDNSRelayNodeIDs(request)
+	type recordValue struct {
+		relayNodeID string
+		value       string
+	}
+	valueCapacity := len(relayNodeIDs)
+	if valueCapacity == 0 {
+		valueCapacity = 1
+	}
+	values := make([]recordValue, 0, valueCapacity)
+	if len(relayNodeIDs) > 0 {
 		if !oneOf(request.Type, "A", "AAAA") {
 			return DNSManagedRecord{}, errors.New("a relay agent source requires an A or AAAA record")
 		}
-		var publicIP string
-		if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(public_ip,'') FROM relay_nodes WHERE id=?`, request.RelayNodeID).Scan(&publicIP); err != nil {
-			return DNSManagedRecord{}, errors.New("relay node not found")
-		}
-		request.Value = strings.TrimSpace(publicIP)
-		if request.Value == "" {
-			return DNSManagedRecord{}, errors.New("selected relay node has not reported a public IP")
+		seenValues := make(map[string]string, len(relayNodeIDs))
+		for _, relayNodeID := range relayNodeIDs {
+			var publicIP string
+			if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(public_ip,'') FROM relay_nodes WHERE id=?`, relayNodeID).Scan(&publicIP); err != nil {
+				return DNSManagedRecord{}, fmt.Errorf("relay node %q was not found", relayNodeID)
+			}
+			publicIP = strings.TrimSpace(publicIP)
+			if publicIP == "" {
+				return DNSManagedRecord{}, fmt.Errorf("relay node %q has not reported a public IP", relayNodeID)
+			}
+			if other, duplicate := seenValues[publicIP]; duplicate {
+				return DNSManagedRecord{}, fmt.Errorf("relay nodes %q and %q report the same public IP", other, relayNodeID)
+			}
+			seenValues[publicIP] = relayNodeID
+			values = append(values, recordValue{relayNodeID: relayNodeID, value: publicIP})
 		}
 	} else if request.Value == "" {
 		return DNSManagedRecord{}, errors.New("provider, record name and value are required")
+	} else {
+		values = append(values, recordValue{value: request.Value})
 	}
 	if !oneOf(request.Type, "A", "AAAA", "CNAME", "TXT") {
 		return DNSManagedRecord{}, errors.New("supported DNS record types are A, AAAA, CNAME and TXT")
@@ -310,12 +331,39 @@ func (s *Store) CreateDNSRecord(ctx context.Context, request CreateDNSRecordRequ
 		enabled = *request.Enabled
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	id := randomID("record")
-	_, err := s.db.ExecContext(ctx, `INSERT INTO dns_managed_records(id,provider_id,relay_node_id,name,type,value,ttl,enabled,desired_enabled,status,last_error,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,'pending','',?,?)`, id, request.ProviderID, nullIfEmpty(request.RelayNodeID), request.Name, request.Type, request.Value, request.TTL, boolInt(enabled), boolInt(enabled), now, now)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return DNSManagedRecord{}, err
 	}
-	return s.GetDNSRecord(ctx, id)
+	defer tx.Rollback()
+	firstID := ""
+	for _, item := range values {
+		id := randomID("record")
+		if _, err := tx.ExecContext(ctx, `INSERT INTO dns_managed_records(id,provider_id,relay_node_id,name,type,value,ttl,enabled,desired_enabled,status,last_error,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,'pending','',?,?)`, id, request.ProviderID, nullIfEmpty(item.relayNodeID), request.Name, request.Type, item.value, request.TTL, boolInt(enabled), boolInt(enabled), now, now); err != nil {
+			return DNSManagedRecord{}, fmt.Errorf("create managed DNS record: %w", err)
+		}
+		if firstID == "" {
+			firstID = id
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return DNSManagedRecord{}, err
+	}
+	return s.GetDNSRecord(ctx, firstID)
+}
+
+func normalizeDNSRelayNodeIDs(request CreateDNSRecordRequest) []string {
+	result := make([]string, 0, len(request.RelayNodeIDs)+1)
+	seen := make(map[string]bool, len(request.RelayNodeIDs)+1)
+	for _, raw := range append(request.RelayNodeIDs, request.RelayNodeID) {
+		id := strings.TrimSpace(raw)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		result = append(result, id)
+	}
+	return result
 }
 
 func (s *Store) UpdateDNSRecord(ctx context.Context, id string, request CreateDNSRecordRequest) (DNSManagedRecord, error) {

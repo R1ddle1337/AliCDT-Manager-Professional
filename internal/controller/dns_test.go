@@ -143,3 +143,63 @@ func TestDNSRecordCanFollowRelayAgentPublicIP(t *testing.T) {
 		t.Fatalf("offline agent record state is incorrect: %+v", record)
 	}
 }
+
+func TestDNSRecordCanFollowMultipleRelayAgents(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	provider, err := store.CreateDNSProvider(context.Background(), CreateDNSProviderRequest{Name: "cf", Type: "cloudflare", Zone: "example.com", APIToken: "token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agents := make([]protocol.AgentEnrollmentResponse, 0, 2)
+	for _, item := range []struct {
+		token string
+		name  string
+		ip    string
+	}{
+		{token: "dns-agent-a", name: "relay-a", ip: "203.0.113.21"},
+		{token: "dns-agent-b", name: "relay-b", ip: "203.0.113.22"},
+	} {
+		if err := store.CreateEnrollmentToken(context.Background(), item.token, time.Hour); err != nil {
+			t.Fatal(err)
+		}
+		agent, enrollErr := store.EnrollAgent(context.Background(), protocol.AgentEnrollmentRequest{Token: item.token, NodeName: item.name, PublicIP: item.ip, Architecture: "amd64", OS: "linux"})
+		if enrollErr != nil {
+			t.Fatal(enrollErr)
+		}
+		agents = append(agents, agent)
+	}
+	record, err := store.CreateDNSRecord(context.Background(), CreateDNSRecordRequest{
+		ProviderID: provider.ID,
+		RelayNodeIDs: []string{
+			agents[0].AgentID,
+			agents[1].AgentID,
+		},
+		Name: "relay",
+		Type: "A",
+		TTL:  60,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.RelayNodeID != agents[0].AgentID || record.Value != "203.0.113.21" {
+		t.Fatalf("first managed record did not follow selected agent: %+v", record)
+	}
+	records, err := store.ListDNSRecords(context.Background(), provider.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("expected one managed record per selected agent, got %d: %+v", len(records), records)
+	}
+	seen := map[string]bool{}
+	for _, item := range records {
+		seen[item.RelayNodeID] = true
+	}
+	if !seen[agents[0].AgentID] || !seen[agents[1].AgentID] {
+		t.Fatalf("selected agents were not persisted: %+v", records)
+	}
+}

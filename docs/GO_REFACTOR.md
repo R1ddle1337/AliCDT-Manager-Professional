@@ -223,9 +223,10 @@ landing-node link generator emits the pool hostname and port, so users keep a
 single logical node instead of importing one link per Relay.
 
 Standalone managed DNS records can either use a manually entered value or be
-attached to a registered Relay Agent. Agent-backed A/AAAA records read the
-Agent's latest public IP, follow IP changes, and are disabled while the Agent
-is offline or its account is draining.
+attached to one or more registered Relay Agents. The controller stores one
+managed A/AAAA row per selected Agent, reads each Agent's latest public IP,
+follows IP changes, and disables that row while the Agent is offline or its
+account is draining.
 
 Admin APIs require `Authorization: Bearer $CDT_ADMIN_TOKEN`. Agent APIs use the
 per-node secret returned during one-time enrollment.

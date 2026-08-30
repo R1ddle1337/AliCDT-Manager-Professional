@@ -288,13 +288,14 @@ type DNSManagedRecord struct {
 }
 
 type CreateDNSRecordRequest struct {
-	ProviderID  string `json:"provider_id"`
-	RelayNodeID string `json:"relay_node_id"`
-	Name        string `json:"name"`
-	Type        string `json:"type"`
-	Value       string `json:"value"`
-	TTL         int    `json:"ttl"`
-	Enabled     *bool  `json:"enabled,omitempty"`
+	ProviderID   string   `json:"provider_id"`
+	RelayNodeID  string   `json:"relay_node_id"`
+	RelayNodeIDs []string `json:"relay_node_ids,omitempty"`
+	Name         string   `json:"name"`
+	Type         string   `json:"type"`
+	Value        string   `json:"value"`
+	TTL          int      `json:"ttl"`
+	Enabled      *bool    `json:"enabled,omitempty"`
 }
 
 type RelayPool struct {
