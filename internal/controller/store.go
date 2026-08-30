@@ -1073,7 +1073,7 @@ func (s *Store) ListRelayServices(ctx context.Context, relayNodeID string) ([]Re
 }
 
 func (s *Store) listServiceTargets(ctx context.Context, serviceID string) ([]ServiceTarget, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT st.id,st.landing_node_id,ln.name,ln.address,ln.port,st.weight,st.priority,st.enabled FROM service_targets st JOIN landing_nodes ln ON ln.id=st.landing_node_id WHERE st.service_id=? ORDER BY st.priority,st.id`, serviceID)
+	rows, err := s.db.QueryContext(ctx, `SELECT st.id,st.landing_node_id,ln.name,ln.address,ln.port,st.weight,st.priority,st.enabled,ln.enabled FROM service_targets st JOIN landing_nodes ln ON ln.id=st.landing_node_id WHERE st.service_id=? ORDER BY st.priority,st.id`, serviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -1081,11 +1081,11 @@ func (s *Store) listServiceTargets(ctx context.Context, serviceID string) ([]Ser
 	var targets []ServiceTarget
 	for rows.Next() {
 		var target ServiceTarget
-		var enabled int
-		if err := rows.Scan(&target.ID, &target.LandingNodeID, &target.Name, &target.Address, &target.Port, &target.Weight, &target.Priority, &enabled); err != nil {
+		var enabled, landingEnabled int
+		if err := rows.Scan(&target.ID, &target.LandingNodeID, &target.Name, &target.Address, &target.Port, &target.Weight, &target.Priority, &enabled, &landingEnabled); err != nil {
 			return nil, err
 		}
-		target.Enabled = enabled != 0
+		target.Enabled = enabled != 0 && landingEnabled != 0
 		targets = append(targets, target)
 	}
 	return targets, rows.Err()

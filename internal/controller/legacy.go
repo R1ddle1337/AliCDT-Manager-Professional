@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -197,4 +198,49 @@ func (s *Store) SetAccountManualStopped(ctx context.Context, accountID int64, st
 func (s *Store) SetAccountNoStockNotified(ctx context.Context, accountID int64, notified bool) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE accounts SET nostock_notified=? WHERE id=?`, boolInt(notified), accountID)
 	return err
+}
+
+func (s *Store) MarkStaleRelayNodes(ctx context.Context, staleAfter time.Duration) (int, error) {
+	if staleAfter <= 0 {
+		staleAfter = 45 * time.Second
+	}
+	cutoff := time.Now().UTC().Add(-staleAfter).Format(time.RFC3339Nano)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT id,name FROM relay_nodes WHERE status='online' AND (last_seen_at IS NULL OR last_seen_at<?)`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	type staleNode struct{ id, name string }
+	stale := make([]staleNode, 0)
+	for rows.Next() {
+		var node staleNode
+		if err := rows.Scan(&node.id, &node.name); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		stale = append(stale, node)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, err
+	}
+	if len(stale) == 0 {
+		return 0, tx.Commit()
+	}
+	now := time.Now().UTC()
+	for _, node := range stale {
+		if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET status='offline' WHERE id=? AND status='online'`, node.id); err != nil {
+			return 0, err
+		}
+		if err := insertEvent(ctx, tx, node.id, "warning", "agent", fmt.Sprintf("Agent %s heartbeat timed out; marked offline", node.name), now); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return len(stale), nil
 }

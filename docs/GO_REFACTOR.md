@@ -1,7 +1,9 @@
 # Go Relay Platform Refactor
 
-This branch introduces the next-generation relay platform alongside the current
-Python production application. It does not replace the running deployment yet.
+This branch contains the Go-based relay platform and the production controller
+deployed behind `https://cdt.7b.tn/`. The original cloud-resource workflows are
+kept through the compatibility API while the relay control plane uses the
+versioned Go API.
 
 ## Components
 
@@ -12,6 +14,18 @@ Python production application. It does not replace the running deployment yet.
 - `internal/controller`: relay nodes, landing nodes and relay service APIs.
 - `internal/aliyun`: signed ECS/CDT API client and cloud resource synchronization.
 - `internal/protocol`: versioned JSON contract shared by controller and agents.
+
+## Cloud-resource compatibility
+
+The controller keeps the original account workflow and SQLite data in place:
+
+- CDT API Key ID/Secret management with secrets omitted from API responses.
+- ECS instance sync, start, stop, rename and release operations.
+- Spot-instance keep-alive checks, no-stock state, scheduled start/stop and
+  monthly reset behavior.
+- International-site balance/billing queries; mainland billing remains
+  intentionally disabled.
+- Traffic snapshots retain the last valid value when a cloud API request fails.
 
 ## Data-plane behavior
 
@@ -81,8 +95,8 @@ docker compose -f deploy/docker-compose.go.yml up --build
 The development controller listens on `127.0.0.1:18010`. The existing
 production application remains unchanged.
 
-For a real ECS test that keeps the current public panel online, follow
-[`GREY_DEPLOYMENT.md`](GREY_DEPLOYMENT.md).
+For a real ECS rollout or rollback, follow
+[`PRODUCTION_CUTOVER.md`](PRODUCTION_CUTOVER.md).
 After that matrix passes, use [`PRODUCTION_CUTOVER.md`](PRODUCTION_CUTOVER.md)
 for the reversible same-port cutover.
 
@@ -111,6 +125,10 @@ sudo scripts/install-agent.sh \
 
 The panel never needs to store a root password or SSH key. SSH is used only for
 the initial installation.
+
+The same one-time enrollment command is available directly on each account card
+under **云账户 → 安装 Agent**. This keeps API-key management and the root SSH
+installation flow in one place without giving the controller SSH access.
 
 Agent enrollment reads the Aliyun ECS instance ID, region and public IP from
 IMDSv2 when available. This associates the relay node with its cloud resource
@@ -146,6 +164,11 @@ The same workflow pushes the multi-architecture controller image to
 - `POST|PUT|DELETE /api/v2/cloud/accounts`
 - `POST /api/v2/cloud/instances/{id}/start`
 - `POST /api/v2/cloud/instances/{id}/stop`
+
+The original console paths remain available for existing clients:
+
+- `/api/accounts`, `/api/instances`, `/api/billing/{id}`
+- `/api/settings`, `/api/logs` and the original instance control endpoints
 
 The controller also serves the Vue SPA and the root SSH installer at
 `/agent/install.sh` when built with `Dockerfile.controller`.

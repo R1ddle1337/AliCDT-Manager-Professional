@@ -1,6 +1,6 @@
 # AliCDT Manager Professional
 
-这是基于 AliCDT-Manager 的界面与性能改进版本，提供更清晰的浅色控制台，并将账户初始化同步改为后台任务。
+这是基于 AliCDT-Manager 的 Go 控制器与 Relay Agent 重构版本，提供浅色专业控制台、云资源自动化和 CDT 入口到落地节点的透明转发。
 
 **阿里云 CDT 流量监控与自动化管理控制台**
 
@@ -24,6 +24,9 @@
 - 账单统计（待还款金额，国际站准确）
 - 每1~2分钟自动同步数据，有特殊情况可点击立即同步
 - 添加账户先保存后同步，避免等待阿里云接口返回
+- 账户卡片直接生成 root SSH Agent 安装命令，注册码一次性使用
+- TCP/UDP/TCP+UDP 透明转发，支持主备、轮询、加权和源 IP Hash
+- TCP 长连接与 UDP 会话固定落地目标，健康异常时新连接自动切换
 - 控制台采用浅色专业界面，去除 Emoji 图标和文案
 - 国内站暂不启用余额与账单功能，国际站账单功能保持可用
 
@@ -130,7 +133,7 @@ cd /app/alicdt-manager && docker compose down && rm -rf /app/alicdt-manager
 
 ## Tech Stack
 
-- Backend: Python + FastAPI + APScheduler + SQLite
+- Backend: Go controller + Go Relay Agent + SQLite
 - Frontend: Vue + TailwindCSS
 
 

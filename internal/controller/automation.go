@@ -129,6 +129,7 @@ func (s *CloudService) runAutomationCycle(ctx context.Context, now time.Time) {
 	defer s.automationMu.Unlock()
 	cycleCtx, cancel := context.WithTimeout(ctx, 55*time.Second)
 	defer cancel()
+	_, _ = s.store.MarkStaleRelayNodes(cycleCtx, 45*time.Second)
 	s.runKeepAlive(cycleCtx)
 	s.runScheduledPower(cycleCtx, now.Format("15:04"))
 	if now.Day() == 1 && now.Hour() == 0 && now.Minute() == 1 {

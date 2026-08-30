@@ -624,6 +624,12 @@ func (r *serviceRunner) healthLoop() {
 
 func (r *serviceRunner) runHealthChecks() {
 	cfg := r.config()
+	// A UDP-only service cannot be probed safely with a TCP connect: encrypted
+	// protocols generally do not answer arbitrary datagrams. Keep those targets
+	// eligible and let the per-client session establish the real data path.
+	if cfg.Network == "udp" {
+		return
+	}
 	for _, target := range cfg.Targets {
 		if !target.Enabled {
 			continue
