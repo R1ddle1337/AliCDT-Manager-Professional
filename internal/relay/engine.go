@@ -34,6 +34,7 @@ func (e *Engine) Apply(ctx context.Context, desired protocol.AgentConfig) error 
 	defer e.mu.Unlock()
 
 	seen := make(map[string]struct{}, len(desired.Services))
+	normalized := make([]protocol.ServiceConfig, 0, len(desired.Services))
 	for _, raw := range desired.Services {
 		cfg, err := normalizeService(raw)
 		if err != nil {
@@ -43,7 +44,10 @@ func (e *Engine) Apply(ctx context.Context, desired protocol.AgentConfig) error 
 			return fmt.Errorf("duplicate service id %q", cfg.ID)
 		}
 		seen[cfg.ID] = struct{}{}
+		normalized = append(normalized, cfg)
+	}
 
+	for _, cfg := range normalized {
 		current := e.services[cfg.ID]
 		if !cfg.Enabled {
 			if current != nil {

@@ -40,6 +40,8 @@ type Client struct {
 	engine     *relay.Engine
 	creds      credentials
 	startedAt  time.Time
+	lastConfig protocol.AgentConfig
+	hasConfig  bool
 }
 
 func New(opts Options, engine *relay.Engine) (*Client, error) {
@@ -80,6 +82,9 @@ func (c *Client) Run(ctx context.Context) error {
 	if err := c.loadOrEnroll(ctx); err != nil {
 		return err
 	}
+	if err := c.loadCachedConfig(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "cached config could not be restored: %v\n", err)
+	}
 	if err := c.pollConfig(ctx); err != nil {
 		// The agent remains available and retries; the last valid config continues
 		// serving even when the controller is temporarily unavailable.
@@ -112,6 +117,30 @@ func (c *Client) credentialPath() string {
 	return filepath.Join(c.opts.DataDir, "credentials.json")
 }
 
+func (c *Client) configPath() string {
+	return filepath.Join(c.opts.DataDir, "last-valid-config.json")
+}
+
+func (c *Client) loadCachedConfig(ctx context.Context) error {
+	data, err := os.ReadFile(c.configPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var config protocol.AgentConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		return err
+	}
+	if err := c.engine.Apply(ctx, config); err != nil {
+		return err
+	}
+	c.lastConfig = config
+	c.hasConfig = true
+	return nil
+}
+
 func (c *Client) loadOrEnroll(ctx context.Context) error {
 	data, err := os.ReadFile(c.credentialPath())
 	if err == nil {
@@ -138,6 +167,13 @@ func (c *Client) loadOrEnroll(ctx context.Context) error {
 		OS:           runtime.GOOS,
 		AgentVersion: c.opts.AgentVersion,
 	}
+	if metadata := discoverAliyunMetadata(ctx, c.httpClient); metadata != nil {
+		if request.PublicIP == "" {
+			request.PublicIP = metadata.PublicIP
+		}
+		request.ECSInstanceID = metadata.InstanceID
+		request.RegionID = metadata.RegionID
+	}
 	var response protocol.AgentEnrollmentResponse
 	if err := c.requestJSON(ctx, http.MethodPost, "/api/v2/agents/enroll", "", request, &response); err != nil {
 		return fmt.Errorf("enroll agent: %w", err)
@@ -147,10 +183,91 @@ func (c *Client) loadOrEnroll(ctx context.Context) error {
 	}
 	c.creds = credentials{AgentID: response.AgentID, Secret: response.Secret}
 	encoded, _ := json.MarshalIndent(c.creds, "", "  ")
-	if err := os.WriteFile(c.credentialPath(), encoded, 0600); err != nil {
+	if err := writeFileAtomic(c.credentialPath(), encoded, 0600); err != nil {
 		return fmt.Errorf("save credentials: %w", err)
 	}
 	return nil
+}
+
+type aliyunMetadata struct {
+	PublicIP   string
+	InstanceID string
+	RegionID   string
+}
+
+func discoverAliyunMetadata(ctx context.Context, client *http.Client) *aliyunMetadata {
+	token := metadataToken(ctx, client)
+	type result struct {
+		key   string
+		value string
+	}
+	keys := []string{"instance-id", "region-id", "eipv4", "public-ipv4"}
+	results := make(chan result, len(keys))
+	for _, key := range keys {
+		key := key
+		go func() {
+			results <- result{key: key, value: metadataValue(ctx, client, token, key)}
+		}()
+	}
+	values := make(map[string]string, len(keys))
+	for range keys {
+		item := <-results
+		values[item.key] = item.value
+	}
+	metadata := &aliyunMetadata{
+		InstanceID: values["instance-id"],
+		RegionID:   values["region-id"],
+		PublicIP:   values["eipv4"],
+	}
+	if metadata.PublicIP == "" {
+		metadata.PublicIP = values["public-ipv4"]
+	}
+	if metadata.InstanceID == "" && metadata.RegionID == "" && metadata.PublicIP == "" {
+		return nil
+	}
+	return metadata
+}
+
+func metadataToken(parent context.Context, client *http.Client) string {
+	ctx, cancel := context.WithTimeout(parent, 500*time.Millisecond)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, "http://100.100.100.200/latest/api/token", nil)
+	if err != nil {
+		return ""
+	}
+	request.Header.Set("X-aliyun-ecs-metadata-token-ttl-seconds", "60")
+	response, err := client.Do(request)
+	if err != nil {
+		return ""
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return ""
+	}
+	value, _ := io.ReadAll(io.LimitReader(response.Body, 512))
+	return strings.TrimSpace(string(value))
+}
+
+func metadataValue(parent context.Context, client *http.Client, token, key string) string {
+	ctx, cancel := context.WithTimeout(parent, 800*time.Millisecond)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://100.100.100.200/latest/meta-data/"+key, nil)
+	if err != nil {
+		return ""
+	}
+	if token != "" {
+		request.Header.Set("X-aliyun-ecs-metadata-token", token)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return ""
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return ""
+	}
+	value, _ := io.ReadAll(io.LimitReader(response.Body, 512))
+	return strings.TrimSpace(string(value))
 }
 
 func (c *Client) pollConfig(ctx context.Context) error {
@@ -180,7 +297,57 @@ func (c *Client) pollConfig(ctx context.Context) error {
 		return nil
 	}
 	if err := c.engine.Apply(ctx, config); err != nil {
+		if c.hasConfig {
+			_ = c.engine.Apply(ctx, c.lastConfig)
+		}
 		return fmt.Errorf("apply revision %d: %w", config.Revision, err)
+	}
+	if err := c.saveCachedConfig(config); err != nil {
+		if c.hasConfig {
+			_ = c.engine.Apply(ctx, c.lastConfig)
+		}
+		return fmt.Errorf("persist revision %d: %w", config.Revision, err)
+	}
+	c.lastConfig = config
+	c.hasConfig = true
+	return nil
+}
+
+func (c *Client) saveCachedConfig(config protocol.AgentConfig) error {
+	encoded, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(c.configPath(), encoded, 0600)
+}
+
+func writeFileAtomic(path string, data []byte, mode os.FileMode) (err error) {
+	directory := filepath.Dir(path)
+	temporary, err := os.CreateTemp(directory, "."+filepath.Base(path)+"-*")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer func() {
+		_ = temporary.Close()
+		if err != nil {
+			_ = os.Remove(temporaryPath)
+		}
+	}()
+	if err = temporary.Chmod(mode); err != nil {
+		return err
+	}
+	if _, err = temporary.Write(data); err != nil {
+		return err
+	}
+	if err = temporary.Sync(); err != nil {
+		return err
+	}
+	if err = temporary.Close(); err != nil {
+		return err
+	}
+	if err = os.Rename(temporaryPath, path); err != nil {
+		return err
 	}
 	return nil
 }

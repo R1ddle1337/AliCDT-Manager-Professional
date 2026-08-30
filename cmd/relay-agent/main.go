@@ -13,7 +13,7 @@ import (
 	"github.com/R1ddle1337/AliCDT-Manager-Professional/internal/relay"
 )
 
-const version = "0.1.0-dev"
+var version = "dev"
 
 func main() {
 	controller := flag.String("controller", env("CDT_CONTROLLER_URL", ""), "controller base URL")
