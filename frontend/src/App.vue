@@ -13,8 +13,8 @@
         <div class="sidebar-brand">
           <div class="brand-mark">AC</div>
           <div>
-            <div class="brand-name">AliCDT Relay</div>
-            <div class="brand-caption">智能中转控制台</div>
+            <div class="brand-name">AliCDT Console</div>
+            <div class="brand-caption">云资源与中转控制台</div>
           </div>
         </div>
 
@@ -50,7 +50,7 @@
       <main class="app-main">
         <header class="mobile-header">
           <div class="brand-mark brand-mark-small">AC</div>
-          <span class="font-semibold">AliCDT Relay</span>
+          <span class="font-semibold">AliCDT Console</span>
         </header>
         <div class="page-container">
           <router-view v-slot="{ Component }">
@@ -73,11 +73,15 @@ const router = useRouter()
 const isLogin = computed(() => route.path === '/login')
 
 const navItems = [
-  { path: '/', code: 'OV', label: '总览' },
+  { path: '/', code: 'OV', label: '中转总览' },
+  { path: '/instances', code: 'ECS', label: '实例工作区' },
+  { path: '/accounts', code: 'AK', label: '云账户' },
+  { path: '/cloud-resources', code: 'SAFE', label: '流量保护' },
   { path: '/relay-nodes', code: 'CDT', label: '中转节点' },
   { path: '/landing-nodes', code: 'OUT', label: '落地节点' },
   { path: '/relay-services', code: 'L4', label: '转发服务' },
-  { path: '/cloud-resources', code: 'ECS', label: '云资源' },
+  { path: '/logs', code: 'LOG', label: '系统日志' },
+  { path: '/settings', code: 'SET', label: '系统设置' },
 ]
 
 const activeIndex = computed(() => {

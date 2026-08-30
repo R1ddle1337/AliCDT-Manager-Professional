@@ -133,7 +133,13 @@ function openAdd() {
 
 function openEdit(acc) {
   editTarget.value = acc
-  form.value = { ...acc, access_key_secret: '' }
+  form.value = {
+    name: acc.name || '', access_key_id: acc.access_key_id || '', access_key_secret: '',
+    region_id: acc.region_id || '', site_type: acc.site_type || 'international', instance_id: acc.instance_id || '',
+    traffic_limit_gb: acc.traffic_limit_gb || 200, threshold_percent: acc.threshold_percent || 95,
+    outstanding_threshold: acc.outstanding_threshold || 0, shutdown_mode: acc.shutdown_mode || 'StopCharging',
+    keep_alive: !!acc.keep_alive, auto_stop_time: acc.auto_stop_time || '', auto_start_time: acc.auto_start_time || '',
+  }
   formError.value = ''
   showForm.value = true
 }

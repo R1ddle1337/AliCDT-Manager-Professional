@@ -11,7 +11,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRelayStore } from '../stores/relay'
 const store=useRelayStore();const token=ref('');const tokenTTL=30;const error=ref('')
-const installCommand=computed(()=>token.value?`curl -fsSL https://${window.location.host}/agent/install.sh | sudo sh -s -- \\\n+  --controller https://${window.location.host} \\\n+  --enroll-token ${token.value} \\\n+  --node-name aliyun-relay-01`: '')
+const installCommand=computed(()=>token.value?`curl -fsSL https://${window.location.host}/agent/install.sh | sh -s -- --server https://${window.location.host} --token ${token.value}`: '')
 async function generateToken(){error.value='';try{const data=await store.createEnrollmentToken(tokenTTL);token.value=data.token}catch(e){error.value=e.response?.data?.error||'生成注册码失败'}}
 async function copyCommand(){await navigator.clipboard.writeText(installCommand.value)}
 function formatTime(value){return value?new Date(value).toLocaleString('zh-CN',{hour12:false}):'尚未上报'}

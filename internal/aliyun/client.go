@@ -29,6 +29,7 @@ type Client struct {
 	HTTPClient      *http.Client
 	CDTEndpoint     string
 	ECSEndpoint     string
+	BSSEndpoint     string
 	Now             func() time.Time
 	Nonce           func() string
 }
@@ -54,13 +55,38 @@ type Instance struct {
 	IsSpot        bool   `json:"is_spot"`
 }
 
+type AccountBalance struct {
+	AvailableAmount float64 `json:"available_amount"`
+	Currency        string  `json:"currency"`
+	Symbol          string  `json:"symbol"`
+}
+
+type BillDetail struct {
+	Product           string  `json:"product"`
+	PretaxAmount      float64 `json:"pretax_amount"`
+	OutstandingAmount float64 `json:"outstanding_amount"`
+}
+
+type BillOverview struct {
+	BillingCycle     string       `json:"billing_cycle"`
+	TotalOutstanding float64      `json:"total_outstanding"`
+	Currency         string       `json:"currency"`
+	Symbol           string       `json:"symbol"`
+	Details          []BillDetail `json:"details"`
+}
+
 func NewClient(accessKeyID, accessKeySecret, regionID, siteType string) *Client {
+	bssEndpoint := "https://business.ap-southeast-1.aliyuncs.com/"
+	if strings.EqualFold(siteType, "china") {
+		bssEndpoint = "https://business.aliyuncs.com/"
+	}
 	return &Client{
 		AccessKeyID: accessKeyID, AccessKeySecret: accessKeySecret,
 		RegionID: regionID, SiteType: siteType,
 		HTTPClient:  &http.Client{Timeout: 15 * time.Second},
 		CDTEndpoint: defaultCDTEndpoint,
 		ECSEndpoint: fmt.Sprintf("https://ecs.%s.aliyuncs.com/", regionID),
+		BSSEndpoint: bssEndpoint,
 		Now:         time.Now,
 		Nonce: func() string {
 			return strconv.FormatInt(time.Now().UnixNano(), 36)
@@ -159,6 +185,30 @@ func (c *Client) StartInstance(ctx context.Context, instanceID string) error {
 	return err
 }
 
+func (c *Client) GetInstanceStatus(ctx context.Context, instanceID string) (string, error) {
+	raw, err := c.call(ctx, c.ECSEndpoint, "DescribeInstanceStatus", "2014-05-26", map[string]string{
+		"RegionId": c.RegionID, "InstanceId.1": instanceID,
+	})
+	if err != nil {
+		return "", err
+	}
+	var response struct {
+		Statuses struct {
+			Items []struct {
+				Status string `json:"Status"`
+			} `json:"InstanceStatus"`
+		} `json:"InstanceStatuses"`
+	}
+	encoded, _ := json.Marshal(raw)
+	if err := json.Unmarshal(encoded, &response); err != nil {
+		return "", err
+	}
+	if len(response.Statuses.Items) == 0 {
+		return "Unknown", nil
+	}
+	return response.Statuses.Items[0].Status, nil
+}
+
 func (c *Client) StopInstance(ctx context.Context, instanceID, mode string) error {
 	if mode == "" {
 		mode = "StopCharging"
@@ -167,6 +217,113 @@ func (c *Client) StopInstance(ctx context.Context, instanceID, mode string) erro
 		"InstanceId": instanceID, "StoppedMode": mode, "ForceStop": "false",
 	})
 	return err
+}
+
+func (c *Client) DeleteInstance(ctx context.Context, instanceID string) error {
+	_, err := c.call(ctx, c.ECSEndpoint, "DeleteInstance", "2014-05-26", map[string]string{
+		"InstanceId": instanceID, "Force": "true",
+	})
+	return err
+}
+
+func (c *Client) GetBalance(ctx context.Context) (AccountBalance, error) {
+	raw, err := c.call(ctx, c.BSSEndpoint, "QueryAccountBalance", "2017-12-14", nil)
+	if err != nil {
+		return AccountBalance{}, err
+	}
+	var response struct {
+		Data struct {
+			AvailableAmount interface{} `json:"AvailableAmount"`
+			Currency        string      `json:"Currency"`
+		} `json:"Data"`
+	}
+	encoded, _ := json.Marshal(raw)
+	if err := json.Unmarshal(encoded, &response); err != nil {
+		return AccountBalance{}, err
+	}
+	amount, err := number(response.Data.AvailableAmount)
+	if err != nil {
+		return AccountBalance{}, fmt.Errorf("invalid available balance: %w", err)
+	}
+	currency, symbol := c.billingCurrency()
+	if response.Data.Currency != "" {
+		currency = response.Data.Currency
+	}
+	return AccountBalance{AvailableAmount: round(amount, 10), Currency: currency, Symbol: symbol}, nil
+}
+
+func (c *Client) GetBillOverview(ctx context.Context, billingCycle string) (BillOverview, error) {
+	if billingCycle == "" {
+		now := time.Now()
+		if c.Now != nil {
+			now = c.Now()
+		}
+		billingCycle = now.Format("2006-01")
+	}
+	raw, err := c.call(ctx, c.BSSEndpoint, "QueryBillOverview", "2017-12-14", map[string]string{"BillingCycle": billingCycle})
+	if err != nil {
+		return BillOverview{}, err
+	}
+	var response struct {
+		Data struct {
+			Items json.RawMessage `json:"Items"`
+		} `json:"Data"`
+	}
+	encoded, _ := json.Marshal(raw)
+	if err := json.Unmarshal(encoded, &response); err != nil {
+		return BillOverview{}, err
+	}
+	type rawBill struct {
+		ProductName       string      `json:"ProductName"`
+		PretaxAmount      interface{} `json:"PretaxAmount"`
+		OutstandingAmount interface{} `json:"OutstandingAmount"`
+	}
+	items := make([]rawBill, 0)
+	itemsPayload := response.Data.Items
+	if len(itemsPayload) > 0 && string(itemsPayload) != "null" {
+		var container struct {
+			Item json.RawMessage `json:"Item"`
+		}
+		if err := json.Unmarshal(itemsPayload, &container); err == nil && len(container.Item) > 0 {
+			itemsPayload = container.Item
+		}
+		if len(itemsPayload) > 0 && itemsPayload[0] == '[' {
+			if err := json.Unmarshal(itemsPayload, &items); err != nil {
+				return BillOverview{}, err
+			}
+		} else {
+			var item rawBill
+			if err := json.Unmarshal(itemsPayload, &item); err != nil {
+				return BillOverview{}, err
+			}
+			items = append(items, item)
+		}
+	}
+	currency, symbol := c.billingCurrency()
+	overview := BillOverview{BillingCycle: billingCycle, Currency: currency, Symbol: symbol, Details: make([]BillDetail, 0)}
+	for _, item := range items {
+		pretax, err := number(item.PretaxAmount)
+		if err != nil {
+			pretax = 0
+		}
+		outstanding, err := number(item.OutstandingAmount)
+		if err != nil {
+			outstanding = 0
+		}
+		overview.TotalOutstanding += outstanding
+		if pretax > 0 || outstanding > 0 {
+			overview.Details = append(overview.Details, BillDetail{Product: item.ProductName, PretaxAmount: round(pretax, 10), OutstandingAmount: round(outstanding, 10)})
+		}
+	}
+	overview.TotalOutstanding = round(overview.TotalOutstanding, 10)
+	return overview, nil
+}
+
+func (c *Client) billingCurrency() (string, string) {
+	if strings.EqualFold(c.SiteType, "china") {
+		return "CNY", "¥"
+	}
+	return "USD", "$"
 }
 
 func (c *Client) call(ctx context.Context, endpoint, action, version string, extra map[string]string) (map[string]interface{}, error) {

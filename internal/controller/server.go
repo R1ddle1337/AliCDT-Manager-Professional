@@ -30,6 +30,7 @@ type Server struct {
 	adminToken         string
 	frontendDir        string
 	agentInstallerPath string
+	agentAssetsDir     string
 	cloud              *CloudService
 	router             chi.Router
 }
@@ -42,6 +43,9 @@ func NewServer(store *Store, opts ServerOptions) (*Server, error) {
 		return nil, errors.New("admin token is required")
 	}
 	server := &Server{store: store, adminToken: opts.AdminToken, frontendDir: opts.FrontendDir, agentInstallerPath: opts.AgentInstallerPath, cloud: NewCloudService(store)}
+	if opts.AgentInstallerPath != "" {
+		server.agentAssetsDir = filepath.Dir(opts.AgentInstallerPath)
+	}
 	server.router = server.routes()
 	return server, nil
 }
@@ -59,10 +63,14 @@ func (s *Server) routes() chi.Router {
 	})
 	if s.agentInstallerPath != "" {
 		router.Get("/agent/install.sh", s.serveAgentInstaller)
+		router.Get("/agent/{asset}", s.serveAgentAsset)
 	}
 	router.Get("/api/v2/auth/initialized", s.adminInitialized)
 	router.Post("/api/v2/auth/init", s.initAdmin)
 	router.Post("/api/v2/auth/login", s.loginAdmin)
+	router.Get("/api/auth/initialized", s.adminInitialized)
+	router.Post("/api/auth/init", s.initAdmin)
+	router.Post("/api/auth/login", s.loginAdmin)
 
 	router.Route("/api/v2/agents", func(router chi.Router) {
 		router.Post("/enroll", s.enrollAgent)
@@ -94,6 +102,29 @@ func (s *Server) routes() chi.Router {
 		router.Post("/api/v2/cloud/instances/{instanceID}/start", s.startCloudInstance)
 		router.Post("/api/v2/cloud/instances/{instanceID}/stop", s.stopCloudInstance)
 	})
+	router.Route("/api", func(router chi.Router) {
+		router.Use(s.adminAuth)
+		router.Get("/accounts", s.legacyListAccounts)
+		router.Post("/accounts", s.legacyCreateAccount)
+		router.Put("/accounts/{accountID}", s.legacyUpdateAccount)
+		router.Delete("/accounts/{accountID}", s.legacyDeleteAccount)
+		router.Get("/instances", s.legacyListInstances)
+		router.Post("/instances/sync", s.legacySyncInstances)
+		router.Post("/instances/{instanceID}/sync", s.legacySyncInstance)
+		router.Patch("/instances/{instanceID}/rename", s.legacyRenameInstance)
+		router.Post("/instances/{instanceID}/start", s.startCloudInstance)
+		router.Post("/instances/{instanceID}/stop", s.stopCloudInstance)
+		router.Delete("/instances/{instanceID}", s.legacyReleaseInstance)
+		router.Get("/billing/{accountID}", s.legacyBilling)
+		router.Get("/settings", s.legacyGetSettings)
+		router.Post("/settings", s.legacyUpdateSettings)
+		router.Post("/settings/test-tg", s.legacyTestTelegram)
+		router.Post("/settings/test-daily-report", s.legacyTestDailyReport)
+		router.Post("/settings/change-password", s.legacyChangePassword)
+		router.Get("/version/check", s.legacyVersionCheck)
+		router.Get("/logs", s.legacyListLogs)
+		router.Delete("/logs", s.legacyClearLogs)
+	})
 	if s.frontendDir != "" {
 		router.NotFound(s.serveFrontend)
 	}
@@ -104,6 +135,23 @@ func (s *Server) serveAgentInstaller(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	http.ServeFile(w, r, s.agentInstallerPath)
+}
+
+func (s *Server) serveAgentAsset(w http.ResponseWriter, r *http.Request) {
+	asset := chi.URLParam(r, "asset")
+	allowed := map[string]string{
+		"cdt-relay-agent-linux-amd64": "application/octet-stream",
+		"cdt-relay-agent-linux-arm64": "application/octet-stream",
+		"checksums.txt":               "text/plain; charset=utf-8",
+	}
+	contentType, ok := allowed[asset]
+	if !ok || s.agentAssetsDir == "" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	http.ServeFile(w, r, filepath.Join(s.agentAssetsDir, asset))
 }
 
 func (s *Server) serveFrontend(w http.ResponseWriter, r *http.Request) {
@@ -405,6 +453,7 @@ func (s *Server) createCloudAccount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	s.syncAccountAsync(account.ID)
 	writeJSON(w, http.StatusCreated, account)
 }
 

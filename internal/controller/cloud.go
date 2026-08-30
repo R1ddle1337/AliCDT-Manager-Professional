@@ -11,9 +11,10 @@ import (
 )
 
 type CloudService struct {
-	store     *Store
-	syncMu    sync.Mutex
-	clientFor func(CloudAccount) cloudClient
+	store        *Store
+	syncMu       sync.Mutex
+	automationMu sync.Mutex
+	clientFor    func(CloudAccount) cloudClient
 }
 
 type cloudClient interface {
@@ -162,7 +163,15 @@ func (s *CloudService) StartInstance(ctx context.Context, instanceID string) err
 	if err != nil {
 		return err
 	}
-	return s.clientFor(account).StartInstance(ctx, instanceID)
+	if err := s.clientFor(account).StartInstance(ctx, instanceID); err != nil {
+		return err
+	}
+	if err := s.store.SetAccountManualStopped(ctx, account.ID, false); err != nil {
+		return err
+	}
+	_ = s.store.UpdateCloudInstanceStatus(ctx, instanceID, "Running")
+	_ = s.store.AddSystemLog(ctx, "info", "system", fmt.Sprintf("手动开机: %s", instanceID))
+	return nil
 }
 
 func (s *CloudService) StopInstance(ctx context.Context, instanceID string) error {
@@ -170,23 +179,41 @@ func (s *CloudService) StopInstance(ctx context.Context, instanceID string) erro
 	if err != nil {
 		return err
 	}
-	return s.clientFor(account).StopInstance(ctx, instanceID, account.ShutdownMode)
+	if err := s.clientFor(account).StopInstance(ctx, instanceID, account.ShutdownMode); err != nil {
+		return err
+	}
+	if err := s.store.SetAccountManualStopped(ctx, account.ID, true); err != nil {
+		return err
+	}
+	_ = s.store.UpdateCloudInstanceStatus(ctx, instanceID, "Stopped")
+	_ = s.store.AddSystemLog(ctx, "info", "system", fmt.Sprintf("手动关机: %s", instanceID))
+	return nil
 }
 
 func (s *CloudService) RunScheduler(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = 2 * time.Minute
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	syncTicker := time.NewTicker(interval)
+	automationTicker := time.NewTicker(time.Minute)
+	defer syncTicker.Stop()
+	defer automationTicker.Stop()
+	location, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		location = time.FixedZone("Asia/Shanghai", 8*60*60)
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			syncCtx, cancel := context.WithTimeout(ctx, time.Minute)
-			_, _ = s.SyncAll(syncCtx)
-			cancel()
+		case <-syncTicker.C:
+			go func() {
+				syncCtx, cancel := context.WithTimeout(ctx, time.Minute)
+				defer cancel()
+				_, _ = s.SyncAll(syncCtx)
+			}()
+		case tick := <-automationTicker.C:
+			go s.runAutomationCycle(ctx, tick.In(location))
 		}
 	}
 }

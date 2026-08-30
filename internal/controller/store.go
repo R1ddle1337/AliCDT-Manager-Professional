@@ -93,12 +93,18 @@ type CloudAccount struct {
 	ThresholdPercent          float64    `json:"threshold_percent"`
 	OutstandingThreshold      float64    `json:"outstanding_threshold"`
 	ShutdownMode              string     `json:"shutdown_mode"`
+	KeepAlive                 bool       `json:"keep_alive"`
+	AutoStartTime             string     `json:"auto_start_time,omitempty"`
+	AutoStopTime              string     `json:"auto_stop_time,omitempty"`
+	ManualStopped             bool       `json:"manual_stopped"`
+	NoStockNotified           bool       `json:"nostock_notified"`
 	ProtectionMode            string     `json:"protection_mode"`
 	ProtectionTriggered       bool       `json:"protection_triggered"`
 	ProtectionTriggeredAt     *time.Time `json:"protection_triggered_at,omitempty"`
 	ProtectionActionCompleted bool       `json:"protection_action_completed"`
 	ProtectionLastError       string     `json:"protection_last_error,omitempty"`
 	Enabled                   bool       `json:"enabled"`
+	CreatedAt                 *time.Time `json:"created_at,omitempty"`
 }
 
 type CloudAccountRequest struct {
@@ -112,6 +118,9 @@ type CloudAccountRequest struct {
 	ThresholdPercent     float64 `json:"threshold_percent"`
 	OutstandingThreshold float64 `json:"outstanding_threshold"`
 	ShutdownMode         string  `json:"shutdown_mode"`
+	KeepAlive            bool    `json:"keep_alive"`
+	AutoStartTime        string  `json:"auto_start_time"`
+	AutoStopTime         string  `json:"auto_stop_time"`
 	ProtectionMode       string  `json:"protection_mode"`
 	Enabled              *bool   `json:"enabled,omitempty"`
 }
@@ -128,17 +137,20 @@ type TrafficProtectionDecision struct {
 }
 
 type CloudInstance struct {
-	ID            int64      `json:"id"`
-	AccountID     int64      `json:"account_id"`
-	InstanceID    string     `json:"instance_id"`
-	InstanceName  string     `json:"instance_name"`
-	RegionID      string     `json:"region_id"`
-	Status        string     `json:"status"`
-	PublicIP      string     `json:"public_ip"`
-	InstanceType  string     `json:"instance_type"`
-	BandwidthMbps int        `json:"bandwidth_mbps"`
-	IsSpot        bool       `json:"is_spot"`
-	LastSynced    *time.Time `json:"last_synced,omitempty"`
+	ID             int64      `json:"id"`
+	AccountID      int64      `json:"account_id"`
+	InstanceID     string     `json:"instance_id"`
+	InstanceName   string     `json:"instance_name"`
+	RegionID       string     `json:"region_id"`
+	Status         string     `json:"status"`
+	PublicIP       string     `json:"public_ip"`
+	InstanceType   string     `json:"instance_type"`
+	BandwidthMbps  int        `json:"bandwidth_mbps"`
+	IsSpot         bool       `json:"is_spot"`
+	TrafficUsedGB  float64    `json:"traffic_used_gb"`
+	TrafficPercent float64    `json:"traffic_percent"`
+	LastSynced     *time.Time `json:"last_synced,omitempty"`
+	UpdatedAt      *time.Time `json:"updated_at,omitempty"`
 }
 
 type AccountTraffic struct {
@@ -260,6 +272,13 @@ func (s *Store) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS settings (
 			key TEXT PRIMARY KEY,
 			value TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			level TEXT NOT NULL DEFAULT 'info',
+			category TEXT NOT NULL DEFAULT 'system',
+			message TEXT NOT NULL,
+			created_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS accounts (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1094,8 +1113,9 @@ func (s *Store) DeleteRelayService(ctx context.Context, id string) error {
 func (s *Store) ListCloudAccounts(ctx context.Context, enabledOnly bool) ([]CloudAccount, error) {
 	query := `SELECT id,name,access_key_id,access_key_secret,region_id,COALESCE(site_type,'international'),COALESCE(instance_id,''),
 		COALESCE(traffic_limit_gb,200),COALESCE(threshold_percent,95),COALESCE(outstanding_threshold,0),COALESCE(shutdown_mode,'StopCharging'),
+		COALESCE(keep_alive,0),COALESCE(auto_start_time,''),COALESCE(auto_stop_time,''),COALESCE(manual_stopped,0),COALESCE(nostock_notified,0),
 		COALESCE(protection_mode,'alert_only'),COALESCE(protection_triggered,0),protection_triggered_at,
-		COALESCE(protection_action_completed,0),COALESCE(protection_last_error,''),COALESCE(enabled,1) FROM accounts`
+		COALESCE(protection_action_completed,0),COALESCE(protection_last_error,''),COALESCE(enabled,1),created_at FROM accounts`
 	if enabledOnly {
 		query += ` WHERE enabled=1`
 	}
@@ -1108,19 +1128,27 @@ func (s *Store) ListCloudAccounts(ctx context.Context, enabledOnly bool) ([]Clou
 	accounts := make([]CloudAccount, 0)
 	for rows.Next() {
 		var account CloudAccount
-		var enabled, triggered, actionCompleted int
-		var triggeredAt sql.NullString
+		var enabled, keepAlive, manualStopped, noStockNotified, triggered, actionCompleted int
+		var triggeredAt, createdAt sql.NullString
 		if err := rows.Scan(&account.ID, &account.Name, &account.AccessKeyID, &account.AccessKeySecret, &account.RegionID, &account.SiteType,
 			&account.ProtectedInstanceID, &account.TrafficLimitGB, &account.ThresholdPercent, &account.OutstandingThreshold, &account.ShutdownMode,
-			&account.ProtectionMode, &triggered, &triggeredAt, &actionCompleted, &account.ProtectionLastError, &enabled); err != nil {
+			&keepAlive, &account.AutoStartTime, &account.AutoStopTime, &manualStopped, &noStockNotified,
+			&account.ProtectionMode, &triggered, &triggeredAt, &actionCompleted, &account.ProtectionLastError, &enabled, &createdAt); err != nil {
 			return nil, err
 		}
 		account.Enabled = enabled != 0
+		account.KeepAlive = keepAlive != 0
+		account.ManualStopped = manualStopped != 0
+		account.NoStockNotified = noStockNotified != 0
 		account.ProtectionTriggered = triggered != 0
 		account.ProtectionActionCompleted = actionCompleted != 0
 		if triggeredAt.Valid {
 			parsed := parseDatabaseTime(triggeredAt.String)
 			account.ProtectionTriggeredAt = &parsed
+		}
+		if createdAt.Valid {
+			parsed := parseDatabaseTime(createdAt.String)
+			account.CreatedAt = &parsed
 		}
 		accounts = append(accounts, account)
 	}
@@ -1132,9 +1160,9 @@ func (s *Store) CreateCloudAccount(ctx context.Context, request CloudAccountRequ
 	if err != nil {
 		return CloudAccount{}, err
 	}
-	result, err := s.db.ExecContext(ctx, `INSERT INTO accounts(name,access_key_id,access_key_secret,region_id,site_type,instance_id,traffic_limit_gb,threshold_percent,outstanding_threshold,shutdown_mode,protection_mode,enabled,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	result, err := s.db.ExecContext(ctx, `INSERT INTO accounts(name,access_key_id,access_key_secret,region_id,site_type,instance_id,traffic_limit_gb,threshold_percent,outstanding_threshold,shutdown_mode,keep_alive,auto_start_time,auto_stop_time,protection_mode,enabled,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		request.Name, request.AccessKeyID, request.AccessKeySecret, request.RegionID, request.SiteType, request.ProtectedInstanceID,
-		request.TrafficLimitGB, request.ThresholdPercent, request.OutstandingThreshold, request.ShutdownMode, request.ProtectionMode,
+		request.TrafficLimitGB, request.ThresholdPercent, request.OutstandingThreshold, request.ShutdownMode, boolInt(request.KeepAlive), nullIfEmpty(request.AutoStartTime), nullIfEmpty(request.AutoStopTime), request.ProtectionMode,
 		boolInt(enabled), time.Now().UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return CloudAccount{}, err
@@ -1146,7 +1174,8 @@ func (s *Store) CreateCloudAccount(ctx context.Context, request CloudAccountRequ
 	return CloudAccount{
 		ID: id, Name: request.Name, AccessKeyID: request.AccessKeyID, RegionID: request.RegionID, SiteType: request.SiteType,
 		ProtectedInstanceID: request.ProtectedInstanceID, TrafficLimitGB: request.TrafficLimitGB, ThresholdPercent: request.ThresholdPercent,
-		OutstandingThreshold: request.OutstandingThreshold, ShutdownMode: request.ShutdownMode, ProtectionMode: request.ProtectionMode, Enabled: enabled,
+		OutstandingThreshold: request.OutstandingThreshold, ShutdownMode: request.ShutdownMode, KeepAlive: request.KeepAlive,
+		AutoStartTime: request.AutoStartTime, AutoStopTime: request.AutoStopTime, ProtectionMode: request.ProtectionMode, Enabled: enabled,
 	}, nil
 }
 
@@ -1166,13 +1195,13 @@ func (s *Store) UpdateCloudAccount(ctx context.Context, id int64, request CloudA
 		return CloudAccount{}, err
 	}
 	if request.AccessKeySecret == "" {
-		_, err = tx.ExecContext(ctx, `UPDATE accounts SET name=?,access_key_id=?,region_id=?,site_type=?,instance_id=?,traffic_limit_gb=?,threshold_percent=?,outstanding_threshold=?,shutdown_mode=?,protection_mode=?,enabled=? WHERE id=?`,
+		_, err = tx.ExecContext(ctx, `UPDATE accounts SET name=?,access_key_id=?,region_id=?,site_type=?,instance_id=?,traffic_limit_gb=?,threshold_percent=?,outstanding_threshold=?,shutdown_mode=?,keep_alive=?,auto_start_time=?,auto_stop_time=?,protection_mode=?,enabled=? WHERE id=?`,
 			request.Name, request.AccessKeyID, request.RegionID, request.SiteType, request.ProtectedInstanceID, request.TrafficLimitGB,
-			request.ThresholdPercent, request.OutstandingThreshold, request.ShutdownMode, request.ProtectionMode, boolInt(enabled), id)
+			request.ThresholdPercent, request.OutstandingThreshold, request.ShutdownMode, boolInt(request.KeepAlive), nullIfEmpty(request.AutoStartTime), nullIfEmpty(request.AutoStopTime), request.ProtectionMode, boolInt(enabled), id)
 	} else {
-		_, err = tx.ExecContext(ctx, `UPDATE accounts SET name=?,access_key_id=?,access_key_secret=?,region_id=?,site_type=?,instance_id=?,traffic_limit_gb=?,threshold_percent=?,outstanding_threshold=?,shutdown_mode=?,protection_mode=?,enabled=? WHERE id=?`,
+		_, err = tx.ExecContext(ctx, `UPDATE accounts SET name=?,access_key_id=?,access_key_secret=?,region_id=?,site_type=?,instance_id=?,traffic_limit_gb=?,threshold_percent=?,outstanding_threshold=?,shutdown_mode=?,keep_alive=?,auto_start_time=?,auto_stop_time=?,protection_mode=?,enabled=? WHERE id=?`,
 			request.Name, request.AccessKeyID, request.AccessKeySecret, request.RegionID, request.SiteType, request.ProtectedInstanceID,
-			request.TrafficLimitGB, request.ThresholdPercent, request.OutstandingThreshold, request.ShutdownMode, request.ProtectionMode, boolInt(enabled), id)
+			request.TrafficLimitGB, request.ThresholdPercent, request.OutstandingThreshold, request.ShutdownMode, boolInt(request.KeepAlive), nullIfEmpty(request.AutoStartTime), nullIfEmpty(request.AutoStopTime), request.ProtectionMode, boolInt(enabled), id)
 	}
 	if err != nil {
 		return CloudAccount{}, err
@@ -1254,7 +1283,11 @@ func (s *Store) CloudOverview(ctx context.Context) (CloudOverview, error) {
 	for index := range accounts {
 		accounts[index].AccessKeySecret = ""
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,account_id,instance_id,COALESCE(instance_name,''),COALESCE(region_id,''),COALESCE(status,'Unknown'),COALESCE(public_ip,''),COALESCE(instance_type,''),COALESCE(bandwidth_mbps,0),COALESCE(is_spot,0),last_synced FROM instances ORDER BY account_id,id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT i.id,i.account_id,i.instance_id,COALESCE(i.instance_name,''),COALESCE(i.region_id,''),COALESCE(i.status,'Unknown'),COALESCE(i.public_ip,''),COALESCE(i.instance_type,''),COALESCE(i.bandwidth_mbps,0),COALESCE(i.is_spot,0),
+		COALESCE(s.used_gb,COALESCE(i.traffic_used_gb,0)),
+		CASE WHEN COALESCE(a.traffic_limit_gb,200)>0 THEN COALESCE(s.used_gb,COALESCE(i.traffic_used_gb,0))/COALESCE(a.traffic_limit_gb,200)*100 ELSE COALESCE(i.traffic_percent,0) END,
+		i.last_synced,i.updated_at
+		FROM instances i JOIN accounts a ON a.id=i.account_id LEFT JOIN account_traffic_snapshots s ON s.account_id=i.account_id ORDER BY i.account_id,i.id`)
 	if err != nil {
 		return CloudOverview{}, err
 	}
@@ -1262,8 +1295,8 @@ func (s *Store) CloudOverview(ctx context.Context) (CloudOverview, error) {
 	for rows.Next() {
 		var instance CloudInstance
 		var isSpot int
-		var lastSynced sql.NullString
-		if err := rows.Scan(&instance.ID, &instance.AccountID, &instance.InstanceID, &instance.InstanceName, &instance.RegionID, &instance.Status, &instance.PublicIP, &instance.InstanceType, &instance.BandwidthMbps, &isSpot, &lastSynced); err != nil {
+		var lastSynced, updatedAt sql.NullString
+		if err := rows.Scan(&instance.ID, &instance.AccountID, &instance.InstanceID, &instance.InstanceName, &instance.RegionID, &instance.Status, &instance.PublicIP, &instance.InstanceType, &instance.BandwidthMbps, &isSpot, &instance.TrafficUsedGB, &instance.TrafficPercent, &lastSynced, &updatedAt); err != nil {
 			rows.Close()
 			return CloudOverview{}, err
 		}
@@ -1271,6 +1304,10 @@ func (s *Store) CloudOverview(ctx context.Context) (CloudOverview, error) {
 		if lastSynced.Valid {
 			parsed := parseDatabaseTime(lastSynced.String)
 			instance.LastSynced = &parsed
+		}
+		if updatedAt.Valid {
+			parsed := parseDatabaseTime(updatedAt.String)
+			instance.UpdatedAt = &parsed
 		}
 		instances = append(instances, instance)
 	}
@@ -1507,6 +1544,8 @@ func normalizeCloudAccountRequest(request CloudAccountRequest, secretOptional bo
 	request.RegionID = strings.TrimSpace(request.RegionID)
 	request.SiteType = strings.ToLower(strings.TrimSpace(request.SiteType))
 	request.ProtectedInstanceID = strings.TrimSpace(request.ProtectedInstanceID)
+	request.AutoStartTime = strings.TrimSpace(request.AutoStartTime)
+	request.AutoStopTime = strings.TrimSpace(request.AutoStopTime)
 	request.ProtectionMode = strings.ToLower(strings.TrimSpace(request.ProtectionMode))
 	if request.Name == "" || request.AccessKeyID == "" || request.RegionID == "" || (!secretOptional && request.AccessKeySecret == "") {
 		return request, false, errors.New("name, AccessKey ID, secret and region are required")
@@ -1525,6 +1564,15 @@ func normalizeCloudAccountRequest(request CloudAccountRequest, secretOptional bo
 	}
 	if request.ShutdownMode == "" {
 		request.ShutdownMode = "StopCharging"
+	}
+	if !oneOf(request.ShutdownMode, "StopCharging", "KeepCharging") {
+		return request, false, errors.New("shutdown mode must be StopCharging or KeepCharging")
+	}
+	if err := validateScheduleTime(request.AutoStartTime); err != nil {
+		return request, false, fmt.Errorf("auto start time: %w", err)
+	}
+	if err := validateScheduleTime(request.AutoStopTime); err != nil {
+		return request, false, fmt.Errorf("auto stop time: %w", err)
 	}
 	if request.SiteType == "china" {
 		request.OutstandingThreshold = 0
@@ -1569,6 +1617,23 @@ func boolInt(value bool) int {
 		return 1
 	}
 	return 0
+}
+
+func nullIfEmpty(value string) interface{} {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return value
+}
+
+func validateScheduleTime(value string) error {
+	if value == "" {
+		return nil
+	}
+	if _, err := time.Parse("15:04", value); err != nil {
+		return errors.New("must use HH:MM")
+	}
+	return nil
 }
 
 func oneOf(value string, allowed ...string) bool {

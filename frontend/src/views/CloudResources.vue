@@ -144,6 +144,7 @@
           <div><label class="field-label">AccessKey Secret</label><input v-model="form.access_key_secret" type="password" class="input" :required="!editTarget" :placeholder="editTarget ? '留空表示不修改' : ''" autocomplete="new-password" /></div>
           <div><label class="field-label">地域 ID</label><input v-model.trim="form.region_id" class="input" placeholder="cn-hongkong" required /></div>
           <div><label class="field-label">站点</label><select v-model="form.site_type" class="input"><option value="china">中国站</option><option value="international">国际站</option></select></div>
+          <div><label class="field-label">绑定实例 ID</label><input v-model.trim="form.instance_id" class="input" list="cloud-instance-options" placeholder="用于保活与定时任务" /></div>
           <div><label class="field-label">CDT 流量限额（GB）</label><input v-model.number="form.traffic_limit_gb" type="number" min="1" class="input" required /></div>
           <div><label class="field-label">保护阈值（%）</label><input v-model.number="form.threshold_percent" type="number" min="1" max="100" class="input" required /></div>
           <div class="field-wide">
@@ -155,6 +156,12 @@
             </select>
             <p class="field-hint">现有账户默认仅告警。停止新连接时，已建立的 TCP 连接会自然结束，月初流量恢复后自动重新开放。</p>
           </div>
+          <div class="field-wide setting-toggle-row">
+            <div><strong>抢占实例自动保活</strong><p class="field-hint">每分钟检查实例状态，发现被回收后自动尝试重新启动。</p></div>
+            <button type="button" class="toggle" :class="form.keep_alive ? 'toggle-on' : ''" :aria-pressed="form.keep_alive" @click="form.keep_alive = !form.keep_alive"><span></span></button>
+          </div>
+          <div><label class="field-label">定时关机</label><input v-model="form.auto_stop_time" type="time" class="input" /></div>
+          <div><label class="field-label">定时开机</label><input v-model="form.auto_start_time" type="time" class="input" /></div>
           <div v-if="form.protection_mode === 'stop_ecs'" class="field-wide">
             <label class="field-label">保护目标实例 ID</label>
             <input v-model.trim="form.instance_id" class="input" list="cloud-instance-options" placeholder="i-xxxxxxxxxxxxxxxxx" required />
@@ -196,7 +203,7 @@ const activeProtectionCount = computed(() => store.cloud.accounts.filter(account
 const blank = () => ({
   name: '', access_key_id: '', access_key_secret: '', region_id: 'cn-hongkong', site_type: 'china',
   instance_id: '', traffic_limit_gb: 200, threshold_percent: 95, outstanding_threshold: 0,
-  shutdown_mode: 'StopCharging', protection_mode: 'alert_only', enabled: true,
+  shutdown_mode: 'StopCharging', keep_alive: false, auto_start_time: '', auto_stop_time: '', protection_mode: 'alert_only', enabled: true,
 })
 const form = ref(blank())
 
@@ -239,7 +246,15 @@ function openCreate() {
 
 function openEdit(account) {
   editTarget.value = account
-  form.value = { ...account, access_key_secret: '' }
+  form.value = {
+    name: account.name || '', access_key_id: account.access_key_id || '', access_key_secret: '',
+    region_id: account.region_id || '', site_type: account.site_type || 'international',
+    instance_id: account.instance_id || '', traffic_limit_gb: account.traffic_limit_gb || 200,
+    threshold_percent: account.threshold_percent || 95, outstanding_threshold: account.outstanding_threshold || 0,
+    shutdown_mode: account.shutdown_mode || 'StopCharging', keep_alive: !!account.keep_alive,
+    auto_start_time: account.auto_start_time || '', auto_stop_time: account.auto_stop_time || '',
+    protection_mode: account.protection_mode || 'alert_only', enabled: account.enabled !== false,
+  }
   formError.value = ''
   showForm.value = true
 }

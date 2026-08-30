@@ -29,7 +29,7 @@
           </div>
           <div>
             <label class="field-label" for="password">密码</label>
-            <input id="password" v-model="form.password" type="password" class="input" autocomplete="current-password" :placeholder="isInit ? '至少 6 位字符' : '请输入密码'" />
+            <input id="password" v-model="form.password" type="password" class="input" autocomplete="current-password" :placeholder="isInit ? '至少 8 位字符' : '请输入密码'" />
           </div>
           <div v-if="isInit">
             <label class="field-label" for="confirm">确认密码</label>
@@ -77,8 +77,8 @@ async function submit() {
     return
   }
   if (isInit.value) {
-    if (form.value.password.length < 6) {
-      error.value = '密码至少需要 6 位字符'
+    if (form.value.password.length < 8) {
+      error.value = '密码至少需要 8 位字符'
       return
     }
     if (form.value.password !== form.value.confirm) {
@@ -96,7 +96,7 @@ async function submit() {
     }
     router.push('/')
   } catch (e) {
-    error.value = e.response?.data?.detail || '操作失败，请稍后重试'
+    error.value = e.response?.data?.error || e.response?.data?.detail || '操作失败，请稍后重试'
   } finally {
     loading.value = false
   }

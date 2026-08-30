@@ -12,7 +12,7 @@
 
     <div class="card settings-card">
       <div class="section-heading"><div><h2>修改密码</h2><p>更新控制台管理员登录凭据。</p></div><span class="section-code">SEC</span></div>
-      <div class="mt-5 max-w-md"><label class="field-label" for="new-password">新密码</label><input id="new-password" v-model="newPassword" type="password" class="input" placeholder="至少 6 位字符" /></div><button type="button" @click="changePassword" class="btn-danger mt-4">更新密码</button>
+      <div class="mt-5 max-w-md"><label class="field-label" for="new-password">新密码</label><input id="new-password" v-model="newPassword" type="password" class="input" placeholder="至少 8 位字符" /></div><button type="button" @click="changePassword" class="btn-danger mt-4">更新密码</button>
     </div>
 
     <div v-if="msg.text" class="notice" :class="`notice-${msg.type}`">{{ msg.text }}</div>
@@ -32,10 +32,11 @@ function authHeader() { return { Authorization: `Bearer ${localStorage.getItem('
 function showMessage(type, text, timeout = 4000) { msg.value = { type, text }; window.setTimeout(() => { msg.value = { type: 'success', text: '' } }, timeout) }
 async function checkVersion() { try { const { data } = await axios.get('/api/version/check', { headers: authHeader() }); versionInfo.value = data } catch (e) {} }
 function settingItems() { return Object.entries(form.value).map(([key, value]) => ({ key, value })) }
-async function save() { saving.value = true; try { await axios.post('/api/settings', settingItems(), { headers: authHeader() }); await store.fetchSettings(); showMessage('success', '设置已保存') } catch (e) { showMessage('error', '保存失败：' + (e.response?.data?.detail || e.message)) } finally { saving.value = false } }
-async function testTg() { testing.value = true; try { await axios.post('/api/settings', settingItems(), { headers: authHeader() }); await axios.post('/api/settings/test-tg', {}, { headers: authHeader() }); showMessage('success', '测试消息已发送，请检查 Telegram') } catch (e) { showMessage('error', '发送失败：' + (e.response?.data?.detail || e.message)) } finally { testing.value = false } }
-async function testDailyReport() { reportTesting.value = true; try { await axios.post('/api/settings/test-daily-report', {}, { headers: authHeader() }); showMessage('success', '测试汇报已发送，请检查 Telegram') } catch (e) { showMessage('error', '发送失败：' + (e.response?.data?.detail || e.message)) } finally { reportTesting.value = false } }
-async function changePassword() { if (!newPassword.value || newPassword.value.length < 6) { showMessage('error', '密码至少需要 6 位字符'); return }; try { await axios.post('/api/settings/change-password', { password: newPassword.value }, { headers: authHeader() }); newPassword.value = ''; showMessage('success', '密码已更新，下次登录生效') } catch (e) { showMessage('error', '更新失败：' + (e.response?.data?.detail || e.message)) } }
+function apiError(e) { return e.response?.data?.error || e.response?.data?.detail || e.message }
+async function save() { saving.value = true; try { await axios.post('/api/settings', settingItems(), { headers: authHeader() }); await store.fetchSettings(); showMessage('success', '设置已保存') } catch (e) { showMessage('error', '保存失败：' + apiError(e)) } finally { saving.value = false } }
+async function testTg() { testing.value = true; try { await axios.post('/api/settings', settingItems(), { headers: authHeader() }); await axios.post('/api/settings/test-tg', {}, { headers: authHeader() }); showMessage('success', '测试消息已发送，请检查 Telegram') } catch (e) { showMessage('error', '发送失败：' + apiError(e)) } finally { testing.value = false } }
+async function testDailyReport() { reportTesting.value = true; try { await axios.post('/api/settings/test-daily-report', {}, { headers: authHeader() }); showMessage('success', '测试汇报已发送，请检查 Telegram') } catch (e) { showMessage('error', '发送失败：' + apiError(e)) } finally { reportTesting.value = false } }
+async function changePassword() { if (!newPassword.value || newPassword.value.length < 8) { showMessage('error', '密码至少需要 8 位字符'); return }; try { await axios.post('/api/settings/change-password', { password: newPassword.value }, { headers: authHeader() }); localStorage.removeItem('token'); window.location.href = '/login' } catch (e) { showMessage('error', '更新失败：' + apiError(e)) } }
 </script>
 
 <style scoped>

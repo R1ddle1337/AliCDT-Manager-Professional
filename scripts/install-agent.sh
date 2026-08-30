@@ -46,16 +46,21 @@ chmod 700 /etc/cdt-relay /var/lib/cdt-relay
 if [ -n "$INSTALL_BINARY" ]; then
   install -m 0755 "$INSTALL_BINARY" /usr/local/bin/cdt-relay-agent
 else
-  if [ "$VERSION" = "latest" ]; then
-    RELEASE_BASE="https://github.com/R1ddle1337/AliCDT-Manager-Professional/releases/latest/download"
-  else
-    RELEASE_BASE="https://github.com/R1ddle1337/AliCDT-Manager-Professional/releases/download/${VERSION}"
-  fi
   ASSET="cdt-relay-agent-linux-${ARCH}"
   TMP_DIR="$(mktemp -d)"
   trap 'rm -rf "$TMP_DIR"' EXIT
-  curl -fsSL --retry 3 "${RELEASE_BASE}/${ASSET}" -o "${TMP_DIR}/${ASSET}"
-  curl -fsSL --retry 3 "${RELEASE_BASE}/checksums.txt" -o "${TMP_DIR}/checksums.txt"
+  PANEL_BASE="${CONTROLLER%/}/agent"
+  if ! curl -fsSL --retry 3 "${PANEL_BASE}/${ASSET}" -o "${TMP_DIR}/${ASSET}" || \
+     ! curl -fsSL --retry 3 "${PANEL_BASE}/checksums.txt" -o "${TMP_DIR}/checksums.txt"; then
+    rm -f "${TMP_DIR}/${ASSET}" "${TMP_DIR}/checksums.txt"
+    if [ "$VERSION" = "latest" ]; then
+      RELEASE_BASE="https://github.com/R1ddle1337/AliCDT-Manager-Professional/releases/latest/download"
+    else
+      RELEASE_BASE="https://github.com/R1ddle1337/AliCDT-Manager-Professional/releases/download/${VERSION}"
+    fi
+    curl -fsSL --retry 3 "${RELEASE_BASE}/${ASSET}" -o "${TMP_DIR}/${ASSET}"
+    curl -fsSL --retry 3 "${RELEASE_BASE}/checksums.txt" -o "${TMP_DIR}/checksums.txt"
+  fi
   EXPECTED="$(awk -v asset="$ASSET" '$2 == asset { print $1 }' "${TMP_DIR}/checksums.txt")"
   if [ -z "$EXPECTED" ]; then
     echo "Checksum for ${ASSET} was not found." >&2

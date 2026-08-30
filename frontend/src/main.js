@@ -10,16 +10,24 @@ import RelayNodes from './views/RelayNodes.vue'
 import LandingNodes from './views/LandingNodes.vue'
 import RelayServices from './views/RelayServices.vue'
 import CloudResources from './views/CloudResources.vue'
+import Dashboard from './views/Dashboard.vue'
+import Accounts from './views/Accounts.vue'
+import Logs from './views/Logs.vue'
+import Settings from './views/Settings.vue'
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/login', component: Login },
     { path: '/', component: RelayOverview, meta: { auth: true } },
+    { path: '/instances', component: Dashboard, meta: { auth: true } },
+    { path: '/accounts', component: Accounts, meta: { auth: true } },
     { path: '/relay-nodes', component: RelayNodes, meta: { auth: true } },
     { path: '/landing-nodes', component: LandingNodes, meta: { auth: true } },
     { path: '/relay-services', component: RelayServices, meta: { auth: true } },
     { path: '/cloud-resources', component: CloudResources, meta: { auth: true } },
+    { path: '/logs', component: Logs, meta: { auth: true } },
+    { path: '/settings', component: Settings, meta: { auth: true } },
   ]
 })
 
