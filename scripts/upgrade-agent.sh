@@ -42,14 +42,19 @@ if [ -f "$BINARY" ]; then install -m 0700 "$BINARY" "/var/lib/cdt-relay/backups/
 install -m 0755 "${TMP_DIR}/${ASSET}" "${BINARY}.new"
 mv -f "${BINARY}.new" "$BINARY"
 
-UNIT="/etc/systemd/system/${SERVICE}.service"
-if [ -f "$UNIT" ]; then
-  if grep -q '^ReadWritePaths=' "$UNIT"; then
-    sed -i 's#^ReadWritePaths=.*#ReadWritePaths=/var/lib/cdt-relay /usr/local/bin#' "$UNIT"
+SYSTEMD_UNIT="/etc/systemd/system/${SERVICE}.service"
+OPENRC_UNIT="/etc/init.d/${SERVICE}"
+if [ -f "$SYSTEMD_UNIT" ] && command -v systemctl >/dev/null 2>&1; then
+  if grep -q '^ReadWritePaths=' "$SYSTEMD_UNIT"; then
+    sed -i 's#^ReadWritePaths=.*#ReadWritePaths=/var/lib/cdt-relay /usr/local/bin#' "$SYSTEMD_UNIT"
   else
-    sed -i '/^ProtectSystem=/a ReadWritePaths=/var/lib/cdt-relay /usr/local/bin' "$UNIT"
+    sed -i '/^ProtectSystem=/a ReadWritePaths=/var/lib/cdt-relay /usr/local/bin' "$SYSTEMD_UNIT"
   fi
   systemctl daemon-reload
   systemctl restart "$SERVICE"
+elif [ -f "$OPENRC_UNIT" ] && command -v rc-service >/dev/null 2>&1; then
+  rc-service "$SERVICE" restart
+else
+  echo "Agent binary upgraded, but no systemd/OpenRC service was found; restart ${SERVICE} manually." >&2
 fi
 echo "AliCDT Relay Agent upgraded to checksum ${ACTUAL}."

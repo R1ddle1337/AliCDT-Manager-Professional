@@ -164,8 +164,8 @@ func (c *Client) Run(ctx context.Context) error {
 				if err := c.checkForUpdate(ctx); err != nil {
 					if errors.Is(err, ErrRestartRequested) {
 						// The executable has been replaced atomically. Exit so
-						// systemd (or the container supervisor) starts the new
-						// process; the pending marker protects against bad boots.
+						// A service supervisor (systemd, OpenRC, or a container supervisor)
+						// starts the new process; the pending marker protects against bad boots.
 						return err
 					}
 					fmt.Fprintf(os.Stderr, "agent update check failed: %v\n", err)

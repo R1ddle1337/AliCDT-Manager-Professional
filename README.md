@@ -39,6 +39,7 @@ Agent 更新说明：生产控制器通过 `CDT_AGENT_RELEASE_SOURCE=github` 从
 `CDT_AGENT_RELEASE_REPO` 的 GitHub Release 获取并校验 AMD64/ARM64 二进制，缓存目录默认为
 `/app/data/agent-releases`。GitHub 暂时不可用时继续提供最近一次校验成功的缓存版本，首次无缓存时使用镜像内置版本。
 Agent 安装脚本默认设置 `CDT_AGENT_UPDATE_TIME=04:00` 和 `CDT_AGENT_UPDATE_LOCATION=Asia/Shanghai`，每天只检查一次；如需兼容旧配置，可显式设置 `CDT_AGENT_UPDATE_INTERVAL`。
+Agent 安装支持 systemd 和 Alpine Linux 的 OpenRC；在没有这两种服务管理器的容器中，请使用容器编排器运行 Agent。
 
 ## 所需 RAM 权限
 https://ram.console.alibabacloud.com/users

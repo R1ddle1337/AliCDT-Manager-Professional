@@ -32,9 +32,10 @@ The controller keeps the original account workflow and SQLite data in place:
 - TCP connections are pinned to their selected landing node until disconnect.
 - Config updates affect new connections without restarting the agent.
 - Installed Agents check the controller's architecture-specific release checksum
-  every ten minutes, download over HTTPS, verify SHA-256, atomically replace
-  the binary and restart through systemd. A pending-update marker retains one
-  rollback binary; three unsuccessful boots restore the previous executable.
+  on the configured schedule, download over HTTPS, verify SHA-256, atomically
+  replace the binary and restart through systemd or OpenRC. A pending-update
+  marker retains one rollback binary; three unsuccessful boots restore the
+  previous executable.
 - UDP clients receive a per-client session pinned to one landing node until the
   idle timeout expires.
 - Supported scheduling modes: failover, weighted round robin and source IP hash.
@@ -115,8 +116,9 @@ curl -fsSL https://cdt.7b.tn/agent/install.sh | \
 ```
 
 The installer selects amd64 or arm64 automatically, verifies the release
-SHA-256 checksum and installs a hardened systemd service. A local binary can be
-used during development:
+SHA-256 checksum, and installs a hardened systemd service or an OpenRC
+`supervise-daemon` service on Alpine. A local binary can be used during
+development:
 
 ```bash
 go build -o /tmp/cdt-relay-agent ./cmd/relay-agent
@@ -129,6 +131,10 @@ sudo scripts/install-agent.sh \
 
 The panel never needs to store a root password or SSH key. SSH is used only for
 the initial installation.
+
+Alpine hosts must boot with OpenRC (`rc-service` and `rc-update` available). A
+container without systemd/OpenRC should run the Agent under its container
+supervisor instead of using this host installer.
 
 The same one-time enrollment command is available directly on each account card
 under **云账户 → 安装 Agent**. This keeps API-key management and the root SSH
@@ -195,9 +201,9 @@ The controller also serves the Vue SPA and the root SSH installer at
 
 Agents installed before automatic upgrades were introduced need one bootstrap
 command from **中转节点 → 升级已安装 Agent**. It downloads the same
-checksum-verified binary and updates the existing systemd sandbox to allow
-future atomic replacements. The command does not enroll a new node or consume
-an enrollment token. Containerized Agents must instead be updated by
+checksum-verified binary and updates the existing systemd or OpenRC service to
+allow future atomic replacements. The command does not enroll a new node or
+consume an enrollment token. Containerized Agents must instead be updated by
 rebuilding/restarting their container image.
 
 DNS management uses a provider-neutral reconciliation layer. The first

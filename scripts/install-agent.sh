@@ -40,6 +40,21 @@ case "$(uname -m)" in
   *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 
+# The Agent can run under either systemd (most Debian/Ubuntu ECS hosts) or
+# OpenRC (Alpine Linux). Fail before downloading anything when no supported
+# service manager is available so a container or minimal rescue shell does not
+# look like a successful installation.
+SERVICE_MANAGER=""
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+  SERVICE_MANAGER="systemd"
+elif command -v rc-service >/dev/null 2>&1 && command -v rc-update >/dev/null 2>&1; then
+  SERVICE_MANAGER="openrc"
+else
+  echo "Unsupported init system: systemd or OpenRC is required." >&2
+  echo "For Alpine, install and boot OpenRC; for containers, run the Agent under a container supervisor." >&2
+  exit 1
+fi
+
 mkdir -p /etc/cdt-relay /var/lib/cdt-relay
 chmod 700 /etc/cdt-relay /var/lib/cdt-relay
 
@@ -82,7 +97,11 @@ else
 fi
 
 escape_env() {
-  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+  # Keep the file valid for both systemd EnvironmentFile and an OpenRC
+  # runscript sourcing it. Double-quote escaping covers shell expansion and
+  # systemd's EnvironmentFile parser ($, backticks, quotes and backslashes).
+  # shellcheck disable=SC2016 # The dollar sign is intentionally literal in sed.
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/\$/\\$/g; s/"/\\"/g; s/`/\\`/g'
 }
 
 cat > /etc/cdt-relay/agent.env <<EOF
@@ -97,7 +116,9 @@ CDT_AGENT_UPDATE_LOCATION=Asia/Shanghai
 EOF
 chmod 600 /etc/cdt-relay/agent.env
 
-cat > /etc/systemd/system/cdt-relay-agent.service <<'EOF'
+if [ "$SERVICE_MANAGER" = "systemd" ]; then
+  install -d -m 0755 /etc/systemd/system
+  cat > /etc/systemd/system/cdt-relay-agent.service <<'EOF'
 [Unit]
 Description=AliCDT Relay Agent
 After=network-online.target
@@ -124,6 +145,43 @@ RestrictSUIDSGID=true
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload
-systemctl enable --now cdt-relay-agent
-echo "AliCDT Relay Agent installed and started."
+  systemctl daemon-reload
+  systemctl enable --now cdt-relay-agent
+  echo "AliCDT Relay Agent installed and started with systemd."
+else
+  # supervise-daemon keeps the foreground Agent alive and restarts it after a
+  # checksum-verified self-update (the Agent exits intentionally after swap).
+  install -d -m 0755 /etc/init.d
+  cat > /etc/init.d/cdt-relay-agent <<'EOF'
+#!/sbin/openrc-run
+
+name="AliCDT Relay Agent"
+description="AliCDT transparent relay Agent"
+command="/usr/local/bin/cdt-relay-agent"
+supervisor="supervise-daemon"
+pidfile="/run/${RC_SVCNAME}.pid"
+output_log="/var/log/${RC_SVCNAME}.log"
+error_log="/var/log/${RC_SVCNAME}.err"
+respawn_delay=3
+respawn_max=0
+
+depend() {
+  need net
+}
+
+start_pre() {
+  if [ ! -r /etc/cdt-relay/agent.env ]; then
+    eerror "missing /etc/cdt-relay/agent.env"
+    return 1
+  fi
+  . /etc/cdt-relay/agent.env
+  export CDT_CONTROLLER_URL CDT_ENROLL_TOKEN CDT_NODE_NAME CDT_PUBLIC_IP
+  export CDT_AGENT_DATA_DIR CDT_AGENT_AUTO_UPDATE CDT_AGENT_UPDATE_TIME
+  export CDT_AGENT_UPDATE_LOCATION CDT_AGENT_UPDATE_INTERVAL
+}
+EOF
+  chmod 0755 /etc/init.d/cdt-relay-agent
+  rc-update add cdt-relay-agent default
+  rc-service cdt-relay-agent start
+  echo "AliCDT Relay Agent installed and started with OpenRC."
+fi

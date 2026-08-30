@@ -104,6 +104,9 @@ journalctl -u cdt-relay-agent -n 100 --no-pager
 stat -c '%a %n' /var/lib/cdt-relay/credentials.json
 ```
 
+On Alpine, use `rc-service cdt-relay-agent status` and inspect
+`/var/log/cdt-relay-agent.log` and `/var/log/cdt-relay-agent.err` instead.
+
 The credentials and last valid config must be mode `600`. After enrollment,
 the Agent communicates outbound over HTTPS and does not expose a management
 port.
@@ -151,11 +154,17 @@ To stop the Agent but preserve its credentials and cached config:
 systemctl disable --now cdt-relay-agent
 ```
 
+On Alpine, stop it with `rc-service cdt-relay-agent stop` (and use
+`rc-update del cdt-relay-agent default` if it must not start at boot).
+
 To restore it:
 
 ```bash
 systemctl enable --now cdt-relay-agent
 ```
+
+On Alpine, restore it with `rc-update add cdt-relay-agent default` followed by
+`rc-service cdt-relay-agent start`.
 
 Remove the two staging nginx locations and reload nginx only after `nginx -t`
 passes. Stop the staging controller while preserving its database:
