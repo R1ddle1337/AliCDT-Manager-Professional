@@ -1,8 +1,10 @@
 package controller
 
 import (
-	"github.com/go-chi/chi/v5"
+	"fmt"
 	"net/http"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func (s *Server) listDNSProviders(w http.ResponseWriter, r *http.Request) {
@@ -20,6 +22,10 @@ func (s *Server) createDNSProvider(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if err := s.store.ValidateDNSProviderRequest(r.Context(), "", request); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("DNS Provider 凭证验证失败: %w", err))
+		return
+	}
 	provider, err := s.store.CreateDNSProvider(r.Context(), request)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -34,7 +40,12 @@ func (s *Server) updateDNSProvider(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	provider, err := s.store.UpdateDNSProvider(r.Context(), chi.URLParam(r, "providerID"), request)
+	id := chi.URLParam(r, "providerID")
+	if err := s.store.ValidateDNSProviderRequest(r.Context(), id, request); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("DNS Provider 凭证验证失败: %w", err))
+		return
+	}
+	provider, err := s.store.UpdateDNSProvider(r.Context(), id, request)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return

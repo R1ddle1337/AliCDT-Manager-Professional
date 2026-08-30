@@ -71,6 +71,51 @@ func (s *Store) dnsProviderConfig(ctx context.Context, id string) (dnsprovider.C
 	return cfg, nil
 }
 
+// ValidateDNSProviderRequest performs a real read-only request against the
+// vendor before credentials are persisted. Existing secrets are merged for
+// edits so leaving a secret field blank keeps the last working credential.
+func (s *Store) ValidateDNSProviderRequest(ctx context.Context, existingID string, request CreateDNSProviderRequest) error {
+	var existing dnsprovider.Config
+	var err error
+	if existingID != "" {
+		existing, err = s.dnsProviderConfig(ctx, existingID)
+		if err != nil {
+			return err
+		}
+	}
+	cfg := dnsprovider.Config{
+		Type: strings.ToLower(strings.TrimSpace(request.Type)), Zone: strings.TrimSuffix(strings.TrimSpace(request.Zone), "."),
+		ZoneID: strings.TrimSpace(request.ZoneID), Endpoint: strings.TrimSpace(request.Endpoint), AccessKeyID: strings.TrimSpace(request.AccessKeyID),
+		AccessKeySecret: strings.TrimSpace(request.AccessKeySecret), APIToken: strings.TrimSpace(request.APIToken), APIEmail: strings.TrimSpace(request.APIEmail),
+	}
+	if cfg.Type == "" {
+		cfg.Type = existing.Type
+	}
+	if cfg.Zone == "" {
+		cfg.Zone = existing.Zone
+	}
+	if cfg.ZoneID == "" {
+		cfg.ZoneID = existing.ZoneID
+	}
+	if cfg.AccessKeyID == "" {
+		cfg.AccessKeyID = existing.AccessKeyID
+	}
+	if cfg.AccessKeySecret == "" {
+		cfg.AccessKeySecret = existing.AccessKeySecret
+	}
+	if cfg.APIToken == "" {
+		cfg.APIToken = existing.APIToken
+	}
+	if cfg.APIEmail == "" {
+		cfg.APIEmail = existing.APIEmail
+	}
+	provider, err := dnsprovider.New(cfg)
+	if err != nil {
+		return err
+	}
+	return provider.Test(ctx)
+}
+
 func normalizeDNSProviderRequest(request CreateDNSProviderRequest, secretOptional bool) (CreateDNSProviderRequest, bool, error) {
 	request.Name = strings.TrimSpace(request.Name)
 	request.Type = strings.ToLower(strings.TrimSpace(request.Type))

@@ -2,6 +2,9 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -44,5 +47,44 @@ func TestDNSProviderAndManagedRecordLifecycle(t *testing.T) {
 	}
 	if err := store.DeleteDNSProvider(context.Background(), provider.ID); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDNSProviderAPIValidatesCredentialsBeforePersisting(t *testing.T) {
+	fakeDNS := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Header.Get("Authorization") != "Bearer good-token" {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"success":false,"errors":[{"message":"invalid token"}]}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "result": []interface{}{map[string]string{"id": "zone-1", "name": "example.com"}}})
+	}))
+	defer fakeDNS.Close()
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	server, err := NewServer(store, ServerOptions{AdminToken: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+	request := CreateDNSProviderRequest{Name: "cf", Type: "cloudflare", Zone: "example.com", Endpoint: fakeDNS.URL, APIToken: "bad-token"}
+	requestJSON(t, httpServer.URL+"/api/v2/dns/providers", "admin", request, http.StatusBadRequest, nil)
+	providers, err := store.ListDNSProviders(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(providers) != 0 {
+		t.Fatalf("invalid provider was persisted: %+v", providers)
+	}
+	request.APIToken = "good-token"
+	var created DNSProvider
+	requestJSON(t, httpServer.URL+"/api/v2/dns/providers", "admin", request, http.StatusCreated, &created)
+	if created.ID == "" || !created.TokenConfigured {
+		t.Fatalf("valid provider was not persisted: %+v", created)
 	}
 }
