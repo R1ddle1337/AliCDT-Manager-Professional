@@ -1,7 +1,7 @@
 <template>
   <div class="space-y-5 fade-in">
     <header class="flex flex-wrap items-end justify-between gap-4">
-      <div><div class="eyebrow">DNS CONTROL PLANE</div><h1 class="page-title">DNS 入口管理</h1><p class="page-subtitle">通过 Provider 抽象层托管多台 CDT Relay 的入口记录，支持阿里云 DNS 与 Cloudflare。</p></div>
+      <div><div class="eyebrow">DNS CONTROL PLANE</div><h1 class="page-title">DNS 入口管理</h1><p class="page-subtitle">通过 Provider 抽象层托管多台 CDT Relay 的入口记录，支持阿里云 DNS 与 Cloudflare。</p><p class="field-hint">保存 Provider 时会先验证凭证和 Zone 访问权限，验证失败不会入库。</p></div>
       <div class="flex flex-wrap gap-2"><button class="btn-ghost border border-slate-200" :disabled="syncing" @click="syncAll">{{ syncing ? '同步中...' : '同步全部记录' }}</button><button class="btn-primary" @click="openProvider()">添加 DNS Provider</button></div>
     </header>
     <div v-if="message.text" class="notice" :class="`notice-${message.type}`">{{ message.text }}</div>
