@@ -23,6 +23,8 @@ func main() {
 	dataDir := flag.String("data-dir", env("CDT_AGENT_DATA_DIR", "/var/lib/cdt-relay"), "agent data directory")
 	poll := flag.Duration("poll", 5*time.Second, "desired config polling interval")
 	heartbeat := flag.Duration("heartbeat", 10*time.Second, "heartbeat interval")
+	autoUpdate := flag.Bool("auto-update", envBool("CDT_AGENT_AUTO_UPDATE", true), "automatically update the Agent binary")
+	updateInterval := flag.Duration("update-interval", envDuration("CDT_AGENT_UPDATE_INTERVAL", 10*time.Minute), "Agent update check interval")
 	flag.Parse()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -30,14 +32,17 @@ func main() {
 	engine := relay.NewEngine()
 	defer engine.Close()
 	client, err := agent.New(agent.Options{
-		ControllerURL:   *controller,
-		EnrollmentToken: *token,
-		NodeName:        *nodeName,
-		PublicIP:        *publicIP,
-		DataDir:         *dataDir,
-		AgentVersion:    version,
-		PollInterval:    *poll,
-		HeartbeatEvery:  *heartbeat,
+		ControllerURL:       *controller,
+		EnrollmentToken:     *token,
+		NodeName:            *nodeName,
+		PublicIP:            *publicIP,
+		DataDir:             *dataDir,
+		AgentVersion:        version,
+		PollInterval:        *poll,
+		HeartbeatEvery:      *heartbeat,
+		AutoUpdate:          *autoUpdate,
+		AutoUpdateSet:       true,
+		UpdateCheckInterval: *updateInterval,
 	}, engine)
 	if err != nil {
 		fatal(err)
@@ -52,6 +57,25 @@ func env(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envBool(key string, fallback bool) bool {
+	value := env(key, "")
+	if value == "" {
+		return fallback
+	}
+	return value == "1" || value == "true" || value == "yes" || value == "on"
+}
+func envDuration(key string, fallback time.Duration) time.Duration {
+	value := env(key, "")
+	if value == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func fatal(err error) {

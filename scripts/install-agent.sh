@@ -91,6 +91,8 @@ CDT_ENROLL_TOKEN="$(escape_env "$TOKEN")"
 CDT_NODE_NAME="$(escape_env "$NODE_NAME")"
 CDT_PUBLIC_IP="$(escape_env "$PUBLIC_IP")"
 CDT_AGENT_DATA_DIR=/var/lib/cdt-relay
+CDT_AGENT_AUTO_UPDATE=true
+CDT_AGENT_UPDATE_INTERVAL=10m
 EOF
 chmod 600 /etc/cdt-relay/agent.env
 
@@ -111,7 +113,7 @@ NoNewPrivileges=true
 ProtectHome=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/cdt-relay
+ReadWritePaths=/var/lib/cdt-relay /usr/local/bin
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

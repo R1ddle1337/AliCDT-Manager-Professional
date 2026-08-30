@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/R1ddle1337/AliCDT-Manager-Professional/internal/protocol"
@@ -19,14 +20,19 @@ import (
 )
 
 type Options struct {
-	ControllerURL   string
-	EnrollmentToken string
-	NodeName        string
-	PublicIP        string
-	DataDir         string
-	AgentVersion    string
-	PollInterval    time.Duration
-	HeartbeatEvery  time.Duration
+	ControllerURL       string
+	EnrollmentToken     string
+	NodeName            string
+	PublicIP            string
+	DataDir             string
+	AgentVersion        string
+	PollInterval        time.Duration
+	HeartbeatEvery      time.Duration
+	AutoUpdate          bool
+	AutoUpdateSet       bool
+	UpdateCheckInterval time.Duration
+	BinaryPath          string
+	ServiceName         string
 }
 
 type credentials struct {
@@ -35,13 +41,16 @@ type credentials struct {
 }
 
 type Client struct {
-	opts       Options
-	httpClient *http.Client
-	engine     *relay.Engine
-	creds      credentials
-	startedAt  time.Time
-	lastConfig protocol.AgentConfig
-	hasConfig  bool
+	opts         Options
+	httpClient   *http.Client
+	engine       *relay.Engine
+	creds        credentials
+	startedAt    time.Time
+	lastConfig   protocol.AgentConfig
+	hasConfig    bool
+	updateMu     sync.RWMutex
+	updateStatus string
+	updateError  string
 }
 
 func New(opts Options, engine *relay.Engine) (*Client, error) {
@@ -62,6 +71,18 @@ func New(opts Options, engine *relay.Engine) (*Client, error) {
 	if opts.HeartbeatEvery <= 0 {
 		opts.HeartbeatEvery = 10 * time.Second
 	}
+	if !opts.AutoUpdateSet {
+		opts.AutoUpdate = true
+	}
+	if opts.UpdateCheckInterval <= 0 {
+		opts.UpdateCheckInterval = 10 * time.Minute
+	}
+	if opts.BinaryPath == "" {
+		opts.BinaryPath, _ = os.Executable()
+	}
+	if opts.ServiceName == "" {
+		opts.ServiceName = "cdt-relay-agent"
+	}
 	if engine == nil {
 		return nil, errors.New("relay engine is required")
 	}
@@ -70,14 +91,18 @@ func New(opts Options, engine *relay.Engine) (*Client, error) {
 		httpClient: &http.Client{
 			Timeout: 15 * time.Second,
 		},
-		engine:    engine,
-		startedAt: time.Now().UTC(),
+		engine:       engine,
+		updateStatus: "idle",
+		startedAt:    time.Now().UTC(),
 	}, nil
 }
 
 func (c *Client) Run(ctx context.Context) error {
 	if err := os.MkdirAll(c.opts.DataDir, 0700); err != nil {
 		return fmt.Errorf("create data directory: %w", err)
+	}
+	if err := c.recoverPendingUpdate(); err != nil {
+		return err
 	}
 	if err := c.loadOrEnroll(ctx); err != nil {
 		return err
@@ -91,11 +116,14 @@ func (c *Client) Run(ctx context.Context) error {
 		fmt.Fprintf(os.Stderr, "initial config poll failed: %v\n", err)
 	}
 	_ = c.sendHeartbeat(ctx)
+	_ = c.confirmPendingUpdate()
 
 	pollTicker := time.NewTicker(c.opts.PollInterval)
 	heartbeatTicker := time.NewTicker(c.opts.HeartbeatEvery)
+	updateTicker := time.NewTicker(c.opts.UpdateCheckInterval)
 	defer pollTicker.Stop()
 	defer heartbeatTicker.Stop()
+	defer updateTicker.Stop()
 
 	for {
 		select {
@@ -108,6 +136,12 @@ func (c *Client) Run(ctx context.Context) error {
 		case <-heartbeatTicker.C:
 			if err := c.sendHeartbeat(ctx); err != nil {
 				fmt.Fprintf(os.Stderr, "heartbeat failed: %v\n", err)
+			}
+		case <-updateTicker.C:
+			if c.opts.AutoUpdate {
+				if err := c.checkForUpdate(ctx); err != nil {
+					fmt.Fprintf(os.Stderr, "agent update check failed: %v\n", err)
+				}
 			}
 		}
 	}
@@ -353,8 +387,13 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) (err error) {
 }
 
 func (c *Client) sendHeartbeat(ctx context.Context) error {
+	binaryHash, _ := fileSHA256(c.opts.BinaryPath)
+	status, updateErr := c.currentUpdateState()
 	heartbeat := protocol.AgentHeartbeat{
 		AgentVersion:    c.opts.AgentVersion,
+		BinarySHA256:    binaryHash,
+		UpdateStatus:    status,
+		UpdateError:     updateErr,
 		CurrentRevision: c.engine.Revision(),
 		StartedAt:       c.startedAt,
 		Services:        c.engine.Snapshot(),

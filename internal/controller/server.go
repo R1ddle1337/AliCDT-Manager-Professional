@@ -23,6 +23,7 @@ type ServerOptions struct {
 	AdminToken         string
 	FrontendDir        string
 	AgentInstallerPath string
+	AgentVersion       string
 	UpdateRequestFile  string
 	UpdateStatusFile   string
 }
@@ -35,6 +36,7 @@ type Server struct {
 	agentAssetsDir     string
 	updateRequestFile  string
 	updateStatusFile   string
+	agentVersion       string
 	cloud              *CloudService
 	router             chi.Router
 }
@@ -46,7 +48,11 @@ func NewServer(store *Store, opts ServerOptions) (*Server, error) {
 	if strings.TrimSpace(opts.AdminToken) == "" {
 		return nil, errors.New("admin token is required")
 	}
-	server := &Server{store: store, adminToken: opts.AdminToken, frontendDir: opts.FrontendDir, agentInstallerPath: opts.AgentInstallerPath, updateRequestFile: opts.UpdateRequestFile, updateStatusFile: opts.UpdateStatusFile, cloud: NewCloudService(store)}
+	agentVersion := strings.TrimSpace(opts.AgentVersion)
+	if agentVersion == "" {
+		agentVersion = "dev"
+	}
+	server := &Server{store: store, adminToken: opts.AdminToken, frontendDir: opts.FrontendDir, agentInstallerPath: opts.AgentInstallerPath, updateRequestFile: opts.UpdateRequestFile, updateStatusFile: opts.UpdateStatusFile, agentVersion: agentVersion, cloud: NewCloudService(store)}
 	if opts.AgentInstallerPath != "" {
 		server.agentAssetsDir = filepath.Dir(opts.AgentInstallerPath)
 	}
@@ -67,6 +73,7 @@ func (s *Server) routes() chi.Router {
 	})
 	if s.agentInstallerPath != "" {
 		router.Get("/agent/install.sh", s.serveAgentInstaller)
+		router.Get("/agent/upgrade.sh", s.serveAgentUpgrade)
 		router.Get("/agent/{asset}", s.serveAgentAsset)
 	}
 	router.Get("/api/v2/auth/initialized", s.adminInitialized)
@@ -81,6 +88,8 @@ func (s *Server) routes() chi.Router {
 		router.Group(func(router chi.Router) {
 			router.Use(s.agentAuth)
 			router.Get("/{agentID}/config", s.agentConfig)
+			router.Get("/{agentID}/release", s.agentRelease)
+			router.Post("/{agentID}/update/state", s.agentUpdateState)
 			router.Post("/{agentID}/heartbeat", s.agentHeartbeat)
 		})
 	})
@@ -158,6 +167,16 @@ func (s *Server) serveAgentInstaller(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	http.ServeFile(w, r, s.agentInstallerPath)
+}
+
+func (s *Server) serveAgentUpgrade(w http.ResponseWriter, r *http.Request) {
+	if s.agentAssetsDir == "" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	http.ServeFile(w, r, filepath.Join(s.agentAssetsDir, "upgrade-agent.sh"))
 }
 
 func (s *Server) serveAgentAsset(w http.ResponseWriter, r *http.Request) {
@@ -298,6 +317,22 @@ func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.store.UpdateHeartbeat(r.Context(), chi.URLParam(r, "agentID"), heartbeat); err != nil {
 		writeStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) agentUpdateState(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Status string `json:"status"`
+		Error  string `json:"error"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.store.SetAgentUpdateState(r.Context(), chi.URLParam(r, "agentID"), request.Status, request.Error); err != nil {
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

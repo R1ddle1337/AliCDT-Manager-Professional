@@ -383,7 +383,7 @@ func (s *Store) GetRelayPool(ctx context.Context, id string) (RelayPool, error) 
 }
 
 func (s *Store) listRelayPoolMembers(ctx context.Context, poolID string) ([]RelayPoolMember, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT rpm.id,rpm.pool_id,rpm.relay_node_id,rn.name,COALESCE(rn.public_ip,''),CASE WHEN COALESCE(a.protection_triggered,0)=1 AND COALESCE(a.protection_mode,'alert_only')='drain_relay' THEN 'draining' ELSE rn.status END,rpm.weight,rpm.enabled,COALESCE(rpm.service_id,'') FROM relay_pool_members rpm JOIN relay_nodes rn ON rn.id=rpm.relay_node_id LEFT JOIN accounts a ON a.id=rn.cloud_account_id WHERE rpm.pool_id=? ORDER BY rn.name`, poolID)
+	rows, err := s.db.QueryContext(ctx, `SELECT rpm.id,rpm.pool_id,rpm.relay_node_id,rn.name,COALESCE(rn.public_ip,''),CASE WHEN (COALESCE(a.protection_triggered,0)=1 AND COALESCE(a.protection_mode,'alert_only')='drain_relay') OR COALESCE(rn.update_status,'idle') IN ('draining','updating') THEN 'draining' ELSE rn.status END,rpm.weight,rpm.enabled,COALESCE(rpm.service_id,'') FROM relay_pool_members rpm JOIN relay_nodes rn ON rn.id=rpm.relay_node_id LEFT JOIN accounts a ON a.id=rn.cloud_account_id WHERE rpm.pool_id=? ORDER BY rn.name`, poolID)
 	if err != nil {
 		return nil, err
 	}

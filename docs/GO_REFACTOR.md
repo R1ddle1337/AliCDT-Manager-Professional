@@ -31,6 +31,10 @@ The controller keeps the original account workflow and SQLite data in place:
 
 - TCP connections are pinned to their selected landing node until disconnect.
 - Config updates affect new connections without restarting the agent.
+- Installed Agents check the controller's architecture-specific release checksum
+  every ten minutes, download over HTTPS, verify SHA-256, atomically replace
+  the binary and restart through systemd. A pending-update marker retains one
+  rollback binary; three unsuccessful boots restore the previous executable.
 - UDP clients receive a per-client session pinned to one landing node until the
   idle timeout expires.
 - Supported scheduling modes: failover, weighted round robin and source IP hash.
@@ -188,6 +192,13 @@ The original console paths remain available for existing clients:
 
 The controller also serves the Vue SPA and the root SSH installer at
 `/agent/install.sh` when built with `Dockerfile.controller`.
+
+Agents installed before automatic upgrades were introduced need one bootstrap
+command from **中转节点 → 升级已安装 Agent**. It downloads the same
+checksum-verified binary and updates the existing systemd sandbox to allow
+future atomic replacements. The command does not enroll a new node or consume
+an enrollment token. Containerized Agents must instead be updated by
+rebuilding/restarting their container image.
 
 DNS management uses a provider-neutral reconciliation layer. The first
 release supports Aliyun DNS (AccessKey ID/Secret) and Cloudflare (scoped API

@@ -58,9 +58,21 @@ type AgentEnrollmentResponse struct {
 
 type AgentHeartbeat struct {
 	AgentVersion    string          `json:"agent_version"`
+	BinarySHA256    string          `json:"binary_sha256,omitempty"`
+	UpdateStatus    string          `json:"update_status,omitempty"`
+	UpdateError     string          `json:"update_error,omitempty"`
 	CurrentRevision int64           `json:"current_revision"`
 	StartedAt       time.Time       `json:"started_at"`
 	Services        []ServiceStatus `json:"services"`
+}
+
+type AgentRelease struct {
+	Available     bool   `json:"available"`
+	Version       string `json:"version"`
+	Architecture  string `json:"architecture"`
+	SHA256        string `json:"sha256"`
+	URL           string `json:"url"`
+	Size          int64  `json:"size"`
 }
 
 type ServiceStatus struct {

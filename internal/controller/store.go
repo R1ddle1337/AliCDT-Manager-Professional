@@ -38,6 +38,10 @@ type RelayNode struct {
 	Architecture    string          `json:"architecture"`
 	OS              string          `json:"os"`
 	AgentVersion    string          `json:"agent_version"`
+	BinarySHA256    string          `json:"binary_sha256,omitempty"`
+	UpdateStatus    string          `json:"update_status,omitempty"`
+	UpdateError     string          `json:"update_error,omitempty"`
+	UpdateAt        *time.Time      `json:"update_at,omitempty"`
 	Status          string          `json:"status"`
 	LastSeenAt      *time.Time      `json:"last_seen_at,omitempty"`
 	CurrentRevision int64           `json:"current_revision"`
@@ -380,6 +384,10 @@ func (s *Store) migrate(ctx context.Context) error {
 			architecture TEXT NOT NULL DEFAULT '',
 			os TEXT NOT NULL DEFAULT '',
 			agent_version TEXT NOT NULL DEFAULT '',
+			binary_sha256 TEXT NOT NULL DEFAULT '',
+			update_status TEXT NOT NULL DEFAULT 'idle',
+			update_error TEXT NOT NULL DEFAULT '',
+			update_at TEXT,
 			secret_hash TEXT NOT NULL,
 			status TEXT NOT NULL DEFAULT 'offline',
 			last_seen_at TEXT,
@@ -597,6 +605,10 @@ func (s *Store) migrate(ctx context.Context) error {
 		{name: "ecs_instance_id", definition: "TEXT NOT NULL DEFAULT ''"},
 		{name: "region_id", definition: "TEXT NOT NULL DEFAULT ''"},
 		{name: "cloud_account_id", definition: "INTEGER"},
+		{name: "binary_sha256", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "update_status", definition: "TEXT NOT NULL DEFAULT 'idle'"},
+		{name: "update_error", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "update_at", definition: "TEXT"},
 	} {
 		if err := s.ensureColumn(ctx, "relay_nodes", column.name, column.definition); err != nil {
 			return err
@@ -863,8 +875,12 @@ func (s *Store) UpdateHeartbeat(ctx context.Context, id string, heartbeat protoc
 		return err
 	}
 	now := time.Now().UTC()
-	if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET status='online', last_seen_at=?, agent_version=?, current_revision=?, service_status_json=? WHERE id=?`,
-		now.Format(time.RFC3339Nano), heartbeat.AgentVersion, heartbeat.CurrentRevision, string(encoded), id); err != nil {
+	updateStatus := strings.TrimSpace(heartbeat.UpdateStatus)
+	if updateStatus == "" {
+		updateStatus = "idle"
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET status='online', last_seen_at=?, agent_version=?, binary_sha256=?, update_status=?, update_error=?, update_at=?, current_revision=?, service_status_json=? WHERE id=?`,
+		now.Format(time.RFC3339Nano), heartbeat.AgentVersion, strings.TrimSpace(heartbeat.BinarySHA256), updateStatus, strings.TrimSpace(heartbeat.UpdateError), now.Format(time.RFC3339Nano), heartbeat.CurrentRevision, string(encoded), id); err != nil {
 		return err
 	}
 	if oldRevision != heartbeat.CurrentRevision {
@@ -975,7 +991,7 @@ func (s *Store) AgentConfig(ctx context.Context, id string) (protocol.AgentConfi
 }
 
 func (s *Store) ListRelayNodes(ctx context.Context) ([]RelayNode, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,public_ip,COALESCE(ecs_instance_id,''),COALESCE(region_id,''),cloud_account_id,architecture,os,agent_version,status,last_seen_at,current_revision,desired_revision,service_status_json FROM relay_nodes ORDER BY created_at`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,public_ip,COALESCE(ecs_instance_id,''),COALESCE(region_id,''),cloud_account_id,architecture,os,agent_version,COALESCE(binary_sha256,''),COALESCE(update_status,'idle'),COALESCE(update_error,''),update_at,status,last_seen_at,current_revision,desired_revision,service_status_json FROM relay_nodes ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -983,10 +999,10 @@ func (s *Store) ListRelayNodes(ctx context.Context) ([]RelayNode, error) {
 	var nodes []RelayNode
 	for rows.Next() {
 		var node RelayNode
-		var lastSeen sql.NullString
+		var lastSeen, updateAt sql.NullString
 		var cloudAccountID sql.NullInt64
 		var statusJSON string
-		if err := rows.Scan(&node.ID, &node.Name, &node.PublicIP, &node.ECSInstanceID, &node.RegionID, &cloudAccountID, &node.Architecture, &node.OS, &node.AgentVersion, &node.Status, &lastSeen, &node.CurrentRevision, &node.DesiredRevision, &statusJSON); err != nil {
+		if err := rows.Scan(&node.ID, &node.Name, &node.PublicIP, &node.ECSInstanceID, &node.RegionID, &cloudAccountID, &node.Architecture, &node.OS, &node.AgentVersion, &node.BinarySHA256, &node.UpdateStatus, &node.UpdateError, &updateAt, &node.Status, &lastSeen, &node.CurrentRevision, &node.DesiredRevision, &statusJSON); err != nil {
 			return nil, err
 		}
 		if cloudAccountID.Valid {
@@ -995,6 +1011,10 @@ func (s *Store) ListRelayNodes(ctx context.Context) ([]RelayNode, error) {
 		if lastSeen.Valid {
 			parsed, _ := time.Parse(time.RFC3339Nano, lastSeen.String)
 			node.LastSeenAt = &parsed
+		}
+		if updateAt.Valid {
+			parsed := parseDatabaseTime(updateAt.String)
+			node.UpdateAt = &parsed
 		}
 		node.Services = json.RawMessage(statusJSON)
 		nodes = append(nodes, node)

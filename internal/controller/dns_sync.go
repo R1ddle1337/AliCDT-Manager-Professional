@@ -112,7 +112,7 @@ func (s *Store) RefreshRelayAgentDNSRecords(ctx context.Context) error {
 		}
 		var publicIP, status string
 		var draining int
-		err := s.db.QueryRowContext(ctx, `SELECT COALESCE(rn.public_ip,''),CASE WHEN COALESCE(a.protection_triggered,0)=1 AND COALESCE(a.protection_mode,'alert_only')='drain_relay' THEN 'draining' ELSE rn.status END,CASE WHEN COALESCE(a.protection_triggered,0)=1 AND COALESCE(a.protection_mode,'alert_only')='drain_relay' THEN 1 ELSE 0 END FROM relay_nodes rn LEFT JOIN accounts a ON a.id=rn.cloud_account_id WHERE rn.id=?`, record.RelayNodeID).Scan(&publicIP, &status, &draining)
+		err := s.db.QueryRowContext(ctx, `SELECT COALESCE(rn.public_ip,''),CASE WHEN (COALESCE(a.protection_triggered,0)=1 AND COALESCE(a.protection_mode,'alert_only')='drain_relay') OR COALESCE(rn.update_status,'idle') IN ('draining','updating') THEN 'draining' ELSE rn.status END,CASE WHEN (COALESCE(a.protection_triggered,0)=1 AND COALESCE(a.protection_mode,'alert_only')='drain_relay') OR COALESCE(rn.update_status,'idle') IN ('draining','updating') THEN 1 ELSE 0 END FROM relay_nodes rn LEFT JOIN accounts a ON a.id=rn.cloud_account_id WHERE rn.id=?`, record.RelayNodeID).Scan(&publicIP, &status, &draining)
 		if err != nil {
 			continue
 		}
