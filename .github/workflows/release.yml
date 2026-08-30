@@ -47,6 +47,8 @@ jobs:
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" release/* --clobber
+          elif [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            gh release create "$GITHUB_REF_NAME" release/* --verify-tag --generate-notes --prerelease --title "$GITHUB_REF_NAME"
           else
             gh release create "$GITHUB_REF_NAME" release/* --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
           fi
@@ -62,12 +64,18 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: metadata
+        with:
+          images: ghcr.io/r1ddle1337/alicdt-controller
+          tags: |
+            type=raw,value=${{ github.ref_name }}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
       - uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.controller
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ghcr.io/r1ddle1337/alicdt-controller:${{ github.ref_name }}
-            ghcr.io/r1ddle1337/alicdt-controller:latest
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}

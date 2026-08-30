@@ -60,34 +60,41 @@ ssh -L 18010:127.0.0.1:18010 root@PANEL_HOST
 Open `http://127.0.0.1:18010`, initialize the administrator if needed, and
 generate a 30-minute enrollment token under **中转节点**.
 
-## 3. Build the grey Agent
+## 3. Select the grey Agent artifact
 
-Until a version tag publishes release binaries, build the current branch on the
-panel host. Select the target architecture:
+The grey release is installed with an explicit RC tag. The installer selects
+amd64 or arm64 and verifies `checksums.txt`; it does not resolve a prerelease
+through the stable `latest` URL:
 
 ```bash
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-  -trimpath -ldflags='-s -w' \
+curl -fsSL https://cdt.7b.tn/agent/install.sh -o /tmp/install-cdt-relay.sh
+chmod 700 /tmp/install-cdt-relay.sh
+```
+
+A local build remains available as a fallback if GitHub cannot be reached from
+the ECS:
+
+```bash
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' \
   -o /tmp/cdt-relay-agent-linux-amd64 ./cmd/relay-agent
 ```
 
-Use `GOARCH=arm64` and the matching filename for an ARM ECS. Copy the binary to
-the selected CDT ECS with SSH/SCP. The panel never stores the root password or
-private key.
+The panel never stores the root password or private key.
 
 ## 4. Install through root SSH
 
 On the selected CDT ECS:
 
 ```bash
-curl -fsSL https://cdt.7b.tn/agent/install.sh -o /tmp/install-cdt-relay.sh
-chmod 700 /tmp/install-cdt-relay.sh
 /tmp/install-cdt-relay.sh \
   --server https://cdt.7b.tn \
   --token ONE_TIME_TOKEN \
   --node-name cdt-grey-01 \
-  --binary /tmp/cdt-relay-agent-linux-amd64
+  --version v0.1.0-rc.1
 ```
+
+For the local-build fallback, replace `--version` with
+`--binary /tmp/cdt-relay-agent-linux-amd64`.
 
 Verify enrollment and local state:
 
