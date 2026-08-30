@@ -27,6 +27,28 @@ Python production application. It does not replace the running deployment yet.
   Existing relays return after a reboot even while the controller is offline.
 - Invalid or unbindable revisions are rolled back to the last valid state.
 
+## CDT traffic protection
+
+Protection transitions are evaluated only after a successful CDT traffic
+response. A timeout or API error preserves both the last valid traffic snapshot
+and the current protection state.
+
+Each account selects one mode:
+
+- `alert_only`: record a transition event and keep the relay and ECS running.
+  This is the migration-safe default for every existing account.
+- `drain_relay`: publish a new Agent revision that stops accepting new
+  connections. Existing TCP connections drain naturally. Saved relay service
+  settings are not modified, and services reopen automatically after usage
+  falls below the threshold in a new billing month.
+- `stop_ecs`: send one stop command to a specifically selected ECS instance.
+  Failed commands remain pending and retry after the next successful traffic
+  sync; successful commands are not repeated.
+
+Transitions and action failures are persisted in `relay_events`. Disabling a
+cloud account releases an active drain state so cloud-sync settings cannot
+silently leave a relay closed forever.
+
 The relay is protocol-transparent. SS2022, VLESS, REALITY, WebSocket, gRPC and
 other TCP/UDP protocols remain encrypted end-to-end between client and landing
 server.

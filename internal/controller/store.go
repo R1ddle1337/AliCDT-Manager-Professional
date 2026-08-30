@@ -22,6 +22,12 @@ type Store struct {
 	db *sql.DB
 }
 
+const (
+	ProtectionAlertOnly  = "alert_only"
+	ProtectionDrainRelay = "drain_relay"
+	ProtectionStopECS    = "stop_ecs"
+)
+
 type RelayNode struct {
 	ID              string          `json:"id"`
 	Name            string          `json:"name"`
@@ -76,17 +82,23 @@ type RelayEvent struct {
 }
 
 type CloudAccount struct {
-	ID                   int64   `json:"id"`
-	Name                 string  `json:"name"`
-	AccessKeyID          string  `json:"access_key_id"`
-	AccessKeySecret      string  `json:"-"`
-	RegionID             string  `json:"region_id"`
-	SiteType             string  `json:"site_type"`
-	TrafficLimitGB       float64 `json:"traffic_limit_gb"`
-	ThresholdPercent     float64 `json:"threshold_percent"`
-	OutstandingThreshold float64 `json:"outstanding_threshold"`
-	ShutdownMode         string  `json:"shutdown_mode"`
-	Enabled              bool    `json:"enabled"`
+	ID                        int64      `json:"id"`
+	Name                      string     `json:"name"`
+	AccessKeyID               string     `json:"access_key_id"`
+	AccessKeySecret           string     `json:"-"`
+	RegionID                  string     `json:"region_id"`
+	SiteType                  string     `json:"site_type"`
+	ProtectedInstanceID       string     `json:"instance_id,omitempty"`
+	TrafficLimitGB            float64    `json:"traffic_limit_gb"`
+	ThresholdPercent          float64    `json:"threshold_percent"`
+	OutstandingThreshold      float64    `json:"outstanding_threshold"`
+	ShutdownMode              string     `json:"shutdown_mode"`
+	ProtectionMode            string     `json:"protection_mode"`
+	ProtectionTriggered       bool       `json:"protection_triggered"`
+	ProtectionTriggeredAt     *time.Time `json:"protection_triggered_at,omitempty"`
+	ProtectionActionCompleted bool       `json:"protection_action_completed"`
+	ProtectionLastError       string     `json:"protection_last_error,omitempty"`
+	Enabled                   bool       `json:"enabled"`
 }
 
 type CloudAccountRequest struct {
@@ -95,11 +107,24 @@ type CloudAccountRequest struct {
 	AccessKeySecret      string  `json:"access_key_secret"`
 	RegionID             string  `json:"region_id"`
 	SiteType             string  `json:"site_type"`
+	ProtectedInstanceID  string  `json:"instance_id"`
 	TrafficLimitGB       float64 `json:"traffic_limit_gb"`
 	ThresholdPercent     float64 `json:"threshold_percent"`
 	OutstandingThreshold float64 `json:"outstanding_threshold"`
 	ShutdownMode         string  `json:"shutdown_mode"`
+	ProtectionMode       string  `json:"protection_mode"`
 	Enabled              *bool   `json:"enabled,omitempty"`
+}
+
+type TrafficProtectionDecision struct {
+	AccountID   int64
+	AccountName string
+	Mode        string
+	InstanceID  string
+	Percent     float64
+	Triggered   bool
+	Changed     bool
+	NeedsStop   bool
 }
 
 type CloudInstance struct {
@@ -253,6 +278,11 @@ func (s *Store) migrate(ctx context.Context) error {
 			auto_stop_time TEXT,
 			manual_stopped INTEGER DEFAULT 0,
 			nostock_notified INTEGER DEFAULT 0,
+			protection_mode TEXT NOT NULL DEFAULT 'alert_only',
+			protection_triggered INTEGER NOT NULL DEFAULT 0,
+			protection_triggered_at TEXT,
+			protection_action_completed INTEGER NOT NULL DEFAULT 0,
+			protection_last_error TEXT NOT NULL DEFAULT '',
 			enabled INTEGER DEFAULT 1,
 			created_at TEXT
 		)`,
@@ -353,6 +383,20 @@ func (s *Store) migrate(ctx context.Context) error {
 		{name: "cloud_account_id", definition: "INTEGER"},
 	} {
 		if err := s.ensureColumn(ctx, "relay_nodes", column.name, column.definition); err != nil {
+			return err
+		}
+	}
+	for _, column := range []struct {
+		name       string
+		definition string
+	}{
+		{name: "protection_mode", definition: "TEXT NOT NULL DEFAULT 'alert_only'"},
+		{name: "protection_triggered", definition: "INTEGER NOT NULL DEFAULT 0"},
+		{name: "protection_triggered_at", definition: "TEXT"},
+		{name: "protection_action_completed", definition: "INTEGER NOT NULL DEFAULT 0"},
+		{name: "protection_last_error", definition: "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := s.ensureColumn(ctx, "accounts", column.name, column.definition); err != nil {
 			return err
 		}
 	}
@@ -646,7 +690,10 @@ func flattenTargetHealth(raw string) map[string]bool {
 
 func (s *Store) AgentConfig(ctx context.Context, id string) (protocol.AgentConfig, error) {
 	var revision int64
-	if err := s.db.QueryRowContext(ctx, `SELECT desired_revision FROM relay_nodes WHERE id=?`, id).Scan(&revision); err != nil {
+	var protectionSuspended int
+	if err := s.db.QueryRowContext(ctx, `SELECT rn.desired_revision,
+		CASE WHEN COALESCE(a.protection_triggered,0)=1 AND COALESCE(a.protection_mode,'alert_only')='drain_relay' THEN 1 ELSE 0 END
+		FROM relay_nodes rn LEFT JOIN accounts a ON a.id=rn.cloud_account_id WHERE rn.id=?`, id).Scan(&revision, &protectionSuspended); err != nil {
 		return protocol.AgentConfig{}, err
 	}
 	services, err := s.ListRelayServices(ctx, id)
@@ -661,7 +708,7 @@ func (s *Store) AgentConfig(ctx context.Context, id string) (protocol.AgentConfi
 			Listen:                net.JoinHostPort(service.ListenHost, fmt.Sprint(service.ListenPort)),
 			Network:               service.Network,
 			Mode:                  service.Mode,
-			Enabled:               service.Enabled,
+			Enabled:               service.Enabled && protectionSuspended == 0,
 			DialTimeoutMillis:     service.DialTimeoutMillis,
 			UDPIdleTimeoutSeconds: service.UDPIdleTimeoutSeconds,
 			Health: protocol.HealthConfig{
@@ -1045,7 +1092,10 @@ func (s *Store) DeleteRelayService(ctx context.Context, id string) error {
 }
 
 func (s *Store) ListCloudAccounts(ctx context.Context, enabledOnly bool) ([]CloudAccount, error) {
-	query := `SELECT id,name,access_key_id,access_key_secret,region_id,COALESCE(site_type,'international'),COALESCE(traffic_limit_gb,200),COALESCE(threshold_percent,95),COALESCE(outstanding_threshold,0),COALESCE(shutdown_mode,'StopCharging'),COALESCE(enabled,1) FROM accounts`
+	query := `SELECT id,name,access_key_id,access_key_secret,region_id,COALESCE(site_type,'international'),COALESCE(instance_id,''),
+		COALESCE(traffic_limit_gb,200),COALESCE(threshold_percent,95),COALESCE(outstanding_threshold,0),COALESCE(shutdown_mode,'StopCharging'),
+		COALESCE(protection_mode,'alert_only'),COALESCE(protection_triggered,0),protection_triggered_at,
+		COALESCE(protection_action_completed,0),COALESCE(protection_last_error,''),COALESCE(enabled,1) FROM accounts`
 	if enabledOnly {
 		query += ` WHERE enabled=1`
 	}
@@ -1058,11 +1108,20 @@ func (s *Store) ListCloudAccounts(ctx context.Context, enabledOnly bool) ([]Clou
 	accounts := make([]CloudAccount, 0)
 	for rows.Next() {
 		var account CloudAccount
-		var enabled int
-		if err := rows.Scan(&account.ID, &account.Name, &account.AccessKeyID, &account.AccessKeySecret, &account.RegionID, &account.SiteType, &account.TrafficLimitGB, &account.ThresholdPercent, &account.OutstandingThreshold, &account.ShutdownMode, &enabled); err != nil {
+		var enabled, triggered, actionCompleted int
+		var triggeredAt sql.NullString
+		if err := rows.Scan(&account.ID, &account.Name, &account.AccessKeyID, &account.AccessKeySecret, &account.RegionID, &account.SiteType,
+			&account.ProtectedInstanceID, &account.TrafficLimitGB, &account.ThresholdPercent, &account.OutstandingThreshold, &account.ShutdownMode,
+			&account.ProtectionMode, &triggered, &triggeredAt, &actionCompleted, &account.ProtectionLastError, &enabled); err != nil {
 			return nil, err
 		}
 		account.Enabled = enabled != 0
+		account.ProtectionTriggered = triggered != 0
+		account.ProtectionActionCompleted = actionCompleted != 0
+		if triggeredAt.Valid {
+			parsed := parseDatabaseTime(triggeredAt.String)
+			account.ProtectionTriggeredAt = &parsed
+		}
 		accounts = append(accounts, account)
 	}
 	return accounts, rows.Err()
@@ -1073,8 +1132,10 @@ func (s *Store) CreateCloudAccount(ctx context.Context, request CloudAccountRequ
 	if err != nil {
 		return CloudAccount{}, err
 	}
-	result, err := s.db.ExecContext(ctx, `INSERT INTO accounts(name,access_key_id,access_key_secret,region_id,site_type,traffic_limit_gb,threshold_percent,outstanding_threshold,shutdown_mode,enabled,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-		request.Name, request.AccessKeyID, request.AccessKeySecret, request.RegionID, request.SiteType, request.TrafficLimitGB, request.ThresholdPercent, request.OutstandingThreshold, request.ShutdownMode, boolInt(enabled), time.Now().UTC().Format(time.RFC3339Nano))
+	result, err := s.db.ExecContext(ctx, `INSERT INTO accounts(name,access_key_id,access_key_secret,region_id,site_type,instance_id,traffic_limit_gb,threshold_percent,outstanding_threshold,shutdown_mode,protection_mode,enabled,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		request.Name, request.AccessKeyID, request.AccessKeySecret, request.RegionID, request.SiteType, request.ProtectedInstanceID,
+		request.TrafficLimitGB, request.ThresholdPercent, request.OutstandingThreshold, request.ShutdownMode, request.ProtectionMode,
+		boolInt(enabled), time.Now().UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return CloudAccount{}, err
 	}
@@ -1082,7 +1143,11 @@ func (s *Store) CreateCloudAccount(ctx context.Context, request CloudAccountRequ
 	if err != nil {
 		return CloudAccount{}, err
 	}
-	return CloudAccount{ID: id, Name: request.Name, AccessKeyID: request.AccessKeyID, RegionID: request.RegionID, SiteType: request.SiteType, TrafficLimitGB: request.TrafficLimitGB, ThresholdPercent: request.ThresholdPercent, OutstandingThreshold: request.OutstandingThreshold, ShutdownMode: request.ShutdownMode, Enabled: enabled}, nil
+	return CloudAccount{
+		ID: id, Name: request.Name, AccessKeyID: request.AccessKeyID, RegionID: request.RegionID, SiteType: request.SiteType,
+		ProtectedInstanceID: request.ProtectedInstanceID, TrafficLimitGB: request.TrafficLimitGB, ThresholdPercent: request.ThresholdPercent,
+		OutstandingThreshold: request.OutstandingThreshold, ShutdownMode: request.ShutdownMode, ProtectionMode: request.ProtectionMode, Enabled: enabled,
+	}, nil
 }
 
 func (s *Store) UpdateCloudAccount(ctx context.Context, id int64, request CloudAccountRequest) (CloudAccount, error) {
@@ -1090,19 +1155,55 @@ func (s *Store) UpdateCloudAccount(ctx context.Context, id int64, request CloudA
 	if err != nil {
 		return CloudAccount{}, err
 	}
-	var result sql.Result
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return CloudAccount{}, err
+	}
+	defer tx.Rollback()
+	var oldMode, oldInstanceID string
+	var triggered int
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(protection_mode,'alert_only'),COALESCE(instance_id,''),COALESCE(protection_triggered,0) FROM accounts WHERE id=?`, id).Scan(&oldMode, &oldInstanceID, &triggered); err != nil {
+		return CloudAccount{}, err
+	}
 	if request.AccessKeySecret == "" {
-		result, err = s.db.ExecContext(ctx, `UPDATE accounts SET name=?,access_key_id=?,region_id=?,site_type=?,traffic_limit_gb=?,threshold_percent=?,outstanding_threshold=?,shutdown_mode=?,enabled=? WHERE id=?`,
-			request.Name, request.AccessKeyID, request.RegionID, request.SiteType, request.TrafficLimitGB, request.ThresholdPercent, request.OutstandingThreshold, request.ShutdownMode, boolInt(enabled), id)
+		_, err = tx.ExecContext(ctx, `UPDATE accounts SET name=?,access_key_id=?,region_id=?,site_type=?,instance_id=?,traffic_limit_gb=?,threshold_percent=?,outstanding_threshold=?,shutdown_mode=?,protection_mode=?,enabled=? WHERE id=?`,
+			request.Name, request.AccessKeyID, request.RegionID, request.SiteType, request.ProtectedInstanceID, request.TrafficLimitGB,
+			request.ThresholdPercent, request.OutstandingThreshold, request.ShutdownMode, request.ProtectionMode, boolInt(enabled), id)
 	} else {
-		result, err = s.db.ExecContext(ctx, `UPDATE accounts SET name=?,access_key_id=?,access_key_secret=?,region_id=?,site_type=?,traffic_limit_gb=?,threshold_percent=?,outstanding_threshold=?,shutdown_mode=?,enabled=? WHERE id=?`,
-			request.Name, request.AccessKeyID, request.AccessKeySecret, request.RegionID, request.SiteType, request.TrafficLimitGB, request.ThresholdPercent, request.OutstandingThreshold, request.ShutdownMode, boolInt(enabled), id)
+		_, err = tx.ExecContext(ctx, `UPDATE accounts SET name=?,access_key_id=?,access_key_secret=?,region_id=?,site_type=?,instance_id=?,traffic_limit_gb=?,threshold_percent=?,outstanding_threshold=?,shutdown_mode=?,protection_mode=?,enabled=? WHERE id=?`,
+			request.Name, request.AccessKeyID, request.AccessKeySecret, request.RegionID, request.SiteType, request.ProtectedInstanceID,
+			request.TrafficLimitGB, request.ThresholdPercent, request.OutstandingThreshold, request.ShutdownMode, request.ProtectionMode, boolInt(enabled), id)
 	}
 	if err != nil {
 		return CloudAccount{}, err
 	}
-	if affected, _ := result.RowsAffected(); affected == 0 {
-		return CloudAccount{}, sql.ErrNoRows
+	if triggered != 0 && oldMode != request.ProtectionMode && (oldMode == ProtectionDrainRelay || request.ProtectionMode == ProtectionDrainRelay) {
+		if err := bumpAccountRelayRevisions(ctx, tx, id); err != nil {
+			return CloudAccount{}, err
+		}
+	}
+	if triggered != 0 && !enabled && oldMode == request.ProtectionMode && oldMode == ProtectionDrainRelay {
+		if err := bumpAccountRelayRevisions(ctx, tx, id); err != nil {
+			return CloudAccount{}, err
+		}
+	}
+	if triggered != 0 && request.ProtectionMode == ProtectionStopECS && (oldMode != ProtectionStopECS || oldInstanceID != request.ProtectedInstanceID) {
+		if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_action_completed=0,protection_last_error='' WHERE id=?`, id); err != nil {
+			return CloudAccount{}, err
+		}
+	}
+	if triggered != 0 && request.ProtectionMode != ProtectionStopECS {
+		if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_action_completed=0,protection_last_error='' WHERE id=?`, id); err != nil {
+			return CloudAccount{}, err
+		}
+	}
+	if triggered != 0 && !enabled {
+		if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_triggered=0,protection_triggered_at=NULL,protection_action_completed=0,protection_last_error='' WHERE id=?`, id); err != nil {
+			return CloudAccount{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return CloudAccount{}, err
 	}
 	accounts, err := s.ListCloudAccounts(ctx, false)
 	if err != nil {
@@ -1127,6 +1228,9 @@ func (s *Store) DeleteCloudAccount(ctx context.Context, id int64) error {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM account_traffic_snapshots WHERE account_id=?`, id); err != nil {
+		return err
+	}
+	if err := bumpAccountRelayRevisions(ctx, tx, id); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET cloud_account_id=NULL WHERE cloud_account_id=?`, id); err != nil {
@@ -1251,6 +1355,126 @@ func (s *Store) SaveCloudSync(ctx context.Context, account CloudAccount, instanc
 	return tx.Commit()
 }
 
+func (s *Store) ApplyTrafficProtection(ctx context.Context, accountID int64, trafficGB float64) (TrafficProtectionDecision, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return TrafficProtectionDecision{}, err
+	}
+	defer tx.Rollback()
+	var decision TrafficProtectionDecision
+	var trafficLimit, threshold float64
+	var triggered, actionCompleted int
+	if err := tx.QueryRowContext(ctx, `SELECT id,name,COALESCE(instance_id,''),COALESCE(traffic_limit_gb,200),COALESCE(threshold_percent,95),
+		COALESCE(protection_mode,'alert_only'),COALESCE(protection_triggered,0),COALESCE(protection_action_completed,0)
+		FROM accounts WHERE id=?`, accountID).Scan(
+		&decision.AccountID, &decision.AccountName, &decision.InstanceID, &trafficLimit, &threshold,
+		&decision.Mode, &triggered, &actionCompleted,
+	); err != nil {
+		return TrafficProtectionDecision{}, err
+	}
+	if trafficLimit <= 0 {
+		trafficLimit = 200
+	}
+	if threshold <= 0 {
+		threshold = 95
+	}
+	decision.Percent = trafficGB / trafficLimit * 100
+	exceeded := decision.Percent >= threshold
+	now := time.Now().UTC()
+	if exceeded {
+		decision.Triggered = true
+		if triggered == 0 {
+			decision.Changed = true
+			if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_triggered=1,protection_triggered_at=?,protection_action_completed=0,protection_last_error='' WHERE id=?`, now.Format(time.RFC3339Nano), accountID); err != nil {
+				return TrafficProtectionDecision{}, err
+			}
+			if decision.Mode == ProtectionDrainRelay {
+				if err := bumpAccountRelayRevisions(ctx, tx, accountID); err != nil {
+					return TrafficProtectionDecision{}, err
+				}
+			}
+			message := fmt.Sprintf("[%s] CDT 流量达到保护阈值：%.2f%%", decision.AccountName, decision.Percent)
+			if err := insertEvent(ctx, tx, "", "warning", "traffic_protection", message, now); err != nil {
+				return TrafficProtectionDecision{}, err
+			}
+			actionCompleted = 0
+		}
+		decision.NeedsStop = decision.Mode == ProtectionStopECS && decision.InstanceID != "" && actionCompleted == 0
+	} else {
+		decision.Triggered = false
+		if triggered != 0 {
+			decision.Changed = true
+			if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_triggered=0,protection_triggered_at=NULL,protection_action_completed=0,protection_last_error='' WHERE id=?`, accountID); err != nil {
+				return TrafficProtectionDecision{}, err
+			}
+			if decision.Mode == ProtectionDrainRelay {
+				if err := bumpAccountRelayRevisions(ctx, tx, accountID); err != nil {
+					return TrafficProtectionDecision{}, err
+				}
+			}
+			message := fmt.Sprintf("[%s] CDT 流量已低于保护阈值：%.2f%%，保护状态已恢复", decision.AccountName, decision.Percent)
+			if err := insertEvent(ctx, tx, "", "info", "traffic_protection", message, now); err != nil {
+				return TrafficProtectionDecision{}, err
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return TrafficProtectionDecision{}, err
+	}
+	return decision, nil
+}
+
+func (s *Store) MarkTrafficProtectionAction(ctx context.Context, accountID int64, actionError error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var name, oldError string
+	var triggered int
+	if err := tx.QueryRowContext(ctx, `SELECT name,COALESCE(protection_triggered,0),COALESCE(protection_last_error,'') FROM accounts WHERE id=?`, accountID).Scan(&name, &triggered, &oldError); err != nil {
+		return err
+	}
+	if triggered == 0 {
+		return tx.Commit()
+	}
+	now := time.Now().UTC()
+	if actionError == nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_action_completed=1,protection_last_error='' WHERE id=?`, accountID); err != nil {
+			return err
+		}
+		if err := insertEvent(ctx, tx, "", "warning", "traffic_protection", fmt.Sprintf("[%s] 流量保护已发送 ECS 停机指令", name), now); err != nil {
+			return err
+		}
+	} else {
+		message := actionError.Error()
+		if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_action_completed=0,protection_last_error=? WHERE id=?`, message, accountID); err != nil {
+			return err
+		}
+		if oldError != message {
+			if err := insertEvent(ctx, tx, "", "warning", "traffic_protection", fmt.Sprintf("[%s] ECS 停机保护执行失败：%s", name, message), now); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) ConfirmTrafficProtectionStop(ctx context.Context, accountID int64, instanceID string) (bool, error) {
+	var authorized int
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM accounts WHERE id=? AND COALESCE(enabled,1)=1 AND COALESCE(protection_triggered,0)=1
+		AND COALESCE(protection_mode,'alert_only')='stop_ecs' AND COALESCE(instance_id,'')=?
+		AND COALESCE(protection_action_completed,0)=0
+	)`, accountID, instanceID).Scan(&authorized)
+	return authorized != 0, err
+}
+
+func bumpAccountRelayRevisions(ctx context.Context, tx *sql.Tx, accountID int64) error {
+	_, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET desired_revision=desired_revision+1 WHERE cloud_account_id=?`, accountID)
+	return err
+}
+
 func (s *Store) CloudAccountForInstance(ctx context.Context, instanceID string) (CloudAccount, error) {
 	var accountID int64
 	if err := s.db.QueryRowContext(ctx, `SELECT account_id FROM instances WHERE instance_id=?`, instanceID).Scan(&accountID); err != nil {
@@ -1282,6 +1506,8 @@ func normalizeCloudAccountRequest(request CloudAccountRequest, secretOptional bo
 	request.AccessKeyID = strings.TrimSpace(request.AccessKeyID)
 	request.RegionID = strings.TrimSpace(request.RegionID)
 	request.SiteType = strings.ToLower(strings.TrimSpace(request.SiteType))
+	request.ProtectedInstanceID = strings.TrimSpace(request.ProtectedInstanceID)
+	request.ProtectionMode = strings.ToLower(strings.TrimSpace(request.ProtectionMode))
 	if request.Name == "" || request.AccessKeyID == "" || request.RegionID == "" || (!secretOptional && request.AccessKeySecret == "") {
 		return request, false, errors.New("name, AccessKey ID, secret and region are required")
 	}
@@ -1294,11 +1520,23 @@ func normalizeCloudAccountRequest(request CloudAccountRequest, secretOptional bo
 	if request.ThresholdPercent <= 0 {
 		request.ThresholdPercent = 95
 	}
+	if request.ThresholdPercent > 100 {
+		return request, false, errors.New("threshold percent must not exceed 100")
+	}
 	if request.ShutdownMode == "" {
 		request.ShutdownMode = "StopCharging"
 	}
 	if request.SiteType == "china" {
 		request.OutstandingThreshold = 0
+	}
+	if request.ProtectionMode == "" {
+		request.ProtectionMode = ProtectionAlertOnly
+	}
+	if !oneOf(request.ProtectionMode, ProtectionAlertOnly, ProtectionDrainRelay, ProtectionStopECS) {
+		return request, false, errors.New("protection mode must be alert_only, drain_relay or stop_ecs")
+	}
+	if request.ProtectionMode == ProtectionStopECS && request.ProtectedInstanceID == "" {
+		return request, false, errors.New("protected instance ID is required when stop_ecs is selected")
 	}
 	enabled := true
 	if request.Enabled != nil {

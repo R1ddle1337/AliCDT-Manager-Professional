@@ -32,18 +32,21 @@
       <article class="summary-card">
         <span>有效流量快照</span>
         <strong>{{ store.cloud.traffic.length ? totalTraffic.toFixed(2) + ' GB' : '待同步' }}</strong>
-        <small>{{ store.cloud.traffic.length }} 个账户已有有效数据</small>
+        <small>{{ store.cloud.traffic.length }} 个账户已有有效数据 · {{ activeProtectionCount }} 个保护中</small>
       </article>
     </section>
 
     <section class="account-grid">
-      <article v-for="account in store.cloud.accounts" :key="account.id" class="card account-card">
+      <article v-for="account in store.cloud.accounts" :key="account.id" class="card account-card" :class="account.protection_triggered ? 'account-protected' : ''">
         <div class="account-head">
           <div class="min-w-0">
             <h2>{{ account.name }}</h2>
             <p>{{ maskAccessKey(account.access_key_id) }} · {{ account.region_id }}</p>
           </div>
-          <span class="site-tag">{{ account.site_type === 'china' ? '中国站' : '国际站' }}</span>
+          <div class="account-badges">
+            <span v-if="account.protection_triggered" class="protection-tag protection-tag-active">保护已触发</span>
+            <span class="site-tag">{{ account.site_type === 'china' ? '中国站' : '国际站' }}</span>
+          </div>
         </div>
 
         <div class="traffic-row">
@@ -53,7 +56,8 @@
           </div>
           <dl class="account-limits">
             <div><dt>月限额</dt><dd>{{ account.traffic_limit_gb }} GB</dd></div>
-            <div><dt>告警阈值</dt><dd>{{ account.threshold_percent }}%</dd></div>
+            <div><dt>保护阈值</dt><dd>{{ account.threshold_percent }}%</dd></div>
+            <div><dt>保护策略</dt><dd>{{ protectionModeLabel(account.protection_mode) }}</dd></div>
           </dl>
         </div>
 
@@ -72,6 +76,12 @@
         <div v-if="trafficFor(account.id)?.last_error" class="sync-warning">
           <strong>本次同步失败</strong>
           <span>已保留上次有效流量：{{ trafficFor(account.id).last_error }}</span>
+        </div>
+
+        <div v-if="account.protection_triggered" class="protection-notice">
+          <strong>{{ protectionModeLabel(account.protection_mode) }}</strong>
+          <span>{{ protectionStatusText(account) }}</span>
+          <small v-if="account.protection_last_error">最近一次执行失败：{{ account.protection_last_error }}</small>
         </div>
 
         <div class="account-actions">
@@ -135,7 +145,24 @@
           <div><label class="field-label">地域 ID</label><input v-model.trim="form.region_id" class="input" placeholder="cn-hongkong" required /></div>
           <div><label class="field-label">站点</label><select v-model="form.site_type" class="input"><option value="china">中国站</option><option value="international">国际站</option></select></div>
           <div><label class="field-label">CDT 流量限额（GB）</label><input v-model.number="form.traffic_limit_gb" type="number" min="1" class="input" required /></div>
-          <div><label class="field-label">告警阈值（%）</label><input v-model.number="form.threshold_percent" type="number" min="1" max="100" class="input" required /></div>
+          <div><label class="field-label">保护阈值（%）</label><input v-model.number="form.threshold_percent" type="number" min="1" max="100" class="input" required /></div>
+          <div class="field-wide">
+            <label class="field-label">流量保护策略</label>
+            <select v-model="form.protection_mode" class="input">
+              <option value="alert_only">仅记录告警</option>
+              <option value="drain_relay">停止接受新连接</option>
+              <option value="stop_ecs">停止指定 ECS</option>
+            </select>
+            <p class="field-hint">现有账户默认仅告警。停止新连接时，已建立的 TCP 连接会自然结束，月初流量恢复后自动重新开放。</p>
+          </div>
+          <div v-if="form.protection_mode === 'stop_ecs'" class="field-wide">
+            <label class="field-label">保护目标实例 ID</label>
+            <input v-model.trim="form.instance_id" class="input" list="cloud-instance-options" placeholder="i-xxxxxxxxxxxxxxxxx" required />
+            <datalist id="cloud-instance-options">
+              <option v-for="instance in store.cloud.instances" :key="instance.instance_id" :value="instance.instance_id">{{ instance.instance_name || instance.instance_id }}</option>
+            </datalist>
+            <p class="field-hint">仅在流量超过阈值后发送一次停机指令；失败会在下次有效同步时重试。</p>
+          </div>
         </div>
         <div v-if="formError" class="notice notice-error">{{ formError }}</div>
         <div class="form-actions">
@@ -165,9 +192,11 @@ let messageTimer
 const enabledAccountCount = computed(() => store.cloud.accounts.filter(account => account.enabled).length)
 const runningInstanceCount = computed(() => store.cloud.instances.filter(instance => instance.status === 'Running').length)
 const totalTraffic = computed(() => store.cloud.traffic.reduce((sum, snapshot) => sum + snapshot.used_gb, 0))
+const activeProtectionCount = computed(() => store.cloud.accounts.filter(account => account.protection_triggered).length)
 const blank = () => ({
   name: '', access_key_id: '', access_key_secret: '', region_id: 'cn-hongkong', site_type: 'china',
-  traffic_limit_gb: 200, threshold_percent: 95, outstanding_threshold: 0, shutdown_mode: 'StopCharging', enabled: true,
+  instance_id: '', traffic_limit_gb: 200, threshold_percent: 95, outstanding_threshold: 0,
+  shutdown_mode: 'StopCharging', protection_mode: 'alert_only', enabled: true,
 })
 const form = ref(blank())
 
@@ -187,6 +216,18 @@ function trafficPercent(account) {
 function maskAccessKey(value) {
   if (!value || value.length < 8) return value || '未设置 AccessKey'
   return value.slice(0, 4) + '••••' + value.slice(-4)
+}
+
+function protectionModeLabel(mode) {
+  return { alert_only: '仅告警', drain_relay: '停止新连接', stop_ecs: '停止 ECS' }[mode] || '仅告警'
+}
+
+function protectionStatusText(account) {
+  if (account.protection_mode === 'drain_relay') return 'Agent 已停止接受新连接，已有 TCP 连接不被强制中断。'
+  if (account.protection_mode === 'stop_ecs') {
+    return account.protection_action_completed ? '目标 ECS 停机指令已发送。' : '正在等待发送或重试 ECS 停机指令。'
+  }
+  return '已记录阈值告警，云实例和转发服务保持运行。'
 }
 
 function openCreate() {
@@ -233,7 +274,9 @@ async function sync() {
   try {
     const results = await store.syncCloud()
     const failed = results.filter(item => item.error)
-    showMessage(failed.length ? failed.length + ' 个账户部分同步失败，旧数据已保留' : '同步完成', failed.length ? 'error' : 'success')
+    const protectedCount = results.filter(item => item.protection_triggered && item.protection_action).length
+    const successMessage = protectedCount ? '同步完成，' + protectedCount + ' 个账户已进入流量保护' : '同步完成'
+    showMessage(failed.length ? failed.length + ' 个账户部分同步失败，旧数据已保留' : successMessage, failed.length ? 'error' : 'success')
   } catch (error) {
     showMessage(error.response?.data?.error || '同步失败', 'error')
   } finally {
@@ -274,10 +317,13 @@ onMounted(() => store.fetchCloud())
 .summary-card small { display: block; margin-top: 5px; color: #94a3b8; font-size: 10px; }
 .account-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .account-card { min-width: 0; padding: 19px; }
+.account-protected { border-color: #fbbf24; box-shadow: 0 6px 22px rgba(180, 83, 9, .08); }
 .account-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .account-head h2 { overflow: hidden; color: #1e293b; font-size: 14px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
 .account-head p { margin-top: 5px; overflow: hidden; color: #94a3b8; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.site-tag, .state-tag { display: inline-flex; flex: 0 0 auto; align-items: center; border-radius: 999px; background: #f1f5f9; padding: 5px 9px; color: #64748b; font-size: 9px; font-weight: 750; white-space: nowrap; }
+.account-badges { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
+.site-tag, .state-tag, .protection-tag { display: inline-flex; flex: 0 0 auto; align-items: center; border-radius: 999px; background: #f1f5f9; padding: 5px 9px; color: #64748b; font-size: 9px; font-weight: 750; white-space: nowrap; }
+.protection-tag-active { background: #fef3c7; color: #a16207; }
 .state-online { background: #ecfdf3; color: #15803d; }
 .traffic-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-top: 21px; }
 .traffic-value { color: #172033; font-size: clamp(23px, 3vw, 29px); font-weight: 750; letter-spacing: -.045em; }
@@ -291,6 +337,8 @@ onMounted(() => store.fetchCloud())
 .traffic-danger { background: #dc2626; }
 .traffic-meta { display: flex; justify-content: space-between; margin-top: 7px; color: #94a3b8; font-size: 9px; }
 .sync-warning { display: grid; gap: 3px; margin-top: 12px; border: 1px solid #fde68a; border-radius: 9px; background: #fffbeb; padding: 9px 11px; color: #a16207; font-size: 9px; line-height: 1.55; }
+.protection-notice { display: grid; gap: 3px; margin-top: 12px; border: 1px solid #fed7aa; border-radius: 9px; background: #fff7ed; padding: 10px 11px; color: #9a3412; font-size: 9px; line-height: 1.55; }
+.protection-notice small { color: #c2410c; }
 .account-actions { display: flex; justify-content: flex-end; gap: 4px; margin-top: 15px; border-top: 1px solid #f1f5f9; padding-top: 11px; }
 .account-actions button { padding: 6px 9px; font-size: 11px; }
 .account-empty { grid-column: 1 / -1; }
@@ -312,6 +360,7 @@ onMounted(() => store.fetchCloud())
 .empty-panel { padding: 48px 20px; text-align: center; color: #94a3b8; font-size: 12px; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .field-wide { grid-column: 1 / -1; }
+.field-hint { margin-top: 6px; color: #94a3b8; font-size: 10px; line-height: 1.55; }
 .form-actions { display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #f1f5f9; padding-top: 16px; }
 
 @media (max-width: 900px) {
