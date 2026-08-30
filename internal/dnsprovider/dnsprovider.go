@@ -14,11 +14,11 @@ import (
 )
 
 type Record struct {
-	ID    string
-	Name  string
-	Type  string
-	Value string
-	TTL   int
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Value string `json:"value"`
+	TTL   int    `json:"ttl"`
 }
 
 type DesiredRecord struct {
