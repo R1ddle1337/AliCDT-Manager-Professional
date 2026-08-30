@@ -23,6 +23,8 @@ type ServerOptions struct {
 	AdminToken         string
 	FrontendDir        string
 	AgentInstallerPath string
+	UpdateRequestFile  string
+	UpdateStatusFile   string
 }
 
 type Server struct {
@@ -31,6 +33,8 @@ type Server struct {
 	frontendDir        string
 	agentInstallerPath string
 	agentAssetsDir     string
+	updateRequestFile  string
+	updateStatusFile   string
 	cloud              *CloudService
 	router             chi.Router
 }
@@ -42,7 +46,7 @@ func NewServer(store *Store, opts ServerOptions) (*Server, error) {
 	if strings.TrimSpace(opts.AdminToken) == "" {
 		return nil, errors.New("admin token is required")
 	}
-	server := &Server{store: store, adminToken: opts.AdminToken, frontendDir: opts.FrontendDir, agentInstallerPath: opts.AgentInstallerPath, cloud: NewCloudService(store)}
+	server := &Server{store: store, adminToken: opts.AdminToken, frontendDir: opts.FrontendDir, agentInstallerPath: opts.AgentInstallerPath, updateRequestFile: opts.UpdateRequestFile, updateStatusFile: opts.UpdateStatusFile, cloud: NewCloudService(store)}
 	if opts.AgentInstallerPath != "" {
 		server.agentAssetsDir = filepath.Dir(opts.AgentInstallerPath)
 	}
@@ -101,6 +105,8 @@ func (s *Server) routes() chi.Router {
 		router.Delete("/api/v2/cloud/accounts/{accountID}", s.deleteCloudAccount)
 		router.Post("/api/v2/cloud/instances/{instanceID}/start", s.startCloudInstance)
 		router.Post("/api/v2/cloud/instances/{instanceID}/stop", s.stopCloudInstance)
+		router.Post("/api/v2/system/update", s.requestSystemUpdate)
+		router.Get("/api/v2/system/update/status", s.systemUpdateStatus)
 	})
 	router.Route("/api", func(router chi.Router) {
 		router.Use(s.adminAuth)

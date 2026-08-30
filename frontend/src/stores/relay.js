@@ -23,6 +23,7 @@ export const useRelayStore = defineStore('relay-platform', () => {
   const events = ref([])
   const cloud = ref({ accounts: [], instances: [], traffic: [] })
   const loading = ref(false)
+  const updateStatus = ref({ status: 'idle', message: '暂无更新任务' })
 
   async function login(username, password) {
     const { data } = await api.post('/auth/login', { username, password })
@@ -131,11 +132,24 @@ export const useRelayStore = defineStore('relay-platform', () => {
     return data
   }
 
+  async function fetchUpdateStatus() {
+    const { data } = await api.get('/system/update/status')
+    updateStatus.value = data || { status: 'idle', message: '暂无更新任务' }
+    return updateStatus.value
+  }
+
+  async function requestUpdate() {
+    const { data } = await api.post('/system/update')
+    updateStatus.value = data || { status: 'pending', message: '更新请求已提交' }
+    return updateStatus.value
+  }
+
   return {
-    relayNodes, landingNodes, services, events, cloud, loading,
+    relayNodes, landingNodes, services, events, cloud, loading, updateStatus,
     login, fetchRelayNodes, fetchLandingNodes, fetchServices, fetchEvents, fetchCloud, fetchAll,
     createEnrollmentToken, createLandingNode, updateLandingNode, deleteLandingNode,
     createService, updateService, deleteService,
     syncCloud, createCloudAccount, updateCloudAccount, deleteCloudAccount, controlCloudInstance,
+    fetchUpdateStatus, requestUpdate,
   }
 })

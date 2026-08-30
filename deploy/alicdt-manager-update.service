@@ -1,0 +1,9 @@
+[Unit]
+Description=Update AliCDT Manager from GitHub
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/alicdt-manager-update

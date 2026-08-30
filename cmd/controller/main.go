@@ -21,6 +21,8 @@ func main() {
 	bootstrapToken := flag.String("enroll-token", env("CDT_BOOTSTRAP_ENROLL_TOKEN", ""), "optional initial one-time agent token")
 	frontendDir := flag.String("frontend-dir", env("CDT_FRONTEND_DIR", ""), "optional built frontend directory")
 	agentInstaller := flag.String("agent-installer", env("CDT_AGENT_INSTALLER", ""), "optional agent installer script")
+	updateRequestFile := flag.String("update-request-file", env("CDT_UPDATE_REQUEST_FILE", "/app/data/update.request"), "host update request marker")
+	updateStatusFile := flag.String("update-status-file", env("CDT_UPDATE_STATUS_FILE", "/app/data/update.status.json"), "host update status file")
 	cloudSyncInterval := flag.Duration("cloud-sync-interval", 2*time.Minute, "Aliyun ECS/CDT synchronization interval")
 	flag.Parse()
 
@@ -34,7 +36,7 @@ func main() {
 			fatal(err)
 		}
 	}
-	server, err := controller.NewServer(store, controller.ServerOptions{AdminToken: *adminToken, FrontendDir: *frontendDir, AgentInstallerPath: *agentInstaller})
+	server, err := controller.NewServer(store, controller.ServerOptions{AdminToken: *adminToken, FrontendDir: *frontendDir, AgentInstallerPath: *agentInstaller, UpdateRequestFile: *updateRequestFile, UpdateStatusFile: *updateStatusFile})
 	if err != nil {
 		fatal(err)
 	}
