@@ -35,6 +35,11 @@ type BillingResponse struct {
 }
 
 func (s *CloudService) SyncAccountByID(ctx context.Context, accountID int64) (CloudSyncResult, error) {
+	// Manual/legacy sync requests must share the same gate as the scheduler.
+	// Otherwise a request arriving during the bulk sync can hold a second
+	// SQLite transaction and surface a misleading "database is locked" error.
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
 	accounts, err := s.store.ListCloudAccounts(ctx, false)
 	if err != nil {
 		return CloudSyncResult{}, err
@@ -48,6 +53,8 @@ func (s *CloudService) SyncAccountByID(ctx context.Context, accountID int64) (Cl
 }
 
 func (s *CloudService) SyncInstance(ctx context.Context, instanceID string) (CloudSyncResult, error) {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
 	account, err := s.store.CloudAccountForInstance(ctx, instanceID)
 	if err != nil {
 		return CloudSyncResult{}, err

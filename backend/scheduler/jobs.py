@@ -1,30 +1,58 @@
 import asyncio
+import sqlite3
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select, update
+from sqlalchemy.exc import OperationalError
 from models.database import AsyncSessionLocal, Account, Instance, Log, Settings
 from core.aliyun import AliyunClient
 import httpx
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
+_database_write_lock = asyncio.Lock()
+_database_retry_attempts = 4
+
+
+def _is_database_locked(error: BaseException) -> bool:
+    message = str(error).lower()
+    return "database is locked" in message or "database table is locked" in message
+
+
+async def _retry_database(operation):
+    """Retry a short SQLite operation after a concurrent writer releases it."""
+    for attempt in range(_database_retry_attempts):
+        try:
+            return await operation()
+        except (OperationalError, sqlite3.OperationalError) as error:
+            if not _is_database_locked(error) or attempt == _database_retry_attempts - 1:
+                raise
+            await asyncio.sleep(0.25 * (2 ** attempt))
+
+
+async def _retry_database_write(operation):
+    # SQLite has a single writer. This lock removes avoidable contention among
+    # the scheduler's concurrently fetched accounts; the busy timeout in the
+    # engine still covers writes from HTTP requests or another process.
+    async with _database_write_lock:
+        return await _retry_database(operation)
+
+
+async def _insert_log(level: str, category: str, message: str):
+    async with AsyncSessionLocal() as db:
+        db.add(Log(level=level, category=category, message=message))
+        await db.commit()
 
 
 async def add_important_log(category: str, message: str):
-    async with AsyncSessionLocal() as db:
-        log = Log(level="info", category=category, message=message)
-        db.add(log)
-        await db.commit()
+    await _retry_database_write(lambda: _insert_log("info", category, message))
 
 
 async def add_log(level: str, category: str, message: str):
     if level == "info":
         return
-    async with AsyncSessionLocal() as db:
-        log = Log(level=level, category=category, message=message)
-        db.add(log)
-        await db.commit()
+    await _retry_database_write(lambda: _insert_log(level, category, message))
 
 
 async def get_setting(key: str, default=None):
@@ -46,9 +74,7 @@ async def send_tg_notify(message: str):
                 json={"chat_id": chat_id, "text": message, "parse_mode": "HTML"},
             )
     except Exception as e:
-        async with AsyncSessionLocal() as db:
-            db.add(Log(level="warning", category="notify", message=f"TG通知发送失败: {e}"))
-            await db.commit()
+        await add_log("warning", "notify", f"TG通知发送失败: {e}")
 
 
 async def traffic_check():
@@ -233,9 +259,12 @@ async def sync_account(account_id: int, include_traffic: bool = False):
     添加账户时通过后台任务调用此函数，避免把阿里云网络请求放在创建接口的
     请求链路中。初始化同步时实例和流量请求可以并发执行，进一步缩短等待时间。
     """
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Account).where(Account.id == account_id, Account.enabled == True))
-        account = result.scalar_one_or_none()
+    async def load_account():
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(Account).where(Account.id == account_id, Account.enabled == True))
+            return result.scalar_one_or_none()
+
+    account = await _retry_database(load_account)
 
     if not account:
         return
@@ -259,43 +288,48 @@ async def sync_account(account_id: int, include_traffic: bool = False):
             raise instances_result
 
         synced_at = datetime.utcnow()
-        traffic_error = None
-        async with AsyncSessionLocal() as db:
-            for inst in instances_result:
-                result = await db.execute(
-                    select(Instance).where(Instance.instance_id == inst["instance_id"])
-                )
-                existing = result.scalar_one_or_none()
-                if existing:
-                    existing.account_id = account.id
-                    existing.instance_name = inst["instance_name"]
-                    existing.region_id = inst["region_id"]
-                    existing.status = inst["status"]
-                    existing.public_ip = inst["public_ip"]
-                    existing.instance_type = inst["instance_type"]
-                    existing.is_spot = inst["is_spot"]
-                    existing.bandwidth_mbps = inst["bandwidth_mbps"]
-                    existing.last_synced = synced_at
-                else:
-                    db.add(Instance(account_id=account.id, last_synced=synced_at, **inst))
 
-            if include_traffic and not isinstance(traffic_result, Exception):
-                limit = account.traffic_limit_gb or 200.0
-                traffic_gb = float(traffic_result)
-                percent = round(traffic_gb / limit * 100, 2)
-                await db.execute(
-                    update(Instance)
-                    .where(Instance.account_id == account.id)
-                    .values(
-                        traffic_used_gb=traffic_gb,
-                        traffic_percent=percent,
-                        last_synced=synced_at,
+        async def persist_sync():
+            traffic_error = None
+            async with AsyncSessionLocal() as db:
+                for inst in instances_result:
+                    result = await db.execute(
+                        select(Instance).where(Instance.instance_id == inst["instance_id"])
                     )
-                )
-            elif include_traffic and isinstance(traffic_result, Exception):
-                # 实例同步可以成功而流量接口暂时失败；保留各实例原有流量值。
-                traffic_error = traffic_result
-            await db.commit()
+                    existing = result.scalar_one_or_none()
+                    if existing:
+                        existing.account_id = account.id
+                        existing.instance_name = inst["instance_name"]
+                        existing.region_id = inst["region_id"]
+                        existing.status = inst["status"]
+                        existing.public_ip = inst["public_ip"]
+                        existing.instance_type = inst["instance_type"]
+                        existing.is_spot = inst["is_spot"]
+                        existing.bandwidth_mbps = inst["bandwidth_mbps"]
+                        existing.last_synced = synced_at
+                    else:
+                        db.add(Instance(account_id=account.id, last_synced=synced_at, **inst))
+
+                if include_traffic and not isinstance(traffic_result, Exception):
+                    limit = account.traffic_limit_gb or 200.0
+                    traffic_gb = float(traffic_result)
+                    percent = round(traffic_gb / limit * 100, 2)
+                    await db.execute(
+                        update(Instance)
+                        .where(Instance.account_id == account.id)
+                        .values(
+                            traffic_used_gb=traffic_gb,
+                            traffic_percent=percent,
+                            last_synced=synced_at,
+                        )
+                    )
+                elif include_traffic and isinstance(traffic_result, Exception):
+                    # 实例同步可以成功而流量接口暂时失败；保留各实例原有流量值。
+                    traffic_error = traffic_result
+                await db.commit()
+            return traffic_error
+
+        traffic_error = await _retry_database_write(persist_sync)
         if traffic_error:
             await add_log("warning", "traffic", f"[{account.name}] 流量同步失败，已保留上次有效数据: {traffic_error}")
     except Exception as error:

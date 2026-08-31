@@ -457,7 +457,9 @@ func (s *Store) Close() error { return s.db.Close() }
 func (s *Store) migrate(ctx context.Context) error {
 	statements := []string{
 		`PRAGMA journal_mode=WAL`,
-		`PRAGMA busy_timeout=5000`,
+		// Cloud synchronization and the DNS/Agent schedulers may briefly overlap;
+		// wait for the active writer instead of failing a request immediately.
+		`PRAGMA busy_timeout=30000`,
 		`PRAGMA foreign_keys=ON`,
 		`CREATE TABLE IF NOT EXISTS relay_nodes (
 			id TEXT PRIMARY KEY,

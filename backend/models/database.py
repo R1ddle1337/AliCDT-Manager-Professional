@@ -1,8 +1,10 @@
+import os
+from datetime import datetime
+
 from sqlalchemy import Column, Integer, String, Float, Boolean, Text, DateTime, inspect, text
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from datetime import datetime
 
 Base = declarative_base()
 
@@ -77,9 +79,17 @@ class Settings(Base):
     value = Column(Text, nullable=True)
 
 
-DATABASE_URL = "sqlite+aiosqlite:////app/data/guard.db"
+DATABASE_URL = os.environ.get("CDT_DATABASE_URL", "sqlite+aiosqlite:////app/data/guard.db")
 
-engine = create_async_engine(DATABASE_URL, echo=False)
+# SQLite allows one writer at a time. The scheduler may synchronize several
+# accounts concurrently, so connections must wait for a short-lived writer
+# instead of failing immediately with ``database is locked``. WAL keeps those
+# reads available while a write is committing.
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    connect_args={"timeout": 30},
+)
 AsyncSessionLocal = sessionmaker(
     engine,
     class_=AsyncSession,
@@ -89,6 +99,9 @@ AsyncSessionLocal = sessionmaker(
 
 async def init_db():
     async with engine.begin() as conn:
+        await conn.execute(text("PRAGMA journal_mode=WAL"))
+        await conn.execute(text("PRAGMA synchronous=NORMAL"))
+        await conn.execute(text("PRAGMA busy_timeout=30000"))
         await conn.run_sync(Base.metadata.create_all)
 
         def migrate(sync_conn):

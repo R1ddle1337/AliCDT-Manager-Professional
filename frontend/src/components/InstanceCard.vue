@@ -42,6 +42,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useStore } from '../stores'
+import { formatTime as formatClockTime } from '../utils/time'
 
 const props = defineProps({ instance: Object, account: Object })
 defineEmits(['release'])
@@ -70,7 +71,7 @@ async function handleStop() { if (isStopping.value) return; isStopping.value = t
 async function syncThis() { if (isSyncing.value) return; isSyncing.value = true; try { await store.syncSingleInstance(props.instance.instance_id) } catch (e) { alert('同步失败：' + (e.response?.data?.detail || e.message)) } finally { isSyncing.value = false } }
 async function loadBilling() { if (!props.account) return; billingLoading.value = true; billingError.value = ''; try { const result = await store.getBilling(props.account.id); billing.value = result; billingError.value = result.errors?.join('；') || '' } catch (e) { billingError.value = e.response?.data?.detail || '账单获取失败，请检查账户权限' } finally { billingLoading.value = false } }
 onMounted(() => { if (showBilling.value) loadBilling() })
-function formatTime(t) { return t ? new Date(t + 'Z').toLocaleTimeString('zh-CN', { hour12: false }) : '' }
+function formatTime(t) { return formatClockTime(t) }
 </script>
 
 <style scoped>

@@ -15,13 +15,14 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useStore } from '../stores'
+import { formatDateTime } from '../utils/time'
 
 const store = useStore(); const category = ref('')
 onMounted(load)
 async function load() { await store.fetchLogs(category.value || null) }
 async function clearLogs() { if (confirm('确认清空当前日志？')) await store.clearLogs(category.value || null) }
 function levelClass(level) { return { info: 'level-info', warning: 'level-warning', error: 'level-error' }[level] || 'level-muted' }
-function formatTime(t) { return t ? new Date(t + 'Z').toLocaleString('zh-CN', { hour12: false }) : '' }
+function formatTime(t) { return formatDateTime(t, '时间未知') }
 </script>
 
 <style scoped>

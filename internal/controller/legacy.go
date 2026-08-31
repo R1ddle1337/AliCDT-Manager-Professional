@@ -50,7 +50,9 @@ func (s *Store) ListSystemLogs(ctx context.Context, category string, limit int) 
 		}
 		if created.Valid {
 			parsed := parseDatabaseTime(created.String)
-			item.CreatedAt = &parsed
+			if !parsed.IsZero() {
+				item.CreatedAt = &parsed
+			}
 		}
 		logs = append(logs, item)
 	}
