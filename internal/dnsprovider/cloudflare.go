@@ -126,9 +126,25 @@ func (p *cloudflareProvider) DeleteRecord(ctx context.Context, id, _ string) err
 	if err != nil {
 		return err
 	}
-	return p.request(ctx, http.MethodDelete, fmt.Sprintf("%s/zones/%s/dns_records/%s", strings.TrimRight(p.cfg.Endpoint, "/"), zid, id), nil, &struct {
+	err = p.request(ctx, http.MethodDelete, fmt.Sprintf("%s/zones/%s/dns_records/%s", strings.TrimRight(p.cfg.Endpoint, "/"), zid, id), nil, &struct {
 		Success bool `json:"success"`
 	}{})
+	// A managed record may have been removed out-of-band (or by a previous
+	// reconciliation attempt). Treat Cloudflare's record-not-found response as
+	// success so one stale row cannot block synchronization of every other row.
+	if isCloudflareRecordNotFound(err) {
+		return nil
+	}
+	return err
+}
+
+func isCloudflareRecordNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "cloudflare dns http status 404") &&
+		(strings.Contains(message, "81044") || strings.Contains(message, "record does not exist"))
 }
 
 func (p *cloudflareProvider) zoneID(ctx context.Context) (string, error) {

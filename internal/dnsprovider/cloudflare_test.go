@@ -41,6 +41,27 @@ func TestCloudflareEnsureRecordsUsesManagedRecordID(t *testing.T) {
 	}
 }
 
+func TestCloudflareDeleteRecordTreatsMissingRecordAsSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/zones":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "result": []map[string]string{{"id": "zone-1", "name": "example.com"}}})
+		case r.URL.Path == "/zones/zone-1/dns_records/missing" && r.Method == http.MethodDelete:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"success":false,"errors":[{"code":81044,"message":"Record does not exist."}]}`))
+		default:
+			http.Error(w, `{"success":false,"errors":[{"message":"unexpected request"}]}`, http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	provider := NewCloudflare(Config{Zone: "example.com", Endpoint: server.URL, APIToken: "test-token", HTTPClient: server.Client()})
+	if err := provider.DeleteRecord(context.Background(), "missing", "relay"); err != nil {
+		t.Fatalf("missing record should be treated as already deleted: %v", err)
+	}
+}
+
 func TestFQDNAndRelativeName(t *testing.T) {
 	if got := fqdn("relay", "example.com"); got != "relay.example.com" {
 		t.Fatalf("unexpected fqdn: %s", got)
