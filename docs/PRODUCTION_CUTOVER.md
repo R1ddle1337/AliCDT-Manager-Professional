@@ -13,6 +13,9 @@ the Python container while keeping nginx on the existing local port.
 - A root-readable `CDT_ADMIN_TOKEN` is available outside the repository.
 - No other process will write `/app/alicdt-manager/data/guard.db` during the
   cutover or rollback.
+- At least two independent non-CDT Dispatcher hosts have passed the grey
+  protocol/failure matrix in [`DISPATCHER.md`](DISPATCHER.md), and their public
+  IPs are ready for a DNS-only RRset.
 - `data-go-staging/guard.db` was originally seeded from production and now
   contains the accepted Agent credentials, landing nodes and relay services.
 
@@ -105,7 +108,17 @@ Use the Go console and API to confirm:
 Keep the old container stopped and intact through the observation window. Every
 Agent must reappear before the cutover is accepted.
 
-## 6. Fast rollback
+## 6. Switch the fixed front door (only after the controller is healthy)
+
+For a pool whose `front_door_mode` is `dispatcher`, verify that its DNS Provider
+is empty and that both gateways report HTTP `200` from `/readyz`. Lower the old
+entry TTL, publish the two gateway A/AAAA records for the fixed hostname, and
+wait at least one TTL plus the client reconnect margin. Confirm TCP and UDP
+traffic on both gateways and that the controller snapshot removes drained Relay
+accounts. Keep the previous Relay-DNS records documented for immediate rollback;
+never mix Relay and Dispatcher IPs in one RRset.
+
+## 7. Fast rollback
 
 If the Go controller fails a cutover gate:
 
@@ -120,14 +133,15 @@ docker start alicdt-manager
 curl -fsS -o /dev/null -w '%{http_code}\n' https://cdt.7b.tn/
 ```
 
-The Go migration only adds compatible tables and columns, so the Python ORM can
+The Go migration only adds compatible tables and columns (including the
+`relay_pools.front_door_mode` default), so the Python ORM can
 normally reopen the promoted database. The restarted staging controller uses
 its unchanged grey database, so Agent authentication and relay management also
 return. Keep both backups untouched. Restore the Python backup only if an
 integrity audit proves it is required, and only while all Python and Go
 controllers are stopped.
 
-## 7. Final cleanup
+## 8. Final cleanup
 
 After the agreed observation period and explicit acceptance:
 

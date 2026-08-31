@@ -31,6 +31,7 @@ func main() {
 	cloudSyncInterval := flag.Duration("cloud-sync-interval", 2*time.Minute, "Aliyun ECS/CDT synchronization interval")
 	dnsSyncInterval := flag.Duration("dns-sync-interval", time.Minute, "managed DNS synchronization interval")
 	trafficSafetyWindow := flag.Duration("traffic-safety-window", durationEnv("CDT_TRAFFIC_SAFETY_WINDOW", 4*time.Minute), "forecast window reserved before the CDT protection threshold")
+	dispatchToken := flag.String("dispatch-token", env("CDT_DISPATCH_TOKEN", ""), "read-only token for front-door L4 dispatchers")
 	flag.Parse()
 
 	store, err := controller.OpenStore(*database)
@@ -43,7 +44,7 @@ func main() {
 			fatal(err)
 		}
 	}
-	server, err := controller.NewServer(store, controller.ServerOptions{AdminToken: *adminToken, FrontendDir: *frontendDir, AgentInstallerPath: *agentInstaller, AgentVersion: *agentVersion, AgentReleaseSource: *agentReleaseSource, AgentReleaseRepo: *agentReleaseRepo, AgentReleaseChannel: *agentReleaseChannel, AgentReleaseCacheDir: *agentReleaseCacheDir, UpdateRequestFile: *updateRequestFile, UpdateStatusFile: *updateStatusFile, TrafficSafetyWindow: *trafficSafetyWindow, TrafficSafetyWindowSet: true})
+	server, err := controller.NewServer(store, controller.ServerOptions{AdminToken: *adminToken, FrontendDir: *frontendDir, AgentInstallerPath: *agentInstaller, AgentVersion: *agentVersion, AgentReleaseSource: *agentReleaseSource, AgentReleaseRepo: *agentReleaseRepo, AgentReleaseChannel: *agentReleaseChannel, AgentReleaseCacheDir: *agentReleaseCacheDir, UpdateRequestFile: *updateRequestFile, UpdateStatusFile: *updateStatusFile, TrafficSafetyWindow: *trafficSafetyWindow, TrafficSafetyWindowSet: true, DispatchToken: *dispatchToken})
 	if err != nil {
 		fatal(err)
 	}

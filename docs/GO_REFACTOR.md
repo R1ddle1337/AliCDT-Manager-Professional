@@ -9,11 +9,19 @@ versioned Go API.
 
 - `cmd/controller`: Go control-plane API and SQLite persistence.
 - `cmd/relay-agent`: single-binary relay agent installed on a CDT ECS host.
+- `cmd/dispatcher`: optional fixed-front-door TCP/UDP L4 gateway for stable
+  public entry points.
 - `internal/relay`: native TCP/UDP L4 forwarding with live config updates.
 - `internal/agent`: enrollment, desired-state polling and heartbeat reporting.
 - `internal/controller`: relay nodes, landing nodes and relay service APIs.
 - `internal/aliyun`: signed ECS/CDT API client and cloud resource synchronization.
 - `internal/protocol`: versioned JSON contract shared by controller and agents.
+
+The fixed-front-door deployment is documented in
+[`DISPATCHER.md`](DISPATCHER.md). It is intentionally separate from the CDT
+Relay data plane: deploy two or more independent, high-bandwidth non-CDT
+gateways and keep the controller's read-only dispatch token out of Git and
+administrator credentials.
 
 ## Cloud-resource compatibility
 
@@ -147,6 +155,12 @@ requirement, add two or more non-CDT L4 dispatchers in front of this pool; do
 not put that dispatcher on a scarce CDT account. A dispatcher improves backend
 selection but still cannot migrate an already-established TCP byte stream.
 
+For a fixed front door, set the pool's `front_door_mode` to `dispatcher`. The
+controller then stops reconciling Relay IPs for that pool; the hostname must be
+DNS-only pointed at the independent Dispatcher hosts described in
+[`DISPATCHER.md`](DISPATCHER.md). Existing pools default to `relay_dns` for
+backward compatibility.
+
 ## Protocol validation
 
 An isolated Docker environment was used to exercise the real protocol cores,
@@ -225,12 +239,15 @@ Tags matching `v*` publish these checksum-protected assets:
 
 - `cdt-relay-agent-linux-amd64`
 - `cdt-relay-agent-linux-arm64`
+- `cdt-dispatcher-linux-amd64`
+- `cdt-dispatcher-linux-arm64`
 - `alicdt-controller-linux-amd64`
 - `alicdt-controller-linux-arm64`
 - `checksums.txt`
 
 The same workflow pushes the multi-architecture controller image to
-`ghcr.io/r1ddle1337/alicdt-controller`.
+`ghcr.io/r1ddle1337/alicdt-controller` and the optional gateway image to
+`ghcr.io/r1ddle1337/alicdt-dispatcher`.
 
 ## Current API surface
 
@@ -247,6 +264,8 @@ The same workflow pushes the multi-architecture controller image to
 - `GET|POST /api/v2/relay-pools`
 - `PUT|DELETE /api/v2/relay-pools/{id}`
 - `GET /api/v2/relay-pools/{id}/relay-links`
+- `GET /api/v2/dispatch/pools/{poolID}` (dedicated dispatch token only;
+  credential-free backend snapshot)
 - `GET /api/v2/cloud/overview`
 - `POST /api/v2/cloud/sync`
 - `POST|PUT|DELETE /api/v2/cloud/accounts`
@@ -272,7 +291,9 @@ The original console paths remain available for existing clients:
 - `/api/settings`, `/api/logs` and the original instance control endpoints
 
 The controller also serves the Vue SPA and the root SSH installer at
-`/agent/install.sh` when built with `Dockerfile.controller`.
+`/agent/install.sh` when built with `Dockerfile.controller`; the fixed-front-door
+installer and embedded gateway assets are available at `/dispatcher/install.sh`
+and `/dispatcher/{asset}`.
 
 Agents installed before automatic upgrades were introduced need one bootstrap
 command from **中转节点 → 升级已安装 Agent**. It downloads the same
@@ -303,6 +324,9 @@ single logical node instead of importing one link per Relay.
 
 - One pool defines one hostname, one listen port and one transport. DNS maps the
   hostname to Relay IPs only; it cannot select a port, protocol or landing node.
+- Set `front_door_mode=dispatcher` when the hostname is owned by fixed L4
+  gateways. In that mode the controller deliberately does not publish Relay
+  IPs; add the gateway A/AAAA records separately and keep them DNS-only.
 - Multiple pools may reuse one hostname on different ports. Each generated
   client node still includes its own port, and every Relay selected for that
   hostname must listen on every advertised port. Use the same member set and

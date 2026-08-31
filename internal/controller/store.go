@@ -26,6 +26,8 @@ const (
 	ProtectionAlertOnly  = "alert_only"
 	ProtectionDrainRelay = "drain_relay"
 	ProtectionStopECS    = "stop_ecs"
+	FrontDoorRelayDNS    = "relay_dns"
+	FrontDoorDispatcher  = "dispatcher"
 )
 
 type RelayNode struct {
@@ -323,6 +325,7 @@ type RelayPool struct {
 	ID                    string            `json:"id"`
 	Name                  string            `json:"name"`
 	Hostname              string            `json:"hostname"`
+	FrontDoorMode         string            `json:"front_door_mode"`
 	ListenPort            int               `json:"listen_port"`
 	Network               string            `json:"network"`
 	Mode                  string            `json:"mode"`
@@ -367,9 +370,42 @@ type RelayPoolMember struct {
 	ProtectionTriggeredAt     *time.Time `json:"protection_triggered_at,omitempty"`
 }
 
+// DispatcherPoolSnapshot is the deliberately small, credential-free view a
+// front-door L4 dispatcher needs. It contains only ready Relay backends and
+// the minimal quota signals needed for selection; landing-node share links and
+// cloud credentials are never exposed through this view.
+type DispatcherPoolSnapshot struct {
+	PoolID                string              `json:"pool_id"`
+	PoolName              string              `json:"pool_name"`
+	FrontDoorMode         string              `json:"front_door_mode"`
+	Revision              string              `json:"revision"`
+	ListenPort            int                 `json:"listen_port"`
+	Network               string              `json:"network"`
+	SelectionMode         string              `json:"selection_mode"`
+	DialTimeoutMillis     int                 `json:"dial_timeout_ms"`
+	UDPIdleTimeoutSeconds int                 `json:"udp_idle_timeout_seconds"`
+	FailureThreshold      int                 `json:"failure_threshold"`
+	FailureCooldownSecs   int                 `json:"failure_cooldown_seconds"`
+	MaxUDPSessions        int                 `json:"max_udp_sessions"`
+	Backends              []DispatcherBackend `json:"backends"`
+	GeneratedAt           time.Time           `json:"generated_at"`
+}
+
+type DispatcherBackend struct {
+	ID                     string  `json:"id"`
+	Name                   string  `json:"name"`
+	Address                string  `json:"address"`
+	Port                   int     `json:"port"`
+	Weight                 int     `json:"weight"`
+	TrafficKnown           bool    `json:"traffic_known"`
+	TrafficRemainingGB     float64 `json:"traffic_remaining_gb,omitempty"`
+	TrafficRateGBPerMinute float64 `json:"traffic_rate_gb_per_minute,omitempty"`
+}
+
 type CreateRelayPoolRequest struct {
 	Name                  string                  `json:"name"`
 	Hostname              string                  `json:"hostname"`
+	FrontDoorMode         string                  `json:"front_door_mode"`
 	ListenPort            int                     `json:"listen_port"`
 	Network               string                  `json:"network"`
 	Mode                  string                  `json:"mode"`
@@ -601,6 +637,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
 			hostname TEXT NOT NULL,
+			front_door_mode TEXT NOT NULL DEFAULT 'relay_dns',
 			listen_port INTEGER NOT NULL,
 			network TEXT NOT NULL,
 			mode TEXT NOT NULL,
@@ -673,6 +710,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	if err := s.ensureColumn(ctx, "relay_pools", "auto_drain", "INTEGER NOT NULL DEFAULT 1"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "relay_pools", "front_door_mode", "TEXT NOT NULL DEFAULT 'relay_dns'"); err != nil {
 		return err
 	}
 	for _, column := range []struct {

@@ -24,6 +24,7 @@ services:
       CDT_AGENT_RELEASE_CHANNEL: latest
       CDT_AGENT_RELEASE_CACHE_DIR: /app/data/agent-releases
       CDT_TRAFFIC_SAFETY_WINDOW: ${CDT_TRAFFIC_SAFETY_WINDOW:-4m}
+      CDT_DISPATCH_TOKEN: ${CDT_DISPATCH_TOKEN:-}
       TZ: Asia/Shanghai
     command:
       - -listen

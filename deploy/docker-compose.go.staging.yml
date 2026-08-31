@@ -20,6 +20,7 @@ services:
       CDT_ADMIN_TOKEN: ${CDT_ADMIN_TOKEN:?set CDT_ADMIN_TOKEN}
       CDT_DATABASE: /app/data/guard.db
       CDT_TRAFFIC_SAFETY_WINDOW: ${CDT_TRAFFIC_SAFETY_WINDOW:-4m}
+      CDT_DISPATCH_TOKEN: ${CDT_DISPATCH_TOKEN:-}
       TZ: Asia/Shanghai
     command:
       - -listen

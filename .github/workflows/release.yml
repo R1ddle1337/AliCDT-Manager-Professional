@@ -37,10 +37,11 @@ jobs:
           mkdir -p release
           for arch in amd64 arm64; do
             CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w -X main.version=${RELEASE_VERSION}" -o "release/cdt-relay-agent-linux-${arch}" ./cmd/relay-agent
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w -X main.version=${RELEASE_VERSION}" -o "release/cdt-dispatcher-linux-${arch}" ./cmd/dispatcher
             CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "release/alicdt-controller-linux-${arch}" ./cmd/controller
           done
           cd release
-          sha256sum alicdt-controller-linux-* cdt-relay-agent-linux-* > checksums.txt
+          sha256sum alicdt-controller-linux-* cdt-dispatcher-linux-* cdt-relay-agent-linux-* > checksums.txt
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -75,6 +76,33 @@ jobs:
         with:
           context: .
           file: Dockerfile.controller
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+
+  dispatcher-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v6
+        id: metadata
+        with:
+          images: ghcr.io/r1ddle1337/alicdt-dispatcher
+          tags: |
+            type=raw,value=${{ github.ref_name }}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.dispatcher
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.metadata.outputs.tags }}

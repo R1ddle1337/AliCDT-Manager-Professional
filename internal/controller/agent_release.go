@@ -96,7 +96,11 @@ func (s *Server) agentAssetPath(asset string) (string, error) {
 }
 
 func validAgentAsset(asset string) bool {
-	return asset == "cdt-relay-agent-linux-amd64" || asset == "cdt-relay-agent-linux-arm64"
+	return asset == "cdt-relay-agent-linux-amd64" || asset == "cdt-relay-agent-linux-arm64" || validDispatcherAsset(asset)
+}
+
+func validDispatcherAsset(asset string) bool {
+	return asset == "cdt-dispatcher-linux-amd64" || asset == "cdt-dispatcher-linux-arm64"
 }
 
 func (s *Server) refreshAgentRelease(ctx context.Context) error {

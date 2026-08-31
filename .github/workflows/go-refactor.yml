@@ -30,3 +30,9 @@ jobs:
         run: |
           CGO_ENABLED=0 go build -o /tmp/alicdt-controller ./cmd/controller
           CGO_ENABLED=0 go build -o /tmp/cdt-relay-agent ./cmd/relay-agent
+          CGO_ENABLED=0 go build -o /tmp/cdt-dispatcher ./cmd/dispatcher
+      - name: Validate deployment assets
+        run: |
+          bash -n scripts/install-dispatcher.sh deploy/cdt-dispatcher-update.sh
+          CDT_DISPATCH_CONTROLLER_URL=https://example.invalid CDT_DISPATCH_POOL_ID=pool CDT_DISPATCH_TOKEN=ci-token \
+            docker compose -f deploy/docker-compose.dispatcher.yml config >/dev/null

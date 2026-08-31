@@ -33,6 +33,7 @@ type ServerOptions struct {
 	UpdateStatusFile       string
 	TrafficSafetyWindow    time.Duration
 	TrafficSafetyWindowSet bool
+	DispatchToken          string
 }
 
 type Server struct {
@@ -53,6 +54,7 @@ type Server struct {
 	agentReleaseVersion   string
 	agentReleaseErr       error
 	cloud                 *CloudService
+	dispatchToken         string
 	router                chi.Router
 }
 
@@ -60,8 +62,13 @@ func NewServer(store *Store, opts ServerOptions) (*Server, error) {
 	if store == nil {
 		return nil, errors.New("store is required")
 	}
-	if strings.TrimSpace(opts.AdminToken) == "" {
+	adminToken := strings.TrimSpace(opts.AdminToken)
+	if adminToken == "" {
 		return nil, errors.New("admin token is required")
+	}
+	dispatchToken := strings.TrimSpace(opts.DispatchToken)
+	if dispatchToken != "" && subtle.ConstantTimeCompare([]byte(dispatchToken), []byte(adminToken)) == 1 {
+		return nil, errors.New("dispatch token must be different from admin token")
 	}
 	agentVersion := strings.TrimSpace(opts.AgentVersion)
 	if agentVersion == "" {
@@ -91,7 +98,7 @@ func NewServer(store *Store, opts ServerOptions) (*Server, error) {
 	} else if opts.TrafficSafetyWindow > 0 {
 		cloud.SetTrafficSafetyWindow(opts.TrafficSafetyWindow)
 	}
-	server := &Server{store: store, adminToken: opts.AdminToken, frontendDir: opts.FrontendDir, agentInstallerPath: opts.AgentInstallerPath, updateRequestFile: opts.UpdateRequestFile, updateStatusFile: opts.UpdateStatusFile, agentVersion: agentVersion, agentReleaseSource: releaseSource, agentReleaseRepo: releaseRepo, agentReleaseChannel: releaseChannel, agentReleaseCacheDir: releaseCacheDir, cloud: cloud}
+	server := &Server{store: store, adminToken: adminToken, dispatchToken: dispatchToken, frontendDir: opts.FrontendDir, agentInstallerPath: opts.AgentInstallerPath, updateRequestFile: opts.UpdateRequestFile, updateStatusFile: opts.UpdateStatusFile, agentVersion: agentVersion, agentReleaseSource: releaseSource, agentReleaseRepo: releaseRepo, agentReleaseChannel: releaseChannel, agentReleaseCacheDir: releaseCacheDir, cloud: cloud}
 	if cachedVersion, err := os.ReadFile(filepath.Join(releaseCacheDir, "version")); err == nil {
 		server.agentReleaseVersion = strings.TrimSpace(string(cachedVersion))
 	}
@@ -116,6 +123,8 @@ func (s *Server) routes() chi.Router {
 	if s.agentInstallerPath != "" {
 		router.Get("/agent/install.sh", s.serveAgentInstaller)
 		router.Get("/agent/upgrade.sh", s.serveAgentUpgrade)
+		router.Get("/dispatcher/install.sh", s.serveDispatcherInstaller)
+		router.Get("/dispatcher/{asset}", s.serveDispatcherAsset)
 		router.Get("/agent/{asset}", s.serveAgentAsset)
 	}
 	router.Get("/api/v2/auth/initialized", s.adminInitialized)
@@ -135,6 +144,7 @@ func (s *Server) routes() chi.Router {
 			router.Post("/{agentID}/heartbeat", s.agentHeartbeat)
 		})
 	})
+	router.Get("/api/v2/dispatch/pools/{poolID}", s.dispatchPoolSnapshot)
 
 	router.Group(func(router chi.Router) {
 		router.Use(s.adminAuth)
@@ -221,11 +231,52 @@ func (s *Server) serveAgentUpgrade(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, filepath.Join(s.agentAssetsDir, "upgrade-agent.sh"))
 }
 
+func (s *Server) serveDispatcherInstaller(w http.ResponseWriter, r *http.Request) {
+	if s.agentAssetsDir == "" {
+		http.NotFound(w, r)
+		return
+	}
+	path := filepath.Join(s.agentAssetsDir, "install-dispatcher.sh")
+	if info, err := os.Stat(path); err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	http.ServeFile(w, r, path)
+}
+
+func (s *Server) serveDispatcherAsset(w http.ResponseWriter, r *http.Request) {
+	asset := chi.URLParam(r, "asset")
+	if asset != "checksums.txt" && !validDispatcherAsset(asset) {
+		http.NotFound(w, r)
+		return
+	}
+	if s.agentAssetsDir == "" {
+		http.NotFound(w, r)
+		return
+	}
+	path := filepath.Join(s.agentAssetsDir, asset)
+	if info, err := os.Stat(path); err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	contentType := "application/octet-stream"
+	if asset == "checksums.txt" {
+		contentType = "text/plain; charset=utf-8"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	http.ServeFile(w, r, path)
+}
+
 func (s *Server) serveAgentAsset(w http.ResponseWriter, r *http.Request) {
 	asset := chi.URLParam(r, "asset")
 	allowed := map[string]string{
 		"cdt-relay-agent-linux-amd64": "application/octet-stream",
 		"cdt-relay-agent-linux-arm64": "application/octet-stream",
+		"cdt-dispatcher-linux-amd64":  "application/octet-stream",
+		"cdt-dispatcher-linux-arm64":  "application/octet-stream",
 		"checksums.txt":               "text/plain; charset=utf-8",
 	}
 	contentType, ok := allowed[asset]

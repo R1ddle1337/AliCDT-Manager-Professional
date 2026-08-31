@@ -124,7 +124,24 @@ In the Go console:
 
 Keep all existing production proxy ports unchanged during this phase.
 
-## 6. Validation matrix
+## 6. Grey-test the fixed front door (optional but required before DNS cutover)
+
+Create a second pool (or switch a new pool) with
+`front_door_mode=dispatcher` and **no** `dns_provider_id`. The controller then
+only supplies Relay backends to the gateway and cannot overwrite the gateway
+DNS record. Deploy `deploy/docker-compose.dispatcher.staging.yml` on an
+independent non-CDT host, using a private dispatch token and a staging host
+port. Check `/readyz` before sending any client traffic.
+
+Use a separate grey hostname with two DNS-only A/AAAA records pointing to the
+staging gateways. Exercise both TCP and UDP with the real encrypted protocol,
+then stop one gateway and one Relay in turn. A new connection must reach a
+healthy member; an existing TCP stream is expected to remain pinned. Verify
+that a stale controller snapshot drains the gateway rather than retaining an
+old quota member. Do not put the staging Dispatcher on the panel host or on a
+CDT-billed Relay.
+
+## 7. Validation matrix
 
 Record results for both direct and CDT-relayed paths:
 
@@ -143,7 +160,7 @@ For return-path quality, collect at least 30 minutes of packet loss, latency,
 reconnect count and throughput during the expected mainland peak period. Do not
 use a successful local protocol test as proof of CDT route quality.
 
-## 7. Safe rollback
+## 8. Safe rollback
 
 First disable or delete the grey relay service in the Go console. This closes
 the listener for new connections while established TCP connections drain.

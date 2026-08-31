@@ -34,8 +34,10 @@
 - 国内站暂不启用余额与账单功能，国际站账单功能保持可用
 - DNS 入口托管抽象层：支持阿里云 DNS 与 Cloudflare，多 A 记录自动同步与健康排空
 - 逻辑入口池：一份用户节点绑定多台 CDT Relay，成员上线/排空状态自动同步到 DNS
+- 入口池支持 `front_door_mode=dispatcher`：控制器只下发后端快照，不会把 Relay IP 写回固定前门域名
 - 统一入口池默认启用流量自动排空：绑定账户达到 CDT 阈值后先撤 DNS，再停止新连接，恢复后自动加入
 - 配额预测保护：根据连续账户快照计算近期消耗速率，预计在控制与 DNS 生效窗口内达到阈值时提前排空
+- 固定前门 Dispatcher：使用两台以上非 CDT L4 网关承载稳定域名，按 Relay 健康度和账户剩余额度无感分流 TCP/UDP
 
 注意：阿里云 `ListCdtInternetTraffic` 按账户统计公网出向流量，接口不提供 ECS 级明细。
 同一账户绑定多台 Relay 时会共享该账户的额度和保护状态；若需要独立额度，请使用独立的阿里云计费账户。
@@ -46,6 +48,10 @@ Agent 更新说明：生产控制器通过 `CDT_AGENT_RELEASE_SOURCE=github` 从
 `/app/data/agent-releases`。GitHub 暂时不可用时继续提供最近一次校验成功的缓存版本，首次无缓存时使用镜像内置版本。
 Agent 安装脚本默认设置 `CDT_AGENT_UPDATE_TIME=04:00` 和 `CDT_AGENT_UPDATE_LOCATION=Asia/Shanghai`，每天只检查一次；如需兼容旧配置，可显式设置 `CDT_AGENT_UPDATE_INTERVAL`。
 Agent 安装支持 systemd 和 Alpine Linux 的 OpenRC；在没有这两种服务管理器的容器中，请使用容器编排器运行 Agent。
+
+固定入口 Dispatcher 的部署、DNS-only 记录、灰度切换和回滚步骤见
+[`docs/DISPATCHER.md`](docs/DISPATCHER.md)。Dispatcher 必须部署在至少两台
+独立的非 CDT 网关上，不能占用面板主机的 443，也不能把管理员令牌下发给网关。
 
 ## 所需 RAM 权限
 https://ram.console.alibabacloud.com/users

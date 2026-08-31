@@ -68,6 +68,109 @@ func TestRelayPoolReplicatesServiceAndGeneratesLogicalLink(t *testing.T) {
 	}
 }
 
+func TestDispatcherFrontDoorNeverPublishesRelayDNS(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	provider, err := store.CreateDNSProvider(context.Background(), CreateDNSProviderRequest{Name: "cf", Type: "cloudflare", Zone: "example.com", APIToken: "token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	landing, err := store.CreateLandingNode(context.Background(), CreateLandingNodeRequest{Name: "landing", Address: "127.0.0.1", Port: 443, Network: "tcp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateEnrollmentToken(context.Background(), "dispatcher-front-door", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	agent, err := store.EnrollAgent(context.Background(), protocol.AgentEnrollmentRequest{Token: "dispatcher-front-door", NodeName: "relay", PublicIP: "203.0.113.90"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Binding a DNS provider to a fixed-front-door pool is rejected before any
+	// service or DNS row is created.
+	if _, err := store.CreateRelayPool(context.Background(), CreateRelayPoolRequest{Name: "fixed", Hostname: "entry.example.com", FrontDoorMode: FrontDoorDispatcher, ListenPort: 443, Network: "tcp", Mode: "failover", DNSProviderID: provider.ID, Members: []CreateRelayPoolMember{{RelayNodeID: agent.AgentID}}, Targets: []CreateServiceTarget{{LandingNodeID: landing.ID}}}); err == nil {
+		t.Fatal("expected dispatcher pool with Relay DNS provider to be rejected")
+	}
+	pool, err := store.CreateRelayPool(context.Background(), CreateRelayPoolRequest{Name: "fixed", Hostname: "entry.example.com", FrontDoorMode: FrontDoorDispatcher, ListenPort: 443, Network: "tcp", Mode: "failover", Members: []CreateRelayPoolMember{{RelayNodeID: agent.AgentID}}, Targets: []CreateServiceTarget{{LandingNodeID: landing.ID}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pool.FrontDoorMode != FrontDoorDispatcher {
+		t.Fatalf("front door mode was not persisted: %+v", pool)
+	}
+	if err := store.RefreshRelayPoolDNS(context.Background(), pool.ID); err != nil {
+		t.Fatal(err)
+	}
+	records, err := store.ListDNSRecords(context.Background(), provider.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("dispatcher pool unexpectedly created Relay DNS records: %+v", records)
+	}
+	// A fixed pool can later be converted to Relay-DNS mode after the cleanup;
+	// stale ownership metadata must not make that migration impossible.
+	updated, err := store.UpdateRelayPool(context.Background(), pool.ID, CreateRelayPoolRequest{Name: pool.Name, Hostname: pool.Hostname, FrontDoorMode: FrontDoorRelayDNS, ListenPort: pool.ListenPort, Network: pool.Network, Mode: pool.Mode, DNSProviderID: provider.ID, Members: []CreateRelayPoolMember{{RelayNodeID: agent.AgentID}}, Targets: []CreateServiceTarget{{LandingNodeID: landing.ID}}})
+	if err != nil || updated.FrontDoorMode != FrontDoorRelayDNS {
+		t.Fatalf("dispatcher-to-DNS mode transition failed: pool=%+v err=%v", updated, err)
+	}
+}
+
+func TestRelayDNSToDispatcherTransitionCleansManagedRows(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	provider, err := store.CreateDNSProvider(context.Background(), CreateDNSProviderRequest{Name: "cf", Type: "cloudflare", Zone: "example.com", APIToken: "token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	landing, err := store.CreateLandingNode(context.Background(), CreateLandingNodeRequest{Name: "landing", Address: "127.0.0.1", Port: 443, Network: "tcp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateEnrollmentToken(context.Background(), "switch-front-door", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	agent, err := store.EnrollAgent(context.Background(), protocol.AgentEnrollmentRequest{Token: "switch-front-door", NodeName: "relay", PublicIP: "203.0.113.91"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := store.CreateRelayPool(context.Background(), CreateRelayPoolRequest{Name: "switch", Hostname: "switch.example.com", FrontDoorMode: FrontDoorRelayDNS, ListenPort: 443, Network: "tcp", Mode: "failover", DNSProviderID: provider.ID, Members: []CreateRelayPoolMember{{RelayNodeID: agent.AgentID}}, Targets: []CreateServiceTarget{{LandingNodeID: landing.ID}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := store.AgentConfig(context.Background(), agent.AgentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateHeartbeat(context.Background(), agent.AgentID, protocol.AgentHeartbeat{CurrentRevision: config.Revision, Services: []protocol.ServiceStatus{{ID: config.Services[0].ID, Listening: true}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RefreshRelayPoolDNS(context.Background(), pool.ID); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := store.ListDNSRecords(context.Background(), provider.ID)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("expected one Relay DNS row before transition: rows=%+v err=%v", rows, err)
+	}
+	updated, err := store.UpdateRelayPool(context.Background(), pool.ID, CreateRelayPoolRequest{Name: pool.Name, Hostname: pool.Hostname, FrontDoorMode: FrontDoorDispatcher, ListenPort: pool.ListenPort, Network: pool.Network, Mode: pool.Mode, DNSProviderID: "", Members: []CreateRelayPoolMember{{RelayNodeID: agent.AgentID}}, Targets: []CreateServiceTarget{{LandingNodeID: landing.ID}}})
+	if err != nil || updated.FrontDoorMode != FrontDoorDispatcher {
+		t.Fatalf("Relay-DNS to Dispatcher transition failed: pool=%+v err=%v", updated, err)
+	}
+	rows, err = store.ListDNSRecords(context.Background(), provider.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Enabled || rows[0].Status != "disabled" {
+		t.Fatalf("old Relay DNS row was not disabled: %+v", rows)
+	}
+}
+
 func TestRelayPoolRefreshesManagedDNSRecordsFromRelayState(t *testing.T) {
 	store, err := OpenStore(":memory:")
 	if err != nil {

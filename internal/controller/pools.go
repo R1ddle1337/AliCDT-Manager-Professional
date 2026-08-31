@@ -24,6 +24,10 @@ func normalizeRelayPoolRequest(request CreateRelayPoolRequest) (CreateRelayPoolR
 func normalizeRelayPoolRequestWithDrain(request CreateRelayPoolRequest) (CreateRelayPoolRequest, bool, bool, error) {
 	request.Name = strings.TrimSpace(request.Name)
 	request.Hostname = strings.TrimSuffix(strings.TrimSpace(request.Hostname), ".")
+	request.FrontDoorMode = strings.ToLower(strings.TrimSpace(request.FrontDoorMode))
+	if request.FrontDoorMode == "" {
+		request.FrontDoorMode = FrontDoorRelayDNS
+	}
 	request.Network = strings.ToLower(strings.TrimSpace(request.Network))
 	request.Mode = strings.ToLower(strings.TrimSpace(request.Mode))
 	request.DNSProviderID = strings.TrimSpace(request.DNSProviderID)
@@ -37,8 +41,11 @@ func normalizeRelayPoolRequestWithDrain(request CreateRelayPoolRequest) (CreateR
 	if strings.ContainsAny(request.Hostname, "/ :\\") {
 		return request, false, false, errors.New("hostname must be a DNS name without a scheme or port")
 	}
-	if !oneOf(request.Network, "tcp", "udp", "tcp+udp") || !oneOf(request.Mode, "failover", "round_robin", "ip_hash", "weighted") {
+	if !oneOf(request.Network, "tcp", "udp", "tcp+udp") || !oneOf(request.Mode, "failover", "round_robin", "ip_hash", "weighted") || !oneOf(request.FrontDoorMode, FrontDoorRelayDNS, FrontDoorDispatcher) {
 		return request, false, false, errors.New("invalid network or mode")
+	}
+	if request.FrontDoorMode == FrontDoorDispatcher && request.DNSProviderID != "" {
+		return request, false, false, errors.New("dispatcher front door cannot bind a Relay DNS provider; point DNS to the gateway IPs")
 	}
 	if len(request.Members) == 0 {
 		return request, false, false, errors.New("at least one relay member is required")
@@ -107,7 +114,7 @@ func (s *Store) CreateRelayPool(ctx context.Context, request CreateRelayPoolRequ
 		return RelayPool{}, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO relay_pools(id,name,hostname,listen_port,network,mode,enabled,auto_drain,dns_provider_id,dns_record_name,dns_ttl,dial_timeout_ms,udp_idle_timeout_seconds,health_enabled,health_interval_seconds,health_timeout_ms,failure_threshold,success_threshold,recovery_cooldown_seconds,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, poolID, request.Name, request.Hostname, request.ListenPort, request.Network, request.Mode, boolInt(enabled), boolInt(autoDrain), nullIfEmpty(request.DNSProviderID), request.DNSRecordName, request.DNSTTL, request.DialTimeoutMillis, request.UDPIdleTimeoutSeconds, boolInt(request.Health.Enabled), request.Health.IntervalSeconds, request.Health.TimeoutMillis, request.Health.FailureThreshold, request.Health.SuccessThreshold, request.Health.RecoveryCooldownSecs, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO relay_pools(id,name,hostname,front_door_mode,listen_port,network,mode,enabled,auto_drain,dns_provider_id,dns_record_name,dns_ttl,dial_timeout_ms,udp_idle_timeout_seconds,health_enabled,health_interval_seconds,health_timeout_ms,failure_threshold,success_threshold,recovery_cooldown_seconds,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, poolID, request.Name, request.Hostname, request.FrontDoorMode, request.ListenPort, request.Network, request.Mode, boolInt(enabled), boolInt(autoDrain), nullIfEmpty(request.DNSProviderID), request.DNSRecordName, request.DNSTTL, request.DialTimeoutMillis, request.UDPIdleTimeoutSeconds, boolInt(request.Health.Enabled), request.Health.IntervalSeconds, request.Health.TimeoutMillis, request.Health.FailureThreshold, request.Health.SuccessThreshold, request.Health.RecoveryCooldownSecs, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return RelayPool{}, err
 	}
 	for _, target := range request.Targets {
@@ -176,6 +183,9 @@ func (s *Store) UpdateRelayPool(ctx context.Context, id string, request CreateRe
 	if err != nil {
 		return RelayPool{}, err
 	}
+	if strings.TrimSpace(request.FrontDoorMode) == "" {
+		request.FrontDoorMode = existing.FrontDoorMode
+	}
 	request, enabled, autoDrain, err := normalizeRelayPoolRequestWithDrain(request)
 	if err != nil {
 		return RelayPool{}, err
@@ -188,7 +198,10 @@ func (s *Store) UpdateRelayPool(ctx context.Context, id string, request CreateRe
 			return RelayPool{}, errors.New("DNS provider not found")
 		}
 	}
-	if existing.DNSProviderID != request.DNSProviderID {
+	// Switching to a fixed Dispatcher is the one safe exception to the
+	// provider-change guard: the post-commit reconciliation deliberately
+	// unbinds and disables the old Relay DNS rows.
+	if existing.DNSProviderID != request.DNSProviderID && request.FrontDoorMode != FrontDoorDispatcher {
 		var managedRecords int
 		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM dns_managed_records WHERE pool_id=? OR id IN (SELECT record_id FROM dns_managed_record_pools WHERE pool_id=?)`, id, id).Scan(&managedRecords); err != nil {
 			return RelayPool{}, err
@@ -203,7 +216,7 @@ func (s *Store) UpdateRelayPool(ctx context.Context, id string, request CreateRe
 	}
 	defer tx.Rollback()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := tx.ExecContext(ctx, `UPDATE relay_pools SET name=?,hostname=?,listen_port=?,network=?,mode=?,enabled=?,auto_drain=?,dns_provider_id=?,dns_record_name=?,dns_ttl=?,dial_timeout_ms=?,udp_idle_timeout_seconds=?,health_enabled=?,health_interval_seconds=?,health_timeout_ms=?,failure_threshold=?,success_threshold=?,recovery_cooldown_seconds=?,updated_at=? WHERE id=?`, request.Name, request.Hostname, request.ListenPort, request.Network, request.Mode, boolInt(enabled), boolInt(autoDrain), nullIfEmpty(request.DNSProviderID), request.DNSRecordName, request.DNSTTL, request.DialTimeoutMillis, request.UDPIdleTimeoutSeconds, request.Health.Enabled, request.Health.IntervalSeconds, request.Health.TimeoutMillis, request.Health.FailureThreshold, request.Health.SuccessThreshold, request.Health.RecoveryCooldownSecs, now, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE relay_pools SET name=?,hostname=?,front_door_mode=?,listen_port=?,network=?,mode=?,enabled=?,auto_drain=?,dns_provider_id=?,dns_record_name=?,dns_ttl=?,dial_timeout_ms=?,udp_idle_timeout_seconds=?,health_enabled=?,health_interval_seconds=?,health_timeout_ms=?,failure_threshold=?,success_threshold=?,recovery_cooldown_seconds=?,updated_at=? WHERE id=?`, request.Name, request.Hostname, request.FrontDoorMode, request.ListenPort, request.Network, request.Mode, boolInt(enabled), boolInt(autoDrain), nullIfEmpty(request.DNSProviderID), request.DNSRecordName, request.DNSTTL, request.DialTimeoutMillis, request.UDPIdleTimeoutSeconds, request.Health.Enabled, request.Health.IntervalSeconds, request.Health.TimeoutMillis, request.Health.FailureThreshold, request.Health.SuccessThreshold, request.Health.RecoveryCooldownSecs, now, id); err != nil {
 		return RelayPool{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM relay_pool_targets WHERE pool_id=?`, id); err != nil {
@@ -378,7 +391,7 @@ func (s *Store) DeleteRelayPool(ctx context.Context, id string) error {
 }
 
 func (s *Store) ListRelayPools(ctx context.Context) ([]RelayPool, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,hostname,listen_port,network,mode,enabled,COALESCE(auto_drain,1),COALESCE(dns_provider_id,''),dns_record_name,dns_ttl,dial_timeout_ms,udp_idle_timeout_seconds,health_enabled,health_interval_seconds,health_timeout_ms,failure_threshold,success_threshold,recovery_cooldown_seconds,created_at,updated_at FROM relay_pools ORDER BY created_at`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,hostname,COALESCE(front_door_mode,'relay_dns'),listen_port,network,mode,enabled,COALESCE(auto_drain,1),COALESCE(dns_provider_id,''),dns_record_name,dns_ttl,dial_timeout_ms,udp_idle_timeout_seconds,health_enabled,health_interval_seconds,health_timeout_ms,failure_threshold,success_threshold,recovery_cooldown_seconds,created_at,updated_at FROM relay_pools ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -387,10 +400,13 @@ func (s *Store) ListRelayPools(ctx context.Context) ([]RelayPool, error) {
 		var p RelayPool
 		var enabled, autoDrain, healthEnabled int
 		var created, updated string
-		if err := rows.Scan(&p.ID, &p.Name, &p.Hostname, &p.ListenPort, &p.Network, &p.Mode, &enabled, &autoDrain, &p.DNSProviderID, &p.DNSRecordName, &p.DNSTTL, &p.DialTimeoutMillis, &p.UDPIdleTimeoutSeconds, &healthEnabled, &p.Health.IntervalSeconds, &p.Health.TimeoutMillis, &p.Health.FailureThreshold, &p.Health.SuccessThreshold, &p.Health.RecoveryCooldownSecs, &created, &updated); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Hostname, &p.FrontDoorMode, &p.ListenPort, &p.Network, &p.Mode, &enabled, &autoDrain, &p.DNSProviderID, &p.DNSRecordName, &p.DNSTTL, &p.DialTimeoutMillis, &p.UDPIdleTimeoutSeconds, &healthEnabled, &p.Health.IntervalSeconds, &p.Health.TimeoutMillis, &p.Health.FailureThreshold, &p.Health.SuccessThreshold, &p.Health.RecoveryCooldownSecs, &created, &updated); err != nil {
 			return nil, err
 		}
 		p.Enabled = enabled != 0
+		if p.FrontDoorMode != FrontDoorDispatcher && p.FrontDoorMode != FrontDoorRelayDNS {
+			p.FrontDoorMode = FrontDoorRelayDNS
+		}
 		p.AutoDrain = autoDrain != 0
 		p.Health.Enabled = healthEnabled != 0
 		p.CreatedAt = parseDatabaseTime(created)
@@ -555,6 +571,30 @@ func (s *Store) RefreshRelayPoolDNS(ctx context.Context, poolID string) error {
 	if err != nil {
 		return err
 	}
+	if pool.FrontDoorMode == FrontDoorDispatcher {
+		// A fixed front door owns the public hostname on the gateway layer;
+		// never let the pool reconciler overwrite it with CDT Relay IPs. Clean
+		// up any records left by an earlier relay-DNS mode transition.
+		bindings, bindingErr := s.poolDNSBindings(ctx, poolID)
+		if bindingErr != nil {
+			return bindingErr
+		}
+		for recordID := range bindings {
+			if err := s.unbindPoolDNSRecord(ctx, recordID, pool.ID); err != nil {
+				return err
+			}
+			stillUsed, err := s.recordHasPoolBinding(ctx, recordID)
+			if err != nil {
+				return err
+			}
+			if !stillUsed {
+				if _, err := s.db.ExecContext(ctx, `UPDATE dns_managed_records SET pool_id=NULL,enabled=0,status='disabled',updated_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339Nano), recordID); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
 	if pool.DNSProviderID == "" {
 		return nil
 	}
@@ -672,7 +712,7 @@ func (s *Store) RefreshRelayPoolDNS(ctx context.Context, poolID string) error {
 }
 
 func (s *Store) poolDNSBindings(ctx context.Context, poolID string) (map[string]bool, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT record_id FROM dns_managed_record_pools WHERE pool_id=?`, poolID)
+	rows, err := s.db.QueryContext(ctx, `SELECT record_id FROM dns_managed_record_pools WHERE pool_id=? UNION SELECT id FROM dns_managed_records WHERE pool_id=?`, poolID, poolID)
 	if err != nil {
 		return nil, err
 	}

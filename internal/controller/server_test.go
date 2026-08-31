@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -162,6 +164,136 @@ func TestRelayListenerRejectsTransportOverlap(t *testing.T) {
 	request.Network = "tcp+udp"
 	if _, err := store.CreateRelayService(context.Background(), request); err == nil {
 		t.Fatal("expected tcp+udp listener to conflict with existing tcp listener")
+	}
+}
+
+func TestDispatcherSnapshotUsesDedicatedReadOnlyToken(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	account, err := store.CreateCloudAccount(context.Background(), CloudAccountRequest{
+		Name: "dispatch-account", AccessKeyID: "key", AccessKeySecret: "secret", RegionID: "cn-hongkong", SiteType: "china",
+		TrafficLimitGB: 200, ThresholdPercent: 95,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateEnrollmentToken(context.Background(), "dispatch-enroll", time.Hour, account.ID); err != nil {
+		t.Fatal(err)
+	}
+	agent, err := store.EnrollAgent(context.Background(), protocol.AgentEnrollmentRequest{Token: "dispatch-enroll", NodeName: "relay", PublicIP: "203.0.113.77"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	landing, err := store.CreateLandingNode(context.Background(), CreateLandingNodeRequest{Name: "landing", Address: "127.0.0.1", Port: 9443, Network: "tcp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := store.CreateRelayPool(context.Background(), CreateRelayPoolRequest{
+		Name: "dispatch", Hostname: "entry.example.com", ListenPort: 18450, Network: "tcp", Mode: "failover",
+		Members: []CreateRelayPoolMember{{RelayNodeID: agent.AgentID}}, Targets: []CreateServiceTarget{{LandingNodeID: landing.ID}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := store.AgentConfig(context.Background(), agent.AgentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateHeartbeat(context.Background(), agent.AgentID, protocol.AgentHeartbeat{
+		CurrentRevision: config.Revision,
+		Services:        []protocol.ServiceStatus{{ID: config.Services[0].ID, Listening: true}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RefreshRelayPoolDNS(context.Background(), pool.ID); err != nil {
+		t.Fatal(err)
+	}
+	server, err := NewServer(store, ServerOptions{AdminToken: "admin", DispatchToken: "dispatch-only"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+	getJSON(t, httpServer.URL+"/api/v2/dispatch/pools/"+pool.ID, "admin", http.StatusNotFound, nil)
+	var snapshot DispatcherPoolSnapshot
+	getJSON(t, httpServer.URL+"/api/v2/dispatch/pools/"+pool.ID, "dispatch-only", http.StatusOK, &snapshot)
+	if snapshot.PoolID != pool.ID || snapshot.Revision == "" || snapshot.SelectionMode != "quota_weighted" || len(snapshot.Backends) != 1 || snapshot.Backends[0].Address != "203.0.113.77:18450" {
+		t.Fatalf("unexpected dispatcher snapshot: %+v", snapshot)
+	}
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte("secret")) || bytes.Contains(encoded, []byte("share_uri")) {
+		t.Fatalf("dispatcher snapshot leaked sensitive landing/account data: %s", encoded)
+	}
+	if _, err := store.db.Exec(`UPDATE accounts SET protection_triggered=1 WHERE id=?`, account.ID); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = store.DispatcherPoolSnapshot(context.Background(), pool.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Backends) != 0 {
+		t.Fatalf("draining account remained in dispatcher backends: %+v", snapshot.Backends)
+	}
+	if snapshot.Revision == "" {
+		t.Fatal("disabled/drained snapshot did not receive a revision")
+	}
+}
+
+func TestServerRejectsDispatchTokenReuse(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := NewServer(store, ServerOptions{AdminToken: "same", DispatchToken: "same"}); err == nil {
+		t.Fatal("expected dispatch token reuse to be rejected")
+	}
+}
+
+func TestDispatcherInstallerAndEmbeddedAssetAreServed(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	directory := t.TempDir()
+	installer := filepath.Join(directory, "install-agent.sh")
+	if err := os.WriteFile(installer, []byte("#!/bin/sh\necho agent\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "install-dispatcher.sh"), []byte("#!/bin/sh\necho dispatcher\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "cdt-dispatcher-linux-amd64"), []byte("binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "checksums.txt"), []byte("deadbeef  cdt-dispatcher-linux-amd64\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server, err := NewServer(store, ServerOptions{AdminToken: "admin", AgentInstallerPath: installer, AgentReleaseSource: "embedded"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/dispatcher/install.sh", nil))
+	if recorder.Code != http.StatusOK || !bytes.Contains(recorder.Body.Bytes(), []byte("dispatcher")) {
+		t.Fatalf("dispatcher installer was not served: %d %q", recorder.Code, recorder.Body.String())
+	}
+	recorder = httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/agent/cdt-dispatcher-linux-amd64", nil))
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "binary" {
+		t.Fatalf("dispatcher asset was not served: %d %q", recorder.Code, recorder.Body.String())
+	}
+	recorder = httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/dispatcher/checksums.txt", nil))
+	if recorder.Code != http.StatusOK || !bytes.Contains(recorder.Body.Bytes(), []byte("cdt-dispatcher-linux-amd64")) {
+		t.Fatalf("dispatcher checksum asset was not served: %d %q", recorder.Code, recorder.Body.String())
 	}
 }
 
