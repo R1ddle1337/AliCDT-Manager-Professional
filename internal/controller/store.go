@@ -89,24 +89,28 @@ type RelayEvent struct {
 }
 
 type CloudAccount struct {
-	ID                        int64      `json:"id"`
-	Name                      string     `json:"name"`
-	AccessKeyID               string     `json:"access_key_id"`
-	AccessKeySecret           string     `json:"-"`
-	RegionID                  string     `json:"region_id"`
-	SiteType                  string     `json:"site_type"`
-	ProtectedInstanceID       string     `json:"instance_id,omitempty"`
-	TrafficLimitGB            float64    `json:"traffic_limit_gb"`
-	ThresholdPercent          float64    `json:"threshold_percent"`
-	OutstandingThreshold      float64    `json:"outstanding_threshold"`
-	ShutdownMode              string     `json:"shutdown_mode"`
-	KeepAlive                 bool       `json:"keep_alive"`
-	AutoStartTime             string     `json:"auto_start_time,omitempty"`
-	AutoStopTime              string     `json:"auto_stop_time,omitempty"`
-	ManualStopped             bool       `json:"manual_stopped"`
-	NoStockNotified           bool       `json:"nostock_notified"`
-	ProtectionMode            string     `json:"protection_mode"`
-	ProtectionTriggered       bool       `json:"protection_triggered"`
+	ID                   int64   `json:"id"`
+	Name                 string  `json:"name"`
+	AccessKeyID          string  `json:"access_key_id"`
+	AccessKeySecret      string  `json:"-"`
+	RegionID             string  `json:"region_id"`
+	SiteType             string  `json:"site_type"`
+	ProtectedInstanceID  string  `json:"instance_id,omitempty"`
+	TrafficLimitGB       float64 `json:"traffic_limit_gb"`
+	ThresholdPercent     float64 `json:"threshold_percent"`
+	OutstandingThreshold float64 `json:"outstanding_threshold"`
+	ShutdownMode         string  `json:"shutdown_mode"`
+	KeepAlive            bool    `json:"keep_alive"`
+	AutoStartTime        string  `json:"auto_start_time,omitempty"`
+	AutoStopTime         string  `json:"auto_stop_time,omitempty"`
+	ManualStopped        bool    `json:"manual_stopped"`
+	NoStockNotified      bool    `json:"nostock_notified"`
+	ProtectionMode       string  `json:"protection_mode"`
+	ProtectionTriggered  bool    `json:"protection_triggered"`
+	// ProtectionPredictive is true when the account was drained ahead of the
+	// hard threshold because its observed rate would cross it during the
+	// controller/DNS reaction window.
+	ProtectionPredictive      bool       `json:"protection_predictive"`
 	ProtectionTriggeredAt     *time.Time `json:"protection_triggered_at,omitempty"`
 	ProtectionDrainPublished  bool       `json:"-"`
 	ProtectionActionCompleted bool       `json:"protection_action_completed"`
@@ -137,14 +141,17 @@ type CloudAccountRequest struct {
 }
 
 type TrafficProtectionDecision struct {
-	AccountID   int64
-	AccountName string
-	Mode        string
-	InstanceID  string
-	Percent     float64
-	Triggered   bool
-	Changed     bool
-	NeedsStop   bool
+	AccountID       int64
+	AccountName     string
+	Mode            string
+	InstanceID      string
+	Percent         float64
+	RateGBPerMinute float64
+	ProjectedGB     float64
+	Predictive      bool
+	Triggered       bool
+	Changed         bool
+	NeedsStop       bool
 }
 
 // CloudInstance contains ECS inventory and control state only. CDT traffic is
@@ -171,11 +178,13 @@ type CloudInstance struct {
 // CloudOverview.Instances so an account total is never presented as per-ECS
 // usage.
 type AccountTraffic struct {
-	AccountID int64      `json:"account_id"`
-	Scope     string     `json:"scope"`
-	UsedGB    float64    `json:"used_gb"`
-	SyncedAt  *time.Time `json:"synced_at,omitempty"`
-	LastError string     `json:"last_error,omitempty"`
+	AccountID          int64      `json:"account_id"`
+	Scope              string     `json:"scope"`
+	UsedGB             float64    `json:"used_gb"`
+	RateGBPerMinute    float64    `json:"rate_gb_per_minute,omitempty"`
+	MinutesToThreshold *float64   `json:"minutes_to_threshold,omitempty"`
+	SyncedAt           *time.Time `json:"synced_at,omitempty"`
+	LastError          string     `json:"last_error,omitempty"`
 }
 
 const TrafficScopeAccount = "account"
@@ -347,9 +356,13 @@ type RelayPoolMember struct {
 	TrafficUsedGB             float64    `json:"traffic_used_gb,omitempty"`
 	TrafficLimitGB            float64    `json:"traffic_limit_gb,omitempty"`
 	TrafficPercent            float64    `json:"traffic_percent,omitempty"`
+	TrafficRemainingGB        float64    `json:"traffic_remaining_gb,omitempty"`
+	TrafficRateGBPerMinute    float64    `json:"traffic_rate_gb_per_minute,omitempty"`
+	TrafficMinutesToThreshold *float64   `json:"traffic_minutes_to_threshold,omitempty"`
 	TrafficThresholdPercent   float64    `json:"traffic_threshold_percent,omitempty"`
 	ProtectionMode            string     `json:"protection_mode,omitempty"`
 	ProtectionTriggered       bool       `json:"protection_triggered"`
+	ProtectionPredictive      bool       `json:"protection_predictive"`
 	ProtectionActionCompleted bool       `json:"protection_action_completed"`
 	ProtectionTriggeredAt     *time.Time `json:"protection_triggered_at,omitempty"`
 }
@@ -482,6 +495,8 @@ func (s *Store) migrate(ctx context.Context) error {
 			account_id INTEGER PRIMARY KEY,
 			used_gb REAL NOT NULL DEFAULT 0,
 			synced_at TEXT,
+			previous_used_gb REAL,
+			previous_synced_at TEXT,
 			last_error TEXT NOT NULL DEFAULT '',
 			updated_at TEXT NOT NULL
 		)`,
@@ -681,6 +696,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		{name: "protection_action_completed", definition: "INTEGER NOT NULL DEFAULT 0"},
 		{name: "protection_last_error", definition: "TEXT NOT NULL DEFAULT ''"},
 		{name: "protection_drain_published", definition: "INTEGER NOT NULL DEFAULT 0"},
+		{name: "protection_predictive", definition: "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := s.ensureColumn(ctx, "accounts", column.name, column.definition); err != nil {
 			return err
@@ -695,6 +711,14 @@ func (s *Store) migrate(ctx context.Context) error {
 		{name: "desired_enabled", definition: "INTEGER NOT NULL DEFAULT 1"},
 	} {
 		if err := s.ensureColumn(ctx, "dns_managed_records", column.name, column.definition); err != nil {
+			return err
+		}
+	}
+	for _, column := range []struct{ name, definition string }{
+		{name: "previous_used_gb", definition: "REAL"},
+		{name: "previous_synced_at", definition: "TEXT"},
+	} {
+		if err := s.ensureColumn(ctx, "account_traffic_snapshots", column.name, column.definition); err != nil {
 			return err
 		}
 	}
@@ -753,6 +777,48 @@ func (s *Store) ensureColumn(ctx context.Context, table, column, definition stri
 	}
 	_, err = s.db.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN `+column+` `+definition)
 	return err
+}
+
+// trafficRate calculates a conservative short-term consumption rate from the
+// two most recent successful account-level CDT snapshots. A counter decrease
+// is treated as a billing-period reset rather than negative usage.
+func trafficRate(currentGB float64, currentAt time.Time, previousGB sql.NullFloat64, previousAt sql.NullString) (rateGBPerMinute float64, reset bool) {
+	if !previousGB.Valid || !previousAt.Valid || previousAt.String == "" {
+		return 0, false
+	}
+	previousTime := parseDatabaseTime(previousAt.String)
+	if previousTime.IsZero() || currentAt.IsZero() {
+		return 0, false
+	}
+	if currentGB+0.000001 < previousGB.Float64 {
+		return 0, true
+	}
+	minutes := currentAt.Sub(previousTime).Minutes()
+	// Ignore duplicate/clock-skewed samples. The cloud scheduler normally
+	// samples every couple of minutes, so a shorter interval is not useful for
+	// a stable forecast and can amplify manual-sync noise.
+	if minutes < 0.5 {
+		return 0, false
+	}
+	delta := currentGB - previousGB.Float64
+	if delta <= 0 {
+		return 0, false
+	}
+	return delta / minutes, false
+}
+
+func (s *Store) trafficRateTx(ctx context.Context, tx *sql.Tx, accountID int64, currentGB float64, now time.Time) (float64, bool, error) {
+	var previousGB sql.NullFloat64
+	var previousAt sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT previous_used_gb,previous_synced_at FROM account_traffic_snapshots WHERE account_id=?`, accountID).Scan(&previousGB, &previousAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	rate, reset := trafficRate(currentGB, now, previousGB, previousAt)
+	return rate, reset, nil
 }
 
 func (s *Store) IsAdminInitialized(ctx context.Context) (bool, error) {
@@ -1030,7 +1096,7 @@ func (s *Store) AgentConfig(ctx context.Context, id string) (protocol.AgentConfi
 	var revision int64
 	var protectionSuspended int
 	if err := s.db.QueryRowContext(ctx, `SELECT rn.desired_revision,
-		CASE WHEN COALESCE(a.protection_triggered,0)=1 AND (
+		CASE WHEN (COALESCE(a.protection_triggered,0)=1 OR COALESCE(a.protection_predictive,0)=1) AND (
 			COALESCE(a.protection_mode,'alert_only')='drain_relay' OR EXISTS(
 				SELECT 1 FROM relay_services ars JOIN relay_pools arp ON arp.id=ars.pool_id
 				WHERE ars.relay_node_id=rn.id AND ars.enabled=1 AND COALESCE(arp.enabled,1)=1 AND COALESCE(arp.auto_drain,1)=1
@@ -1525,7 +1591,7 @@ func (s *Store) ListCloudAccounts(ctx context.Context, enabledOnly bool) ([]Clou
 	query := `SELECT a.id,a.name,a.access_key_id,a.access_key_secret,a.region_id,COALESCE(a.site_type,'international'),COALESCE(a.instance_id,''),
 		COALESCE(traffic_limit_gb,200),COALESCE(threshold_percent,95),COALESCE(outstanding_threshold,0),COALESCE(shutdown_mode,'StopCharging'),
 		COALESCE(keep_alive,0),COALESCE(auto_start_time,''),COALESCE(auto_stop_time,''),COALESCE(manual_stopped,0),COALESCE(nostock_notified,0),
-		COALESCE(protection_mode,'alert_only'),COALESCE(protection_triggered,0),protection_triggered_at,
+		COALESCE(protection_mode,'alert_only'),COALESCE(protection_triggered,0),COALESCE(protection_predictive,0),protection_triggered_at,
 		COALESCE(protection_action_completed,0),COALESCE(a.protection_last_error,''),COALESCE(a.protection_drain_published,0),COALESCE(a.enabled,1),a.created_at,
 		(SELECT COUNT(*) FROM relay_nodes rn LEFT JOIN instances ri ON ri.instance_id=rn.ecs_instance_id
 		 WHERE rn.cloud_account_id=a.id OR (rn.cloud_account_id IS NULL AND ri.account_id=a.id)),
@@ -1545,13 +1611,13 @@ func (s *Store) ListCloudAccounts(ctx context.Context, enabledOnly bool) ([]Clou
 	accounts := make([]CloudAccount, 0)
 	for rows.Next() {
 		var account CloudAccount
-		var enabled, keepAlive, manualStopped, noStockNotified, triggered, actionCompleted, drainPublished int
+		var enabled, keepAlive, manualStopped, noStockNotified, triggered, predictive, actionCompleted, drainPublished int
 		var agentCount, onlineAgentCount int
 		var triggeredAt, createdAt sql.NullString
 		if err := rows.Scan(&account.ID, &account.Name, &account.AccessKeyID, &account.AccessKeySecret, &account.RegionID, &account.SiteType,
 			&account.ProtectedInstanceID, &account.TrafficLimitGB, &account.ThresholdPercent, &account.OutstandingThreshold, &account.ShutdownMode,
 			&keepAlive, &account.AutoStartTime, &account.AutoStopTime, &manualStopped, &noStockNotified,
-			&account.ProtectionMode, &triggered, &triggeredAt, &actionCompleted, &account.ProtectionLastError, &drainPublished, &enabled, &createdAt, &agentCount, &onlineAgentCount); err != nil {
+			&account.ProtectionMode, &triggered, &predictive, &triggeredAt, &actionCompleted, &account.ProtectionLastError, &drainPublished, &enabled, &createdAt, &agentCount, &onlineAgentCount); err != nil {
 			return nil, err
 		}
 		account.Enabled = enabled != 0
@@ -1559,6 +1625,7 @@ func (s *Store) ListCloudAccounts(ctx context.Context, enabledOnly bool) ([]Clou
 		account.ManualStopped = manualStopped != 0
 		account.NoStockNotified = noStockNotified != 0
 		account.ProtectionTriggered = triggered != 0
+		account.ProtectionPredictive = predictive != 0
 		account.ProtectionActionCompleted = actionCompleted != 0
 		account.ProtectionDrainPublished = drainPublished != 0
 		account.AgentCount = agentCount
@@ -1612,8 +1679,8 @@ func (s *Store) UpdateCloudAccount(ctx context.Context, id int64, request CloudA
 	}
 	defer tx.Rollback()
 	var oldMode, oldInstanceID string
-	var triggered int
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(protection_mode,'alert_only'),COALESCE(instance_id,''),COALESCE(protection_triggered,0) FROM accounts WHERE id=?`, id).Scan(&oldMode, &oldInstanceID, &triggered); err != nil {
+	var triggered, predictive int
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(protection_mode,'alert_only'),COALESCE(instance_id,''),COALESCE(protection_triggered,0),COALESCE(protection_predictive,0) FROM accounts WHERE id=?`, id).Scan(&oldMode, &oldInstanceID, &triggered, &predictive); err != nil {
 		return CloudAccount{}, err
 	}
 	if request.AccessKeySecret == "" {
@@ -1632,7 +1699,7 @@ func (s *Store) UpdateCloudAccount(ctx context.Context, id int64, request CloudA
 	if err != nil {
 		return CloudAccount{}, err
 	}
-	if triggered != 0 && oldMode != request.ProtectionMode && (oldMode == ProtectionDrainRelay || request.ProtectionMode == ProtectionDrainRelay) {
+	if (triggered != 0 || predictive != 0) && oldMode != request.ProtectionMode && (oldMode == ProtectionDrainRelay || request.ProtectionMode == ProtectionDrainRelay) {
 		if err := bumpAccountRelayRevisions(ctx, tx, id); err != nil {
 			return CloudAccount{}, err
 		}
@@ -1641,7 +1708,7 @@ func (s *Store) UpdateCloudAccount(ctx context.Context, id int64, request CloudA
 			return CloudAccount{}, err
 		}
 	}
-	if triggered != 0 && !enabled && (oldMode == ProtectionDrainRelay || autoDrain) {
+	if (triggered != 0 || predictive != 0) && !enabled && (oldMode == ProtectionDrainRelay || autoDrain) {
 		if err := bumpAccountRelayRevisions(ctx, tx, id); err != nil {
 			return CloudAccount{}, err
 		}
@@ -1656,8 +1723,16 @@ func (s *Store) UpdateCloudAccount(ctx context.Context, id int64, request CloudA
 			return CloudAccount{}, err
 		}
 	}
-	if triggered != 0 && !enabled {
-		if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_triggered=0,protection_triggered_at=NULL,protection_action_completed=0,protection_drain_published=0,protection_last_error='' WHERE id=?`, id); err != nil {
+	if (triggered != 0 || predictive != 0) && !enabled {
+		if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_triggered=0,protection_predictive=0,protection_triggered_at=NULL,protection_action_completed=0,protection_drain_published=0,protection_last_error='' WHERE id=?`, id); err != nil {
+			return CloudAccount{}, err
+		}
+	} else if predictive != 0 && request.ProtectionMode != ProtectionDrainRelay && !autoDrain {
+		// A forecast is only an admission guard for a drain-capable route. If
+		// the operator switches to alert-only and no pool requests automatic
+		// draining, keep the measured protection state but drop the predictive
+		// label so the relay can resume normally.
+		if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_predictive=0 WHERE id=?`, id); err != nil {
 			return CloudAccount{}, err
 		}
 	}
@@ -1746,7 +1821,7 @@ func (s *Store) CloudOverview(ctx context.Context) (CloudOverview, error) {
 	if err := rows.Close(); err != nil {
 		return CloudOverview{}, err
 	}
-	trafficRows, err := s.db.QueryContext(ctx, `SELECT account_id,used_gb,synced_at,last_error FROM account_traffic_snapshots ORDER BY account_id`)
+	trafficRows, err := s.db.QueryContext(ctx, `SELECT account_id,used_gb,synced_at,previous_used_gb,previous_synced_at,last_error FROM account_traffic_snapshots ORDER BY account_id`)
 	if err != nil {
 		return CloudOverview{}, err
 	}
@@ -1754,14 +1829,30 @@ func (s *Store) CloudOverview(ctx context.Context) (CloudOverview, error) {
 	traffic := make([]AccountTraffic, 0)
 	for trafficRows.Next() {
 		var snapshot AccountTraffic
-		var synced sql.NullString
-		if err := trafficRows.Scan(&snapshot.AccountID, &snapshot.UsedGB, &synced, &snapshot.LastError); err != nil {
+		var synced, previousSynced sql.NullString
+		var previousUsed sql.NullFloat64
+		if err := trafficRows.Scan(&snapshot.AccountID, &snapshot.UsedGB, &synced, &previousUsed, &previousSynced, &snapshot.LastError); err != nil {
 			return CloudOverview{}, err
 		}
 		snapshot.Scope = TrafficScopeAccount
 		if synced.Valid {
 			parsed := parseDatabaseTime(synced.String)
 			snapshot.SyncedAt = &parsed
+			if !parsed.IsZero() {
+				rate, _ := trafficRate(snapshot.UsedGB, parsed, previousUsed, previousSynced)
+				snapshot.RateGBPerMinute = rate
+				for _, account := range accounts {
+					if account.ID != snapshot.AccountID || rate <= 0 || account.TrafficLimitGB <= 0 {
+						continue
+					}
+					thresholdGB := account.TrafficLimitGB * account.ThresholdPercent / 100
+					if thresholdGB > snapshot.UsedGB {
+						minutes := (thresholdGB - snapshot.UsedGB) / rate
+						snapshot.MinutesToThreshold = &minutes
+					}
+					break
+				}
+			}
 		}
 		traffic = append(traffic, snapshot)
 	}
@@ -1809,9 +1900,16 @@ func (s *Store) SaveCloudSync(ctx context.Context, account CloudAccount, instanc
 		}
 	}
 	if trafficValid {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO account_traffic_snapshots(account_id,used_gb,synced_at,last_error,updated_at) VALUES(?,?,?,?,?)
-			ON CONFLICT(account_id) DO UPDATE SET used_gb=excluded.used_gb,synced_at=excluded.synced_at,last_error='',updated_at=excluded.updated_at`,
-			account.ID, trafficGB, now.Format(time.RFC3339Nano), "", now.Format(time.RFC3339Nano)); err != nil {
+		nowText := now.Format(time.RFC3339Nano)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO account_traffic_snapshots(account_id,used_gb,synced_at,previous_used_gb,previous_synced_at,last_error,updated_at) VALUES(?,?,?,?,?,?,?)
+			ON CONFLICT(account_id) DO UPDATE SET
+				previous_used_gb=account_traffic_snapshots.used_gb,
+				previous_synced_at=account_traffic_snapshots.synced_at,
+				used_gb=excluded.used_gb,
+				synced_at=excluded.synced_at,
+				last_error='',
+				updated_at=excluded.updated_at`,
+			account.ID, trafficGB, nowText, nil, nil, "", nowText); err != nil {
 			return err
 		}
 	} else if trafficError != "" {
@@ -1826,6 +1924,17 @@ func (s *Store) SaveCloudSync(ctx context.Context, account CloudAccount, instanc
 }
 
 func (s *Store) ApplyTrafficProtection(ctx context.Context, accountID int64, trafficGB float64) (TrafficProtectionDecision, error) {
+	return s.ApplyTrafficProtectionWithWindow(ctx, accountID, trafficGB, 0)
+}
+
+// ApplyTrafficProtectionWithWindow evaluates both the configured hard
+// threshold and an optional short-term forecast. When a pool with automatic
+// draining (or an account using drain_relay) is projected to hit the hard
+// threshold during the control-plane reaction window, the account is marked
+// protected early. The predictive marker keeps that drain sticky until a
+// billing-period reset, so a brief rate fluctuation cannot reopen a nearly
+// exhausted account.
+func (s *Store) ApplyTrafficProtectionWithWindow(ctx context.Context, accountID int64, trafficGB float64, safetyWindow time.Duration) (TrafficProtectionDecision, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return TrafficProtectionDecision{}, err
@@ -1833,12 +1942,12 @@ func (s *Store) ApplyTrafficProtection(ctx context.Context, accountID int64, tra
 	defer tx.Rollback()
 	var decision TrafficProtectionDecision
 	var trafficLimit, threshold float64
-	var triggered, actionCompleted, drainPublished int
+	var triggered, predictive, actionCompleted, drainPublished int
 	if err := tx.QueryRowContext(ctx, `SELECT id,name,COALESCE(instance_id,''),COALESCE(traffic_limit_gb,200),COALESCE(threshold_percent,95),
-		COALESCE(protection_mode,'alert_only'),COALESCE(protection_triggered,0),COALESCE(protection_action_completed,0),COALESCE(protection_drain_published,0)
+		COALESCE(protection_mode,'alert_only'),COALESCE(protection_triggered,0),COALESCE(protection_predictive,0),COALESCE(protection_action_completed,0),COALESCE(protection_drain_published,0)
 		FROM accounts WHERE id=?`, accountID).Scan(
 		&decision.AccountID, &decision.AccountName, &decision.InstanceID, &trafficLimit, &threshold,
-		&decision.Mode, &triggered, &actionCompleted, &drainPublished,
+		&decision.Mode, &triggered, &predictive, &actionCompleted, &drainPublished,
 	); err != nil {
 		return TrafficProtectionDecision{}, err
 	}
@@ -1849,61 +1958,96 @@ func (s *Store) ApplyTrafficProtection(ctx context.Context, accountID int64, tra
 		threshold = 95
 	}
 	decision.Percent = trafficGB / trafficLimit * 100
-	exceeded := decision.Percent >= threshold
 	autoDrain, err := accountHasAutoDrainPoolTx(ctx, tx, accountID)
 	if err != nil {
 		return TrafficProtectionDecision{}, err
 	}
 	now := time.Now().UTC()
-	if exceeded {
-		decision.Triggered = true
-		if triggered == 0 {
-			decision.Changed = true
-			if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_triggered=1,protection_triggered_at=?,protection_action_completed=0,protection_drain_published=0,protection_last_error='' WHERE id=?`, now.Format(time.RFC3339Nano), accountID); err != nil {
-				return TrafficProtectionDecision{}, err
+	if safetyWindow < 0 {
+		safetyWindow = 0
+	}
+	if rate, reset, rateErr := s.trafficRateTx(ctx, tx, accountID, trafficGB, now); rateErr != nil {
+		return TrafficProtectionDecision{}, rateErr
+	} else {
+		decision.RateGBPerMinute = rate
+		decision.ProjectedGB = trafficGB
+		if rate > 0 && safetyWindow > 0 {
+			decision.ProjectedGB += rate * safetyWindow.Minutes()
+		}
+		thresholdGB := trafficLimit * threshold / 100
+		hardExceeded := decision.Percent >= threshold
+		canPredict := decision.Mode == ProtectionDrainRelay || autoDrain
+		predictiveTrigger := !hardExceeded && canPredict && rate > 0 && decision.ProjectedGB+0.000001 >= thresholdGB
+		// A previously predictive drain remains active until the cumulative
+		// counter decreases (normally the next billing period).
+		stickyPredictive := triggered != 0 && predictive != 0 && !reset && !hardExceeded
+		exceeded := hardExceeded || predictiveTrigger || stickyPredictive
+		decision.Predictive = predictiveTrigger || stickyPredictive || (predictive != 0 && !hardExceeded && !reset)
+		if exceeded {
+			decision.Triggered = true
+			if triggered == 0 {
+				decision.Changed = true
+				if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_triggered=1,protection_predictive=?,protection_triggered_at=?,protection_action_completed=0,protection_drain_published=0,protection_last_error='' WHERE id=?`, boolInt(predictiveTrigger), now.Format(time.RFC3339Nano), accountID); err != nil {
+					return TrafficProtectionDecision{}, err
+				}
+				if decision.Mode == ProtectionDrainRelay || autoDrain {
+					if err := bumpAccountRelayRevisions(ctx, tx, accountID); err != nil {
+						return TrafficProtectionDecision{}, err
+					}
+					if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_drain_published=1 WHERE id=?`, accountID); err != nil {
+						return TrafficProtectionDecision{}, err
+					}
+					drainPublished = 1
+				}
+				message := fmt.Sprintf("[%s] CDT 流量达到保护阈值：%.2f%%", decision.AccountName, decision.Percent)
+				if predictiveTrigger {
+					message = fmt.Sprintf("[%s] CDT 流量预计在控制窗口内达到保护阈值：%.2f%%（当前速率 %.3f GB/分钟）", decision.AccountName, decision.Percent, decision.RateGBPerMinute)
+				}
+				if err := insertEvent(ctx, tx, "", "warning", "traffic_protection", message, now); err != nil {
+					return TrafficProtectionDecision{}, err
+				}
+				actionCompleted = 0
 			}
-			if decision.Mode == ProtectionDrainRelay || autoDrain {
+			// Existing installations may have a triggered account from before the
+			// drain-revision marker was introduced. Publish one catch-up revision,
+			// but never increment on every periodic sync.
+			if triggered != 0 && (decision.Mode == ProtectionDrainRelay || autoDrain) && drainPublished == 0 {
 				if err := bumpAccountRelayRevisions(ctx, tx, accountID); err != nil {
 					return TrafficProtectionDecision{}, err
 				}
 				if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_drain_published=1 WHERE id=?`, accountID); err != nil {
 					return TrafficProtectionDecision{}, err
 				}
-				drainPublished = 1
 			}
-			message := fmt.Sprintf("[%s] CDT 流量达到保护阈值：%.2f%%", decision.AccountName, decision.Percent)
-			if err := insertEvent(ctx, tx, "", "warning", "traffic_protection", message, now); err != nil {
-				return TrafficProtectionDecision{}, err
-			}
-			actionCompleted = 0
-		}
-		// Existing installations may have a triggered account from before the
-		// drain-revision marker was introduced. Publish one catch-up revision,
-		// but never increment on every periodic sync.
-		if triggered != 0 && (decision.Mode == ProtectionDrainRelay || autoDrain) && drainPublished == 0 {
-			if err := bumpAccountRelayRevisions(ctx, tx, accountID); err != nil {
-				return TrafficProtectionDecision{}, err
-			}
-			if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_drain_published=1 WHERE id=?`, accountID); err != nil {
-				return TrafficProtectionDecision{}, err
-			}
-		}
-		decision.NeedsStop = decision.Mode == ProtectionStopECS && decision.InstanceID != "" && actionCompleted == 0
-	} else {
-		decision.Triggered = false
-		if triggered != 0 {
-			decision.Changed = true
-			if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_triggered=0,protection_triggered_at=NULL,protection_action_completed=0,protection_drain_published=0,protection_last_error='' WHERE id=?`, accountID); err != nil {
-				return TrafficProtectionDecision{}, err
-			}
-			if decision.Mode == ProtectionDrainRelay || autoDrain {
-				if err := bumpAccountRelayRevisions(ctx, tx, accountID); err != nil {
+			if predictive != 0 && hardExceeded {
+				// The forecast has become a measured threshold crossing; retain the
+				// protection state but clear the predictive label.
+				if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_predictive=0 WHERE id=?`, accountID); err != nil {
 					return TrafficProtectionDecision{}, err
 				}
+				decision.Predictive = false
 			}
-			message := fmt.Sprintf("[%s] CDT 流量已低于保护阈值：%.2f%%，保护状态已恢复", decision.AccountName, decision.Percent)
-			if err := insertEvent(ctx, tx, "", "info", "traffic_protection", message, now); err != nil {
-				return TrafficProtectionDecision{}, err
+			// A predictive stop only drains Relay listeners. Do not issue an ECS
+			// stop command until the measured counter actually reaches the hard
+			// threshold.
+			decision.NeedsStop = hardExceeded && decision.Mode == ProtectionStopECS && decision.InstanceID != "" && actionCompleted == 0
+		} else {
+			decision.Triggered = false
+			decision.Predictive = false
+			if triggered != 0 || predictive != 0 {
+				decision.Changed = true
+				if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_triggered=0,protection_predictive=0,protection_triggered_at=NULL,protection_action_completed=0,protection_drain_published=0,protection_last_error='' WHERE id=?`, accountID); err != nil {
+					return TrafficProtectionDecision{}, err
+				}
+				if decision.Mode == ProtectionDrainRelay || autoDrain {
+					if err := bumpAccountRelayRevisions(ctx, tx, accountID); err != nil {
+						return TrafficProtectionDecision{}, err
+					}
+				}
+				message := fmt.Sprintf("[%s] CDT 流量已低于保护阈值：%.2f%%，保护状态已恢复", decision.AccountName, decision.Percent)
+				if err := insertEvent(ctx, tx, "", "info", "traffic_protection", message, now); err != nil {
+					return TrafficProtectionDecision{}, err
+				}
 			}
 		}
 	}

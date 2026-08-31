@@ -21,16 +21,18 @@ import (
 )
 
 type ServerOptions struct {
-	AdminToken           string
-	FrontendDir          string
-	AgentInstallerPath   string
-	AgentVersion         string
-	AgentReleaseSource   string
-	AgentReleaseRepo     string
-	AgentReleaseChannel  string
-	AgentReleaseCacheDir string
-	UpdateRequestFile    string
-	UpdateStatusFile     string
+	AdminToken             string
+	FrontendDir            string
+	AgentInstallerPath     string
+	AgentVersion           string
+	AgentReleaseSource     string
+	AgentReleaseRepo       string
+	AgentReleaseChannel    string
+	AgentReleaseCacheDir   string
+	UpdateRequestFile      string
+	UpdateStatusFile       string
+	TrafficSafetyWindow    time.Duration
+	TrafficSafetyWindowSet bool
 }
 
 type Server struct {
@@ -81,7 +83,15 @@ func NewServer(store *Store, opts ServerOptions) (*Server, error) {
 	if releaseCacheDir == "" {
 		releaseCacheDir = "/app/data/agent-releases"
 	}
-	server := &Server{store: store, adminToken: opts.AdminToken, frontendDir: opts.FrontendDir, agentInstallerPath: opts.AgentInstallerPath, updateRequestFile: opts.UpdateRequestFile, updateStatusFile: opts.UpdateStatusFile, agentVersion: agentVersion, agentReleaseSource: releaseSource, agentReleaseRepo: releaseRepo, agentReleaseChannel: releaseChannel, agentReleaseCacheDir: releaseCacheDir, cloud: NewCloudService(store)}
+	cloud := NewCloudService(store)
+	if opts.TrafficSafetyWindowSet {
+		// A zero value is meaningful when explicitly supplied, allowing
+		// operators to disable forecasting without changing the default.
+		cloud.SetTrafficSafetyWindow(opts.TrafficSafetyWindow)
+	} else if opts.TrafficSafetyWindow > 0 {
+		cloud.SetTrafficSafetyWindow(opts.TrafficSafetyWindow)
+	}
+	server := &Server{store: store, adminToken: opts.AdminToken, frontendDir: opts.FrontendDir, agentInstallerPath: opts.AgentInstallerPath, updateRequestFile: opts.UpdateRequestFile, updateStatusFile: opts.UpdateStatusFile, agentVersion: agentVersion, agentReleaseSource: releaseSource, agentReleaseRepo: releaseRepo, agentReleaseChannel: releaseChannel, agentReleaseCacheDir: releaseCacheDir, cloud: cloud}
 	if cachedVersion, err := os.ReadFile(filepath.Join(releaseCacheDir, "version")); err == nil {
 		server.agentReleaseVersion = strings.TrimSpace(string(cachedVersion))
 	}

@@ -11,10 +11,11 @@ import (
 )
 
 type CloudService struct {
-	store        *Store
-	syncMu       sync.Mutex
-	automationMu sync.Mutex
-	clientFor    func(CloudAccount) cloudClient
+	store               *Store
+	syncMu              sync.Mutex
+	automationMu        sync.Mutex
+	clientFor           func(CloudAccount) cloudClient
+	trafficSafetyWindow time.Duration
 }
 
 type cloudClient interface {
@@ -25,25 +26,38 @@ type cloudClient interface {
 }
 
 type CloudSyncResult struct {
-	AccountID           int64   `json:"account_id"`
-	AccountName         string  `json:"account_name"`
-	InstancesOK         bool    `json:"instances_ok"`
-	TrafficOK           bool    `json:"traffic_ok"`
-	InstanceCount       int     `json:"instance_count"`
-	TrafficGB           float64 `json:"traffic_gb,omitempty"`
-	ProtectionMode      string  `json:"protection_mode,omitempty"`
-	ProtectionTriggered bool    `json:"protection_triggered,omitempty"`
-	ProtectionAction    string  `json:"protection_action,omitempty"`
-	Error               string  `json:"error,omitempty"`
+	AccountID              int64   `json:"account_id"`
+	AccountName            string  `json:"account_name"`
+	InstancesOK            bool    `json:"instances_ok"`
+	TrafficOK              bool    `json:"traffic_ok"`
+	InstanceCount          int     `json:"instance_count"`
+	TrafficGB              float64 `json:"traffic_gb,omitempty"`
+	TrafficRateGBPerMinute float64 `json:"traffic_rate_gb_per_minute,omitempty"`
+	TrafficProjectedGB     float64 `json:"traffic_projected_gb,omitempty"`
+	ProtectionMode         string  `json:"protection_mode,omitempty"`
+	ProtectionTriggered    bool    `json:"protection_triggered,omitempty"`
+	ProtectionPredictive   bool    `json:"protection_predictive,omitempty"`
+	ProtectionAction       string  `json:"protection_action,omitempty"`
+	Error                  string  `json:"error,omitempty"`
 }
+
+const defaultTrafficSafetyWindow = 4 * time.Minute
 
 func NewCloudService(store *Store) *CloudService {
 	return &CloudService{
-		store: store,
+		store:               store,
+		trafficSafetyWindow: defaultTrafficSafetyWindow,
 		clientFor: func(account CloudAccount) cloudClient {
 			return aliyun.NewClient(account.AccessKeyID, account.AccessKeySecret, account.RegionID, account.SiteType)
 		},
 	}
+}
+
+func (s *CloudService) SetTrafficSafetyWindow(window time.Duration) {
+	if window < 0 {
+		window = 0
+	}
+	s.trafficSafetyWindow = window
 }
 
 func (s *CloudService) SyncAll(ctx context.Context) ([]CloudSyncResult, error) {
@@ -108,7 +122,7 @@ func (s *CloudService) syncAccount(ctx context.Context, account CloudAccount) Cl
 	var protectionErr error
 	protectionAction := ""
 	if trafficErr == nil {
-		protection, protectionErr = s.store.ApplyTrafficProtection(ctx, account.ID, traffic)
+		protection, protectionErr = s.store.ApplyTrafficProtectionWithWindow(ctx, account.ID, traffic, s.trafficSafetyWindow)
 		if protectionErr == nil && protection.NeedsStop {
 			authorized, authorizeErr := s.store.ConfirmTrafficProtectionStop(ctx, account.ID, protection.InstanceID)
 			switch {
@@ -144,6 +158,9 @@ func (s *CloudService) syncAccount(ctx context.Context, account CloudAccount) Cl
 			}
 		} else if protectionErr == nil && protection.Changed {
 			protectionAction = protection.Mode
+			if protection.Predictive {
+				protectionAction += "_predictive"
+			}
 		}
 	}
 	// Keep the controller-side DNS desired state in lockstep with a single
@@ -158,7 +175,8 @@ func (s *CloudService) syncAccount(ctx context.Context, account CloudAccount) Cl
 		AccountID: account.ID, AccountName: account.Name,
 		InstancesOK: instanceErr == nil, TrafficOK: trafficErr == nil,
 		InstanceCount: len(instances), TrafficGB: traffic,
-		ProtectionMode: protection.Mode, ProtectionTriggered: protection.Triggered, ProtectionAction: protectionAction,
+		TrafficRateGBPerMinute: protection.RateGBPerMinute, TrafficProjectedGB: protection.ProjectedGB,
+		ProtectionMode: protection.Mode, ProtectionTriggered: protection.Triggered, ProtectionPredictive: protection.Predictive, ProtectionAction: protectionAction,
 	}
 	if instanceErr != nil || trafficErr != nil || protectionErr != nil {
 		result.Error = stringsJoinErrors(instanceError, trafficError, errorString(protectionErr))

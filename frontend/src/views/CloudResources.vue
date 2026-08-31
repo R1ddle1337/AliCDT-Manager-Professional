@@ -44,7 +44,7 @@
             <p>{{ maskAccessKey(account.access_key_id) }} · {{ account.region_id }}</p>
           </div>
           <div class="account-badges">
-            <span v-if="account.protection_triggered" class="protection-tag protection-tag-active">保护已触发</span>
+            <span v-if="account.protection_triggered" class="protection-tag protection-tag-active">{{ account.protection_predictive ? '预测排空' : '保护已触发' }}</span>
             <span class="site-tag" :class="account.agent_installed ? 'agent-tag-installed' : 'agent-tag-missing'">
               {{ account.agent_installed ? `Agent 已安装 · ${account.online_agent_count || 0}/${account.agent_count || 0} 在线` : 'Agent 未安装' }}
             </span>
@@ -73,7 +73,7 @@
           ></div>
         </div>
         <div class="traffic-meta">
-          <span>{{ trafficFor(account.id) ? trafficPercent(account).toFixed(1) + '% · 账号维度' : '尚无有效快照' }}</span>
+          <span>{{ trafficSummary(account) }}</span>
           <span>{{ instancesFor(account.id).length }} 个实例共享该账户额度</span>
         </div>
 
@@ -219,6 +219,15 @@ function trafficPercent(account) {
   return traffic && account.traffic_limit_gb ? traffic.used_gb / account.traffic_limit_gb * 100 : 0
 }
 
+function trafficSummary(account) {
+  const traffic = trafficFor(account.id)
+  if (!traffic) return '尚无有效快照'
+  const parts = [trafficPercent(account).toFixed(1) + '%', '账号维度']
+  if (traffic.rate_gb_per_minute > 0) parts.push(traffic.rate_gb_per_minute.toFixed(3) + ' GB/分钟')
+  if (traffic.minutes_to_threshold > 0) parts.push('预计 ' + Math.ceil(traffic.minutes_to_threshold) + ' 分钟到阈值')
+  return parts.join(' · ')
+}
+
 function maskAccessKey(value) {
   if (!value || value.length < 8) return value || '未设置 AccessKey'
   return value.slice(0, 4) + '••••' + value.slice(-4)
@@ -229,6 +238,7 @@ function protectionModeLabel(mode) {
 }
 
 function protectionStatusText(account) {
+  if (account.protection_predictive) return '根据最近流量增速，预计将在控制与 DNS 生效窗口内达到阈值，已提前撤下入口并停止新连接。'
   if (account.protection_mode === 'drain_relay') return 'Agent 已停止接受新连接，已有 TCP 连接不被强制中断。'
   if (account.protection_mode === 'stop_ecs') {
     return account.protection_action_completed ? '目标 ECS 停机指令已发送。' : '正在等待发送或重试 ECS 停机指令。'

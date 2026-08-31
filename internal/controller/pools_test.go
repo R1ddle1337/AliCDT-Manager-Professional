@@ -305,6 +305,61 @@ func TestPoolAutoDrainProtectsAlertOnlyAccount(t *testing.T) {
 	}
 }
 
+func TestPoolAutoDrainUsesPredictiveTrafficGuard(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	account, err := store.CreateCloudAccount(context.Background(), CloudAccountRequest{
+		Name: "predictive-pool-account", AccessKeyID: "key", AccessKeySecret: "secret", RegionID: "cn-hongkong", SiteType: "china",
+		TrafficLimitGB: 200, ThresholdPercent: 90, ProtectionMode: ProtectionAlertOnly,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateEnrollmentToken(context.Background(), "predictive-pool-token", time.Hour, account.ID); err != nil {
+		t.Fatal(err)
+	}
+	agent, err := store.EnrollAgent(context.Background(), protocol.AgentEnrollmentRequest{Token: "predictive-pool-token", NodeName: "relay", PublicIP: "203.0.113.42"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	landing, err := store.CreateLandingNode(context.Background(), CreateLandingNodeRequest{Name: "landing", Address: "127.0.0.1", Port: 9443, Network: "tcp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := store.CreateRelayPool(context.Background(), CreateRelayPoolRequest{
+		Name: "predictive", Hostname: "relay.example.com", ListenPort: 18449, Network: "tcp", Mode: "failover",
+		Members: []CreateRelayPoolMember{{RelayNodeID: agent.AgentID}}, Targets: []CreateServiceTarget{{LandingNodeID: landing.ID}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveCloudSync(context.Background(), account, nil, false, "", 10, true, ""); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if _, err := store.db.Exec(`UPDATE account_traffic_snapshots SET used_gb=?,synced_at=?,previous_used_gb=?,previous_synced_at=? WHERE account_id=?`,
+		160, now.Add(-2*time.Minute).Format(time.RFC3339Nano), 140, now.Add(-4*time.Minute).Format(time.RFC3339Nano), account.ID); err != nil {
+		t.Fatal(err)
+	}
+	decision, err := store.ApplyTrafficProtectionWithWindow(context.Background(), account.ID, 170, 2*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.Triggered || !decision.Predictive || decision.Percent >= 90 {
+		t.Fatalf("pool did not enter predictive protection: %+v", decision)
+	}
+	memberPool, err := store.GetRelayPool(context.Background(), pool.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(memberPool.Members) != 1 || memberPool.Members[0].Status != "draining" || !memberPool.Members[0].ProtectionPredictive {
+		t.Fatalf("predictive pool member was not withdrawn: %+v", memberPool.Members)
+	}
+}
+
 func TestPoolAutoDrainCanBeDisabled(t *testing.T) {
 	store, err := OpenStore(":memory:")
 	if err != nil {

@@ -430,10 +430,11 @@ func (s *Store) GetRelayPool(ctx context.Context, id string) (RelayPool, error) 
 
 func (s *Store) listRelayPoolMembers(ctx context.Context, poolID string) ([]RelayPoolMember, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT rpm.id,rpm.pool_id,rpm.relay_node_id,rn.name,COALESCE(rn.public_ip,''),rn.status,
-		CASE WHEN (COALESCE(a.protection_triggered,0)=1 AND (COALESCE(a.protection_mode,'alert_only')='drain_relay' OR COALESCE(rp.auto_drain,1)=1)) OR COALESCE(rn.update_status,'idle') IN ('draining','updating') THEN 1 ELSE 0 END,
+		CASE WHEN ((COALESCE(a.protection_triggered,0)=1 OR COALESCE(a.protection_predictive,0)=1) AND (COALESCE(a.protection_mode,'alert_only')='drain_relay' OR COALESCE(rp.auto_drain,1)=1)) OR COALESCE(rn.update_status,'idle') IN ('draining','updating') THEN 1 ELSE 0 END,
 		COALESCE(rn.last_seen_at,''),rn.current_revision,rn.desired_revision,COALESCE(rn.service_status_json,'[]'),rpm.weight,rpm.enabled,COALESCE(rpm.service_id,''),
 		 rn.cloud_account_id,COALESCE(a.name,''),COALESCE(ts.used_gb,0),CASE WHEN ts.account_id IS NOT NULL AND ts.synced_at IS NOT NULL THEN 1 ELSE 0 END,
-		COALESCE(a.traffic_limit_gb,0),COALESCE(a.threshold_percent,0),COALESCE(a.protection_mode,''),COALESCE(a.protection_triggered,0),
+		COALESCE(ts.synced_at,''),ts.previous_used_gb,ts.previous_synced_at,
+		COALESCE(a.traffic_limit_gb,0),COALESCE(a.threshold_percent,0),COALESCE(a.protection_mode,''),COALESCE(a.protection_triggered,0),COALESCE(a.protection_predictive,0),
 		COALESCE(a.protection_action_completed,0),COALESCE(a.protection_triggered_at,'')
 		FROM relay_pool_members rpm JOIN relay_nodes rn ON rn.id=rpm.relay_node_id JOIN relay_pools rp ON rp.id=rpm.pool_id
 		LEFT JOIN accounts a ON a.id=rn.cloud_account_id OR (rn.cloud_account_id IS NULL AND rn.ecs_instance_id IN (SELECT instance_id FROM instances WHERE account_id=a.id))
@@ -447,14 +448,16 @@ func (s *Store) listRelayPoolMembers(ctx context.Context, poolID string) ([]Rela
 	now := time.Now().UTC()
 	for rows.Next() {
 		var m RelayPoolMember
-		var enabled, draining, trafficKnown, protectionTriggered, protectionActionCompleted int
-		var rawStatus, lastSeen, serviceStatusJSON, protectionTriggeredAt string
+		var enabled, draining, trafficKnown, protectionTriggered, protectionPredictive, protectionActionCompleted int
+		var rawStatus, lastSeen, serviceStatusJSON, trafficSyncedAt, protectionTriggeredAt string
+		var previousTrafficUsed sql.NullFloat64
+		var previousTrafficSynced sql.NullString
 		var cloudAccountID sql.NullInt64
 		var currentRevision, desiredRevision int64
 		if err := rows.Scan(&m.ID, &m.PoolID, &m.RelayNodeID, &m.RelayNodeName, &m.PublicIP, &rawStatus, &draining,
 			&lastSeen, &currentRevision, &desiredRevision, &serviceStatusJSON, &m.Weight, &enabled, &m.ServiceID,
-			&cloudAccountID, &m.CloudAccountName, &m.TrafficUsedGB, &trafficKnown, &m.TrafficLimitGB,
-			&m.TrafficThresholdPercent, &m.ProtectionMode, &protectionTriggered, &protectionActionCompleted, &protectionTriggeredAt); err != nil {
+			&cloudAccountID, &m.CloudAccountName, &m.TrafficUsedGB, &trafficKnown, &trafficSyncedAt, &previousTrafficUsed, &previousTrafficSynced, &m.TrafficLimitGB,
+			&m.TrafficThresholdPercent, &m.ProtectionMode, &protectionTriggered, &protectionPredictive, &protectionActionCompleted, &protectionTriggeredAt); err != nil {
 			return nil, err
 		}
 		m.Status = relayPoolMemberStatus(now, rawStatus, draining != 0, lastSeen, currentRevision, desiredRevision, m.ServiceID, serviceStatusJSON)
@@ -465,9 +468,22 @@ func (s *Store) listRelayPoolMembers(ctx context.Context, poolID string) ([]Rela
 		}
 		m.TrafficKnown = trafficKnown != 0
 		m.ProtectionTriggered = protectionTriggered != 0
+		m.ProtectionPredictive = protectionPredictive != 0
 		m.ProtectionActionCompleted = protectionActionCompleted != 0
 		if m.TrafficKnown && m.TrafficLimitGB > 0 {
 			m.TrafficPercent = m.TrafficUsedGB / m.TrafficLimitGB * 100
+			m.TrafficRemainingGB = m.TrafficLimitGB - m.TrafficUsedGB
+			if m.TrafficRemainingGB < 0 {
+				m.TrafficRemainingGB = 0
+			}
+			if sampleAt := parseDatabaseTime(trafficSyncedAt); !sampleAt.IsZero() {
+				m.TrafficRateGBPerMinute, _ = trafficRate(m.TrafficUsedGB, sampleAt, previousTrafficUsed, previousTrafficSynced)
+				thresholdGB := m.TrafficLimitGB * m.TrafficThresholdPercent / 100
+				if m.TrafficRateGBPerMinute > 0 && thresholdGB > m.TrafficUsedGB {
+					minutes := (thresholdGB - m.TrafficUsedGB) / m.TrafficRateGBPerMinute
+					m.TrafficMinutesToThreshold = &minutes
+				}
+			}
 		}
 		if protectionTriggeredAt != "" {
 			value := parseDatabaseTime(protectionTriggeredAt)
@@ -700,7 +716,7 @@ func isUniqueConstraint(err error) bool {
 // every port-specific pool using the address must have an eligible member.
 func (s *Store) sharedPoolRecordEligible(ctx context.Context, recordID, currentPoolID string, currentEligible bool) (bool, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT b.pool_id,rp.enabled,rpm.enabled,rn.status,
-		CASE WHEN (COALESCE(a.protection_triggered,0)=1 AND (COALESCE(a.protection_mode,'alert_only')='drain_relay' OR COALESCE(rp.auto_drain,1)=1)) OR COALESCE(rn.update_status,'idle') IN ('draining','updating') THEN 1 ELSE 0 END,
+		CASE WHEN ((COALESCE(a.protection_triggered,0)=1 OR COALESCE(a.protection_predictive,0)=1) AND (COALESCE(a.protection_mode,'alert_only')='drain_relay' OR COALESCE(rp.auto_drain,1)=1)) OR COALESCE(rn.update_status,'idle') IN ('draining','updating') THEN 1 ELSE 0 END,
 		COALESCE(rn.public_ip,''),COALESCE(rn.last_seen_at,''),rn.current_revision,rn.desired_revision,COALESCE(rn.service_status_json,'[]'),COALESCE(rpm.service_id,'')
 		FROM dns_managed_record_pools b JOIN relay_pools rp ON rp.id=b.pool_id
 		JOIN dns_managed_records dr ON dr.id=b.record_id

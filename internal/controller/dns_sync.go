@@ -113,11 +113,11 @@ func (s *Store) RefreshRelayAgentDNSRecords(ctx context.Context) error {
 		var publicIP, status string
 		var draining int
 		err := s.db.QueryRowContext(ctx, `SELECT COALESCE(rn.public_ip,''),
-			CASE WHEN (COALESCE(a.protection_triggered,0)=1 AND (COALESCE(a.protection_mode,'alert_only')='drain_relay' OR EXISTS(
+			CASE WHEN ((COALESCE(a.protection_triggered,0)=1 OR COALESCE(a.protection_predictive,0)=1) AND (COALESCE(a.protection_mode,'alert_only')='drain_relay' OR EXISTS(
 				SELECT 1 FROM relay_services ars JOIN relay_pools arp ON arp.id=ars.pool_id
 				WHERE ars.relay_node_id=rn.id AND ars.enabled=1 AND COALESCE(arp.enabled,1)=1 AND COALESCE(arp.auto_drain,1)=1
 			))) OR COALESCE(rn.update_status,'idle') IN ('draining','updating') THEN 'draining' ELSE rn.status END,
-			CASE WHEN (COALESCE(a.protection_triggered,0)=1 AND (COALESCE(a.protection_mode,'alert_only')='drain_relay' OR EXISTS(
+			CASE WHEN ((COALESCE(a.protection_triggered,0)=1 OR COALESCE(a.protection_predictive,0)=1) AND (COALESCE(a.protection_mode,'alert_only')='drain_relay' OR EXISTS(
 				SELECT 1 FROM relay_services ars JOIN relay_pools arp ON arp.id=ars.pool_id
 				WHERE ars.relay_node_id=rn.id AND ars.enabled=1 AND COALESCE(arp.enabled,1)=1 AND COALESCE(arp.auto_drain,1)=1
 			))) OR COALESCE(rn.update_status,'idle') IN ('draining','updating') THEN 1 ELSE 0 END

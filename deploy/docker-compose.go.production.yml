@@ -23,6 +23,7 @@ services:
       CDT_AGENT_RELEASE_REPO: R1ddle1337/AliCDT-Manager-Professional
       CDT_AGENT_RELEASE_CHANNEL: latest
       CDT_AGENT_RELEASE_CACHE_DIR: /app/data/agent-releases
+      CDT_TRAFFIC_SAFETY_WINDOW: ${CDT_TRAFFIC_SAFETY_WINDOW:-4m}
       TZ: Asia/Shanghai
     command:
       - -listen

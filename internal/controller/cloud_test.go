@@ -424,6 +424,145 @@ func TestDrainRelayProtectionIsIdempotentAndRecovers(t *testing.T) {
 	}
 }
 
+func TestTrafficRateTreatsCounterResetAsNewBillingPeriod(t *testing.T) {
+	now := time.Now().UTC()
+	previousAt := now.Add(-2 * time.Minute).Format(time.RFC3339Nano)
+	rate, reset := trafficRate(120, now, sql.NullFloat64{Float64: 100, Valid: true}, sql.NullString{String: previousAt, Valid: true})
+	if reset || rate < 9.9 || rate > 10.1 {
+		t.Fatalf("unexpected traffic rate: rate=%f reset=%v", rate, reset)
+	}
+	rate, reset = trafficRate(80, now, sql.NullFloat64{Float64: 100, Valid: true}, sql.NullString{String: previousAt, Valid: true})
+	if !reset || rate != 0 {
+		t.Fatalf("counter reset was not detected: rate=%f reset=%v", rate, reset)
+	}
+}
+
+func TestPredictiveTrafficProtectionDrainsBeforeHardThreshold(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	account, nodeID := createProtectedRelay(t, store, ProtectionDrainRelay)
+	now := time.Now().UTC()
+	// Simulate a previous successful sample so the next cloud response has a
+	// meaningful rate. 170 GB is below the 180 GB hard threshold, but at the
+	// observed rate it crosses that threshold inside a two-minute window.
+	if _, err := store.db.Exec(`UPDATE account_traffic_snapshots
+		SET used_gb=?,synced_at=?,previous_used_gb=?,previous_synced_at=? WHERE account_id=?`,
+		160, now.Add(-2*time.Minute).Format(time.RFC3339Nano), 140, now.Add(-4*time.Minute).Format(time.RFC3339Nano), account.ID); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.AgentConfig(context.Background(), nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := store.ApplyTrafficProtectionWithWindow(context.Background(), account.ID, 170, 2*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.Triggered || !decision.Predictive || decision.Percent >= 90 || decision.RateGBPerMinute < 7.4 || decision.ProjectedGB < 184 {
+		t.Fatalf("unexpected predictive decision: %+v", decision)
+	}
+	protected, err := store.ListCloudAccounts(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(protected) != 1 || !protected[0].ProtectionTriggered || !protected[0].ProtectionPredictive {
+		t.Fatalf("predictive marker was not persisted: %+v", protected)
+	}
+	after, err := store.AgentConfig(context.Background(), nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Revision != before.Revision+1 || len(after.Services) != 1 || after.Services[0].Enabled {
+		t.Fatalf("predictive protection did not drain the relay: before=%+v after=%+v", before, after)
+	}
+
+	// A later sample below the hard threshold must not reopen the relay merely
+	// because the instantaneous rate fell to zero.
+	decision, err = store.ApplyTrafficProtectionWithWindow(context.Background(), account.ID, 171, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.Triggered || !decision.Predictive {
+		t.Fatalf("predictive protection was not sticky: %+v", decision)
+	}
+
+	// A cumulative counter decrease represents a new billing period and allows
+	// the relay to recover.
+	decision, err = store.ApplyTrafficProtectionWithWindow(context.Background(), account.ID, 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Triggered || decision.Predictive || !decision.Changed {
+		t.Fatalf("counter reset did not recover protection: %+v", decision)
+	}
+	recovered, err := store.ListCloudAccounts(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recovered) != 1 || recovered[0].ProtectionTriggered || recovered[0].ProtectionPredictive {
+		t.Fatalf("recovered account retained protection: %+v", recovered)
+	}
+}
+
+func TestCloudOverviewExposesRecentTrafficRate(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	account, err := store.CreateCloudAccount(context.Background(), CloudAccountRequest{
+		Name: "rate", AccessKeyID: "key", AccessKeySecret: "secret", RegionID: "cn-hongkong", SiteType: "china",
+		TrafficLimitGB: 200, ThresholdPercent: 95,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := store.SaveCloudSync(context.Background(), account, nil, false, "", 120, true, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE account_traffic_snapshots SET used_gb=?,synced_at=?,previous_used_gb=?,previous_synced_at=? WHERE account_id=?`,
+		120, now.Format(time.RFC3339Nano), 100, now.Add(-2*time.Minute).Format(time.RFC3339Nano), account.ID); err != nil {
+		t.Fatal(err)
+	}
+	overview, err := store.CloudOverview(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(overview.Traffic) != 1 || overview.Traffic[0].RateGBPerMinute < 9.9 || overview.Traffic[0].RateGBPerMinute > 10.1 {
+		t.Fatalf("unexpected account traffic rate: %+v", overview.Traffic)
+	}
+	if overview.Traffic[0].MinutesToThreshold == nil || *overview.Traffic[0].MinutesToThreshold < 6.9 || *overview.Traffic[0].MinutesToThreshold > 7.1 {
+		t.Fatalf("unexpected threshold estimate: %+v", overview.Traffic[0])
+	}
+}
+
+func TestCloudServiceUsesTrafficSafetyWindowForPrediction(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	account, _ := createProtectedRelay(t, store, ProtectionDrainRelay)
+	// The helper creates the first valid snapshot. Make it old enough to form a
+	// rate on the next sync and use a fake CDT client for deterministic input.
+	old := time.Now().UTC().Add(-2 * time.Minute).Format(time.RFC3339Nano)
+	if _, err := store.db.Exec(`UPDATE account_traffic_snapshots SET used_gb=?,synced_at=? WHERE account_id=?`, 160, old, account.ID); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeCloudClient{traffic: 171}
+	service := NewCloudService(store)
+	service.SetTrafficSafetyWindow(2 * time.Minute)
+	service.clientFor = func(CloudAccount) cloudClient { return fake }
+	result := service.syncAccount(context.Background(), account)
+	if result.Error != "" || !result.ProtectionTriggered || !result.ProtectionPredictive || result.ProtectionAction != "drain_relay_predictive" {
+		t.Fatalf("cloud sync did not apply predictive drain: %+v", result)
+	}
+}
+
 func TestTriggeredAccountPublishesCatchupDrainRevisionOnce(t *testing.T) {
 	store, err := OpenStore(":memory:")
 	if err != nil {

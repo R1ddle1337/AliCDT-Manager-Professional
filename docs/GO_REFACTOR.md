@@ -119,12 +119,33 @@ Relay addresses and publishes the Agent drain revision even if the account's
 standalone protection mode is `alert_only`. Disable this switch only when an
 operator deliberately wants an alert without automatic pool failover.
 
+The controller also retains the preceding successful account snapshot and
+derives a short-term GB/minute rate. If that rate projects the configured hard
+threshold will be crossed during the control-plane safety window, an
+auto-draining pool is withdrawn early. The production default is four minutes,
+covering the two-minute cloud poll, DNS reconciliation, normal TTL, and a small
+client-reconnect margin. Set `CDT_TRAFFIC_SAFETY_WINDOW=0s` to disable this
+forecast or use a Go duration such as `3m30s` to tune it. A predictive drain is
+sticky until the cumulative counter decreases at a new billing period; once
+the measured value reaches the hard threshold it becomes a normal protection
+event. Predictive protection never sends an early `stop_ecs` command—it only
+drains Relay services until the measured hard threshold is reached.
+
 Pool member weights do not control DNS selection. Multi-A DNS is resolver/client
 selection, not latency-aware routing or quota-aware load balancing, so traffic
 need not be distributed evenly across 200 GB Relay hosts. Landing-target probe
 failures alone also do not remove a Relay IP: when every probe fails the Agent
 still attempts the enabled targets, and pool DNS eligibility checks listener
 readiness rather than end-to-end protocol success.
+
+For the low-overhead deployment, use one independent billing account per Relay
+where possible and keep the same protocol, credentials, port, and member set
+for every replica in a logical pool. This keeps one stable client link while
+the controller withdraws accounts that are approaching exhaustion. If exact
+per-connection quota weighting or a fixed front-door IP becomes a hard
+requirement, add two or more non-CDT L4 dispatchers in front of this pool; do
+not put that dispatcher on a scarce CDT account. A dispatcher improves backend
+selection but still cannot migrate an already-established TCP byte stream.
 
 ## Protocol validation
 
