@@ -4,7 +4,7 @@
       <div>
         <div class="eyebrow">ALIYUN CDT</div>
         <h1 class="page-title">云资源</h1>
-        <p class="page-subtitle">统一管理阿里云账户、ECS 实例和 CDT 月流量快照</p>
+        <p class="page-subtitle">统一管理阿里云账户、ECS 实例和账户级 CDT 月流量快照</p>
       </div>
       <div class="header-actions">
         <button class="btn-ghost border border-slate-200" type="button" @click="openCreate">添加账户</button>
@@ -30,9 +30,9 @@
         <small>{{ runningInstanceCount }} 个实例运行中</small>
       </article>
       <article class="summary-card">
-        <span>有效流量快照</span>
+        <span>账户流量合计</span>
         <strong>{{ store.cloud.traffic.length ? totalTraffic.toFixed(2) + ' GB' : '待同步' }}</strong>
-        <small>{{ store.cloud.traffic.length }} 个账户已有有效数据 · {{ activeProtectionCount }} 个保护中</small>
+        <small>{{ store.cloud.traffic.length }} 个账户已有快照 · {{ activeProtectionCount }} 个保护中</small>
       </article>
     </section>
 
@@ -54,6 +54,7 @@
 
         <div class="traffic-row">
           <div>
+            <span class="traffic-scope">账户 CDT 本月出向流量</span>
             <span class="traffic-value">{{ trafficFor(account.id) ? trafficFor(account.id).used_gb.toFixed(2) : '待同步' }}</span>
             <span v-if="trafficFor(account.id)" class="traffic-unit">GB</span>
           </div>
@@ -72,9 +73,11 @@
           ></div>
         </div>
         <div class="traffic-meta">
-          <span>{{ trafficFor(account.id) ? trafficPercent(account).toFixed(1) + '%' : '尚无有效快照' }}</span>
-          <span>{{ instancesFor(account.id).length }} 个实例</span>
+          <span>{{ trafficFor(account.id) ? trafficPercent(account).toFixed(1) + '% · 账号维度' : '尚无有效快照' }}</span>
+          <span>{{ instancesFor(account.id).length }} 个实例共享该账户额度</span>
         </div>
+
+        <p class="traffic-disclaimer">阿里云接口不提供单个 ECS 的 CDT 用量；同一账户下多个实例共享此快照与保护阈值。</p>
 
         <div v-if="trafficFor(account.id)?.last_error" class="sync-warning">
           <strong>本次同步失败</strong>
@@ -148,7 +151,7 @@
           <div><label class="field-label">地域 ID</label><input v-model.trim="form.region_id" class="input" placeholder="cn-hongkong" required /></div>
           <div><label class="field-label">站点</label><select v-model="form.site_type" class="input"><option value="china">中国站</option><option value="international">国际站</option></select></div>
           <div class="field-wide"><label class="field-label">绑定实例 ID <span class="font-normal text-slate-400">（保活与停机保护共用）</span></label><input v-model.trim="form.instance_id" class="input" list="cloud-instance-options" placeholder="可选，输入 i-..." /><datalist id="cloud-instance-options"><option v-for="instance in store.cloud.instances" :key="instance.instance_id" :value="instance.instance_id">{{ instance.instance_name || instance.instance_id }}</option></datalist></div>
-          <div><label class="field-label">CDT 流量限额（GB）</label><input v-model.number="form.traffic_limit_gb" type="number" min="1" class="input" required /></div>
+          <div><label class="field-label">账户 CDT 流量限额（GB）</label><input v-model.number="form.traffic_limit_gb" type="number" min="1" class="input" required /><p class="field-hint">按阿里云账号统计，不是每台 ECS 的独立额度。</p></div>
           <div><label class="field-label">保护阈值（%）</label><input v-model.number="form.threshold_percent" type="number" min="1" max="100" class="input" required /></div>
           <div class="field-wide">
             <label class="field-label">流量保护策略</label>
@@ -157,7 +160,7 @@
               <option value="drain_relay">停止接受新连接</option>
               <option value="stop_ecs">停止指定 ECS</option>
             </select>
-            <p class="field-hint">现有账户默认仅告警。停止新连接时，已建立的 TCP 连接会自然结束，月初流量恢复后自动重新开放。</p>
+            <p class="field-hint">新账户默认自动排空。达到阈值后从入口池撤下该账户的 Relay，并停止新连接；已建立的 TCP 连接会自然结束，月初流量恢复后自动重新开放。</p>
           </div>
           <div class="field-wide setting-toggle-row">
             <div><strong>抢占实例自动保活</strong><p class="field-hint">每分钟检查实例状态，发现被回收后自动尝试重新启动。</p></div>
@@ -199,7 +202,7 @@ const activeProtectionCount = computed(() => store.cloud.accounts.filter(account
 const blank = () => ({
   name: '', access_key_id: '', access_key_secret: '', region_id: 'cn-hongkong', site_type: 'china',
   instance_id: '', traffic_limit_gb: 200, threshold_percent: 95, outstanding_threshold: 0,
-  shutdown_mode: 'StopCharging', keep_alive: false, auto_start_time: '', auto_stop_time: '', protection_mode: 'alert_only', enabled: true,
+  shutdown_mode: 'StopCharging', keep_alive: false, auto_start_time: '', auto_stop_time: '', protection_mode: 'drain_relay', enabled: true,
 })
 const form = ref(blank())
 
@@ -249,7 +252,7 @@ function openEdit(account) {
     threshold_percent: account.threshold_percent || 95, outstanding_threshold: account.outstanding_threshold || 0,
     shutdown_mode: account.shutdown_mode || 'StopCharging', keep_alive: !!account.keep_alive,
     auto_start_time: account.auto_start_time || '', auto_stop_time: account.auto_stop_time || '',
-    protection_mode: account.protection_mode || 'alert_only', enabled: account.enabled !== false,
+    protection_mode: account.protection_mode || 'drain_relay', enabled: account.enabled !== false,
   }
   formError.value = ''
   showForm.value = true
@@ -337,6 +340,7 @@ onMounted(() => store.fetchCloud())
 .protection-tag-active { background: #fef3c7; color: #a16207; }
 .state-online { background: #ecfdf3; color: #15803d; }
 .traffic-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-top: 21px; }
+.traffic-scope { display: block; margin-bottom: 3px; color: #64748b; font-size: 10px; font-weight: 650; }
 .traffic-value { color: #172033; font-size: clamp(23px, 3vw, 29px); font-weight: 750; letter-spacing: -.045em; }
 .traffic-unit { margin-left: 5px; color: #94a3b8; font-size: 11px; }
 .account-limits { display: grid; gap: 3px; margin: 0; font-size: 9px; }
@@ -347,6 +351,7 @@ onMounted(() => store.fetchCloud())
 .traffic-fill { height: 100%; border-radius: inherit; background: #2563eb; transition: width .25s ease; }
 .traffic-danger { background: #dc2626; }
 .traffic-meta { display: flex; justify-content: space-between; margin-top: 7px; color: #94a3b8; font-size: 9px; }
+.traffic-disclaimer { margin-top: 9px; color: #94a3b8; font-size: 9px; line-height: 1.5; }
 .sync-warning { display: grid; gap: 3px; margin-top: 12px; border: 1px solid #fde68a; border-radius: 9px; background: #fffbeb; padding: 9px 11px; color: #a16207; font-size: 9px; line-height: 1.55; }
 .protection-notice { display: grid; gap: 3px; margin-top: 12px; border: 1px solid #fed7aa; border-radius: 9px; background: #fff7ed; padding: 10px 11px; color: #9a3412; font-size: 9px; line-height: 1.55; }
 .protection-notice small { color: #c2410c; }

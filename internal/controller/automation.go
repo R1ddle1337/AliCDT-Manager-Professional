@@ -257,6 +257,10 @@ func (s *CloudService) SendDailyReport(ctx context.Context) error {
 	for _, instance := range overview.Instances {
 		instances[instance.AccountID] = instance
 	}
+	traffic := make(map[int64]AccountTraffic, len(overview.Traffic))
+	for _, snapshot := range overview.Traffic {
+		traffic[snapshot.AccountID] = snapshot
+	}
 	var report strings.Builder
 	report.WriteString("AliCDT 每日流量汇报\n")
 	report.WriteString(time.Now().In(time.FixedZone("Asia/Shanghai", 8*60*60)).Format("2006-01-02 15:04"))
@@ -264,7 +268,11 @@ func (s *CloudService) SendDailyReport(ctx context.Context) error {
 		report.WriteString("\n\n")
 		report.WriteString(account.Name)
 		if instance, ok := instances[account.ID]; ok {
-			report.WriteString(fmt.Sprintf("\n状态: %s\n流量: %.2f GB / %.2f GB\n地域: %s", instance.Status, instance.TrafficUsedGB, account.TrafficLimitGB, instance.RegionID))
+			usedGB := 0.0
+			if snapshot, exists := traffic[account.ID]; exists {
+				usedGB = snapshot.UsedGB
+			}
+			report.WriteString(fmt.Sprintf("\n状态: %s\n账户流量: %.2f GB / %.2f GB\n地域: %s", instance.Status, usedGB, account.TrafficLimitGB, instance.RegionID))
 		} else {
 			report.WriteString("\n暂无实例数据")
 		}

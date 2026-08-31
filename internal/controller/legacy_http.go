@@ -11,6 +11,43 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+// legacyCloudInstance preserves the response shape consumed by the original
+// /api/instances UI.  The v2 CloudOverview intentionally keeps CDT traffic at
+// account scope; this compatibility projection derives the account snapshot
+// only when an old endpoint explicitly asks for it.
+type legacyCloudInstance struct {
+	CloudInstance
+	TrafficUsedGB  float64 `json:"traffic_used_gb"`
+	TrafficPercent float64 `json:"traffic_percent"`
+}
+
+func legacyCloudInstanceViews(overview CloudOverview) []legacyCloudInstance {
+	limits := make(map[int64]float64, len(overview.Accounts))
+	for _, account := range overview.Accounts {
+		limit := account.TrafficLimitGB
+		if limit <= 0 {
+			limit = 200
+		}
+		limits[account.ID] = limit
+	}
+	traffic := make(map[int64]AccountTraffic, len(overview.Traffic))
+	for _, snapshot := range overview.Traffic {
+		traffic[snapshot.AccountID] = snapshot
+	}
+	views := make([]legacyCloudInstance, 0, len(overview.Instances))
+	for _, instance := range overview.Instances {
+		view := legacyCloudInstance{CloudInstance: instance}
+		if snapshot, ok := traffic[instance.AccountID]; ok {
+			view.TrafficUsedGB = snapshot.UsedGB
+			if limit := limits[instance.AccountID]; limit > 0 {
+				view.TrafficPercent = snapshot.UsedGB / limit * 100
+			}
+		}
+		views = append(views, view)
+	}
+	return views
+}
+
 func (s *Server) legacyListAccounts(w http.ResponseWriter, r *http.Request) {
 	accounts, err := s.store.ListCloudAccounts(r.Context(), false)
 	if err != nil {
@@ -76,7 +113,7 @@ func (s *Server) legacyListInstances(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, overview.Instances)
+	writeJSON(w, http.StatusOK, legacyCloudInstanceViews(overview))
 }
 
 func (s *Server) legacySyncInstances(w http.ResponseWriter, r *http.Request) {
@@ -104,7 +141,7 @@ func (s *Server) legacySyncInstance(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	for _, instance := range overview.Instances {
+	for _, instance := range legacyCloudInstanceViews(overview) {
 		if instance.InstanceID == instanceID {
 			writeJSON(w, http.StatusOK, map[string]interface{}{
 				"message": "同步完成", "status": instance.Status,

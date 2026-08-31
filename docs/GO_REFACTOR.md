@@ -52,14 +52,37 @@ Protection transitions are evaluated only after a successful CDT traffic
 response. A timeout or API error preserves both the last valid traffic snapshot
 and the current protection state.
 
+### Traffic accounting scope
+
+`ListCdtInternetTraffic` is an account-level API in this integration. The
+request has no ECS instance filter and the returned traffic details contain no
+ECS instance ID. The controller therefore sums all returned details and stores
+one snapshot per configured Alibaba Cloud account; `/api/v2/cloud/overview`
+marks these entries with `scope: "account"`. The value must not be interpreted
+as traffic used by an individual ECS or Relay Agent.
+
+The configured limit and protection threshold are compared with that account
+aggregate. If several Relay Agents are associated with the same cloud account,
+`drain_relay` drains all of them together. Separate RAM AccessKeys belonging to
+the same Alibaba Cloud account do not create independent usage counters. The
+UI's default `200 GB` value is a local protection threshold, not a guarantee
+that each ECS receives an independent 200 GB CDT allowance. A strict per-ECS
+policy requires a billing/API scope that is independently measurable, or a
+future per-Agent accounting policy; Agent byte counters are useful for
+operations but are not currently the authoritative CDT billing counter.
+
 Each account selects one mode:
 
 - `alert_only`: record a transition event and keep the relay and ECS running.
-  This is the migration-safe default for every existing account.
+  It remains the API/database compatibility default. The v2 console proposes
+  `drain_relay` for new accounts, while an operator may explicitly choose a
+  different mode.
 - `drain_relay`: publish a new Agent revision that stops accepting new
   connections. Existing TCP connections drain naturally. Saved relay service
-  settings are not modified, and services reopen automatically after usage
-  falls below the threshold in a new billing month.
+  settings are not modified, and services reopen automatically after a later
+  successful traffic sync reports usage below the threshold. A new billing
+  month also produces a fresh provider snapshot; it is not required for a
+  recovery when the measured value has already fallen below the threshold.
 - `stop_ecs`: send one stop command to a specifically selected ECS instance.
   Failed commands remain pending and retry after the next successful traffic
   sync; successful commands are not repeated.
@@ -71,6 +94,37 @@ silently leave a relay closed forever.
 The relay is protocol-transparent. SS2022, VLESS, REALITY, WebSocket, gRPC and
 other TCP/UDP protocols remain encrypted end-to-end between client and landing
 server.
+
+## Relay pool eligibility and automatic draining
+
+A pool publishes one A record for each eligible member. A member is eligible
+only when the pool and member are enabled, it has a valid public IP, its Agent
+heartbeat is fresh (45 seconds by default), the current revision equals the
+desired revision, and the pool service reports that its listener is active. An
+account-level `drain_relay` transition, an Agent update in
+`draining`/`updating`, an offline or stale Agent, an unapplied revision, or a
+failed listener makes the member ineligible.
+
+Ineligible records are disabled and removed at the next DNS reconciliation;
+recovered members are added back automatically. The production scheduler runs
+every 30 seconds, after which recursive resolvers and clients may retain the old
+answer for the record TTL. Disabling a service closes its listener and existing
+TCP connections drain naturally, but UDP sessions are closed. DNS changes do
+not migrate an established connection: they affect later resolutions and new
+connections only.
+
+New pools enable `auto_drain` by default. When a bound account crosses its
+configured account-level CDT threshold, the pool withdraws that account's
+Relay addresses and publishes the Agent drain revision even if the account's
+standalone protection mode is `alert_only`. Disable this switch only when an
+operator deliberately wants an alert without automatic pool failover.
+
+Pool member weights do not control DNS selection. Multi-A DNS is resolver/client
+selection, not latency-aware routing or quota-aware load balancing, so traffic
+need not be distributed evenly across 200 GB Relay hosts. Landing-target probe
+failures alone also do not remove a Relay IP: when every probe fails the Agent
+still attempts the enabled targets, and pool DNS eligibility checks listener
+readiness rather than end-to-end protocol success.
 
 ## Protocol validation
 
@@ -206,11 +260,13 @@ allow future atomic replacements. The command does not enroll a new node or
 consume an enrollment token. Containerized Agents must instead be updated by
 rebuilding/restarting their container image.
 
+## DNS-managed relay pools
+
 DNS management uses a provider-neutral reconciliation layer. The first
 release supports Aliyun DNS (AccessKey ID/Secret) and Cloudflare (scoped API
 Token). A provider stores only its own credentials; API responses expose
 configuration flags rather than secrets. Managed records are declared in the
-console and are reconciled every minute or on demand. Reconciliation updates
+console and are reconciled every 30 seconds or on demand. Reconciliation updates
 or creates only those declared records and never performs a broad zone delete.
 Use a separate hostname such as `panel.example.com` for the console and
 `relay.example.com` for a multi-IP relay entry. Add one A record per healthy
@@ -221,6 +277,29 @@ bind a DNS Provider; online members create managed A records, draining or
 offline members are disabled and removed on the next DNS reconciliation. The
 landing-node link generator emits the pool hostname and port, so users keep a
 single logical node instead of importing one link per Relay.
+
+### Hostname and port constraints
+
+- One pool defines one hostname, one listen port and one transport. DNS maps the
+  hostname to Relay IPs only; it cannot select a port, protocol or landing node.
+- Multiple pools may reuse one hostname on different ports. Each generated
+  client node still includes its own port, and every Relay selected for that
+  hostname must listen on every advertised port. Use the same member set and
+  lifecycle for those pools; otherwise DNS may return an Agent that does not
+  serve the requested port.
+- On one Agent, listeners cannot overlap on the same address, transport and
+  port. A `tcp+udp` service occupies both transports. Use a distinct port for
+  overlapping pools unless one service is TCP-only and the other is UDP-only.
+- A pool's landing targets are replicas or failover choices for the same
+  logical encrypted service. Because the Relay does not decrypt or inspect the
+  protocol, unrelated SS/VLESS nodes with different credentials cannot safely
+  share one hostname and one port; create a separate pool/port for each such
+  node.
+- A provider stores only one managed row for the same hostname/type/Relay IP.
+  Port-specific pools may share that row; the controller keeps a pool binding
+  table and advertises the address only while every bound route is ready. Use
+  the same member set and lifecycle for shared hostnames, or use separate
+  hostnames when routes have different failure domains.
 
 Standalone managed DNS records can either use a manually entered value or be
 attached to one or more registered Relay Agents. The controller stores one

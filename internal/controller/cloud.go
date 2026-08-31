@@ -146,6 +146,14 @@ func (s *CloudService) syncAccount(ctx context.Context, account CloudAccount) Cl
 			protectionAction = protection.Mode
 		}
 	}
+	// Keep the controller-side DNS desired state in lockstep with a single
+	// account sync as well as the bulk sync path. The provider API itself is
+	// reconciled by RunDNSScheduler, so a transient provider error cannot undo
+	// the protection decision.
+	refreshCtx, refreshCancel := context.WithTimeout(ctx, 10*time.Second)
+	_ = s.store.RefreshRelayAgentDNSRecords(refreshCtx)
+	_ = s.store.RefreshAllRelayPoolDNS(refreshCtx)
+	refreshCancel()
 	result := CloudSyncResult{
 		AccountID: account.ID, AccountName: account.Name,
 		InstancesOK: instanceErr == nil, TrafficOK: trafficErr == nil,

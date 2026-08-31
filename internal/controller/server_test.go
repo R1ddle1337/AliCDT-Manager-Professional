@@ -137,6 +137,34 @@ func TestStaleAgentIsMarkedOffline(t *testing.T) {
 	}
 }
 
+func TestRelayListenerRejectsTransportOverlap(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.CreateEnrollmentToken(context.Background(), "listener-conflict", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	agent, err := store.EnrollAgent(context.Background(), protocol.AgentEnrollmentRequest{Token: "listener-conflict", NodeName: "relay"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	landing, err := store.CreateLandingNode(context.Background(), CreateLandingNodeRequest{Name: "landing", Address: "127.0.0.1", Port: 443, Network: "tcp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := CreateRelayServiceRequest{RelayNodeID: agent.AgentID, Name: "tcp", ListenPort: 18443, Network: "tcp", Mode: "failover", Targets: []CreateServiceTarget{{LandingNodeID: landing.ID}}}
+	if _, err := store.CreateRelayService(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	request.Name = "tcp-udp"
+	request.Network = "tcp+udp"
+	if _, err := store.CreateRelayService(context.Background(), request); err == nil {
+		t.Fatal("expected tcp+udp listener to conflict with existing tcp listener")
+	}
+}
+
 func boolPtr(value bool) *bool { return &value }
 
 func requestJSON(t *testing.T, url, token string, payload interface{}, expected int, output interface{}) {

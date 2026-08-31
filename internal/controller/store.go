@@ -108,6 +108,7 @@ type CloudAccount struct {
 	ProtectionMode            string     `json:"protection_mode"`
 	ProtectionTriggered       bool       `json:"protection_triggered"`
 	ProtectionTriggeredAt     *time.Time `json:"protection_triggered_at,omitempty"`
+	ProtectionDrainPublished  bool       `json:"-"`
 	ProtectionActionCompleted bool       `json:"protection_action_completed"`
 	ProtectionLastError       string     `json:"protection_last_error,omitempty"`
 	Enabled                   bool       `json:"enabled"`
@@ -146,34 +147,45 @@ type TrafficProtectionDecision struct {
 	NeedsStop   bool
 }
 
+// CloudInstance contains ECS inventory and control state only. CDT traffic is
+// reported by Aliyun at account scope and therefore belongs in AccountTraffic,
+// not on an individual instance.
 type CloudInstance struct {
-	ID             int64      `json:"id"`
-	AccountID      int64      `json:"account_id"`
-	InstanceID     string     `json:"instance_id"`
-	InstanceName   string     `json:"instance_name"`
-	RegionID       string     `json:"region_id"`
-	Status         string     `json:"status"`
-	PublicIP       string     `json:"public_ip"`
-	InstanceType   string     `json:"instance_type"`
-	BandwidthMbps  int        `json:"bandwidth_mbps"`
-	IsSpot         bool       `json:"is_spot"`
-	TrafficUsedGB  float64    `json:"traffic_used_gb"`
-	TrafficPercent float64    `json:"traffic_percent"`
-	LastSynced     *time.Time `json:"last_synced,omitempty"`
-	UpdatedAt      *time.Time `json:"updated_at,omitempty"`
+	ID            int64      `json:"id"`
+	AccountID     int64      `json:"account_id"`
+	InstanceID    string     `json:"instance_id"`
+	InstanceName  string     `json:"instance_name"`
+	RegionID      string     `json:"region_id"`
+	Status        string     `json:"status"`
+	PublicIP      string     `json:"public_ip"`
+	InstanceType  string     `json:"instance_type"`
+	BandwidthMbps int        `json:"bandwidth_mbps"`
+	IsSpot        bool       `json:"is_spot"`
+	LastSynced    *time.Time `json:"last_synced,omitempty"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
 }
 
+// AccountTraffic is the CDT Internet traffic snapshot for one cloud account.
+// Aliyun's ListCdtInternetTraffic API aggregates usage by account/region/ISP
+// and does not return an ECS instance ID. Keep this collection separate from
+// CloudOverview.Instances so an account total is never presented as per-ECS
+// usage.
 type AccountTraffic struct {
 	AccountID int64      `json:"account_id"`
+	Scope     string     `json:"scope"`
 	UsedGB    float64    `json:"used_gb"`
 	SyncedAt  *time.Time `json:"synced_at,omitempty"`
 	LastError string     `json:"last_error,omitempty"`
 }
 
+const TrafficScopeAccount = "account"
+
 type CloudOverview struct {
-	Accounts  []CloudAccount   `json:"accounts"`
-	Instances []CloudInstance  `json:"instances"`
-	Traffic   []AccountTraffic `json:"traffic"`
+	Accounts  []CloudAccount  `json:"accounts"`
+	Instances []CloudInstance `json:"instances"`
+	// Traffic contains one account-level CDT snapshot per account. It is not
+	// an instance usage list; use AccountID to associate it with an account.
+	Traffic []AccountTraffic `json:"traffic"`
 }
 
 type CloudInstanceUpdate struct {
@@ -306,6 +318,7 @@ type RelayPool struct {
 	Network               string            `json:"network"`
 	Mode                  string            `json:"mode"`
 	Enabled               bool              `json:"enabled"`
+	AutoDrain             bool              `json:"auto_drain"`
 	DNSProviderID         string            `json:"dns_provider_id,omitempty"`
 	DNSRecordName         string            `json:"dns_record_name,omitempty"`
 	DNSTTL                int               `json:"dns_ttl"`
@@ -319,15 +332,26 @@ type RelayPool struct {
 }
 
 type RelayPoolMember struct {
-	ID            string `json:"id"`
-	PoolID        string `json:"pool_id"`
-	RelayNodeID   string `json:"relay_node_id"`
-	RelayNodeName string `json:"relay_node_name"`
-	PublicIP      string `json:"public_ip,omitempty"`
-	Status        string `json:"status"`
-	Weight        int    `json:"weight"`
-	Enabled       bool   `json:"enabled"`
-	ServiceID     string `json:"service_id,omitempty"`
+	ID                        string     `json:"id"`
+	PoolID                    string     `json:"pool_id"`
+	RelayNodeID               string     `json:"relay_node_id"`
+	RelayNodeName             string     `json:"relay_node_name"`
+	PublicIP                  string     `json:"public_ip,omitempty"`
+	Status                    string     `json:"status"`
+	Weight                    int        `json:"weight"`
+	Enabled                   bool       `json:"enabled"`
+	ServiceID                 string     `json:"service_id,omitempty"`
+	CloudAccountID            *int64     `json:"cloud_account_id,omitempty"`
+	CloudAccountName          string     `json:"cloud_account_name,omitempty"`
+	TrafficKnown              bool       `json:"traffic_known"`
+	TrafficUsedGB             float64    `json:"traffic_used_gb,omitempty"`
+	TrafficLimitGB            float64    `json:"traffic_limit_gb,omitempty"`
+	TrafficPercent            float64    `json:"traffic_percent,omitempty"`
+	TrafficThresholdPercent   float64    `json:"traffic_threshold_percent,omitempty"`
+	ProtectionMode            string     `json:"protection_mode,omitempty"`
+	ProtectionTriggered       bool       `json:"protection_triggered"`
+	ProtectionActionCompleted bool       `json:"protection_action_completed"`
+	ProtectionTriggeredAt     *time.Time `json:"protection_triggered_at,omitempty"`
 }
 
 type CreateRelayPoolRequest struct {
@@ -337,6 +361,7 @@ type CreateRelayPoolRequest struct {
 	Network               string                  `json:"network"`
 	Mode                  string                  `json:"mode"`
 	Enabled               *bool                   `json:"enabled,omitempty"`
+	AutoDrain             *bool                   `json:"auto_drain,omitempty"`
 	DNSProviderID         string                  `json:"dns_provider_id"`
 	DNSRecordName         string                  `json:"dns_record_name"`
 	DNSTTL                int                     `json:"dns_ttl"`
@@ -431,6 +456,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			protection_mode TEXT NOT NULL DEFAULT 'alert_only',
 			protection_triggered INTEGER NOT NULL DEFAULT 0,
 			protection_triggered_at TEXT,
+			protection_drain_published INTEGER NOT NULL DEFAULT 0,
 			protection_action_completed INTEGER NOT NULL DEFAULT 0,
 			protection_last_error TEXT NOT NULL DEFAULT '',
 			enabled INTEGER DEFAULT 1,
@@ -564,6 +590,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			network TEXT NOT NULL,
 			mode TEXT NOT NULL,
 			enabled INTEGER NOT NULL DEFAULT 1,
+			auto_drain INTEGER NOT NULL DEFAULT 1,
 			dns_provider_id TEXT REFERENCES dns_providers(id) ON DELETE SET NULL,
 			dns_record_name TEXT NOT NULL DEFAULT '',
 			dns_ttl INTEGER NOT NULL DEFAULT 60,
@@ -597,6 +624,11 @@ func (s *Store) migrate(ctx context.Context) error {
 			enabled INTEGER NOT NULL DEFAULT 1,
 			UNIQUE(pool_id,landing_node_id)
 		)`,
+		`CREATE TABLE IF NOT EXISTS dns_managed_record_pools (
+			record_id TEXT NOT NULL REFERENCES dns_managed_records(id) ON DELETE CASCADE,
+			pool_id TEXT NOT NULL REFERENCES relay_pools(id) ON DELETE CASCADE,
+			PRIMARY KEY(record_id,pool_id)
+		)`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
@@ -625,6 +657,9 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.ensureColumn(ctx, "relay_services", "pool_id", "TEXT"); err != nil {
 		return err
 	}
+	if err := s.ensureColumn(ctx, "relay_pools", "auto_drain", "INTEGER NOT NULL DEFAULT 1"); err != nil {
+		return err
+	}
 	for _, column := range []struct {
 		name       string
 		definition string
@@ -645,6 +680,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		{name: "protection_triggered_at", definition: "TEXT"},
 		{name: "protection_action_completed", definition: "INTEGER NOT NULL DEFAULT 0"},
 		{name: "protection_last_error", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "protection_drain_published", definition: "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := s.ensureColumn(ctx, "accounts", column.name, column.definition); err != nil {
 			return err
@@ -661,6 +697,13 @@ func (s *Store) migrate(ctx context.Context) error {
 		if err := s.ensureColumn(ctx, "dns_managed_records", column.name, column.definition); err != nil {
 			return err
 		}
+	}
+	// A single DNS A/AAAA row may be shared by several port-specific pools
+	// using the same hostname. Backfill the ownership relation introduced after
+	// the original pool_id column so existing installations remain manageable.
+	if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO dns_managed_record_pools(record_id,pool_id)
+		SELECT id,pool_id FROM dns_managed_records WHERE COALESCE(pool_id,'')<>''`); err != nil {
+		return err
 	}
 	// Older Agents were associated through ECS metadata only. Backfill the
 	// account relationship from the synchronized instance inventory so those
@@ -987,8 +1030,13 @@ func (s *Store) AgentConfig(ctx context.Context, id string) (protocol.AgentConfi
 	var revision int64
 	var protectionSuspended int
 	if err := s.db.QueryRowContext(ctx, `SELECT rn.desired_revision,
-		CASE WHEN COALESCE(a.protection_triggered,0)=1 AND COALESCE(a.protection_mode,'alert_only')='drain_relay' THEN 1 ELSE 0 END
-		FROM relay_nodes rn LEFT JOIN accounts a ON a.id=rn.cloud_account_id WHERE rn.id=?`, id).Scan(&revision, &protectionSuspended); err != nil {
+		CASE WHEN COALESCE(a.protection_triggered,0)=1 AND (
+			COALESCE(a.protection_mode,'alert_only')='drain_relay' OR EXISTS(
+				SELECT 1 FROM relay_services ars JOIN relay_pools arp ON arp.id=ars.pool_id
+				WHERE ars.relay_node_id=rn.id AND ars.enabled=1 AND COALESCE(arp.enabled,1)=1 AND COALESCE(arp.auto_drain,1)=1
+			)
+		) THEN 1 ELSE 0 END
+		FROM relay_nodes rn LEFT JOIN accounts a ON a.id=rn.cloud_account_id OR (rn.cloud_account_id IS NULL AND rn.ecs_instance_id IN (SELECT instance_id FROM instances WHERE account_id=a.id)) WHERE rn.id=?`, id).Scan(&revision, &protectionSuspended); err != nil {
 		return protocol.AgentConfig{}, err
 	}
 	services, err := s.ListRelayServices(ctx, id)
@@ -1222,6 +1270,9 @@ func (s *Store) CreateRelayService(ctx context.Context, request CreateRelayServi
 		return RelayService{}, err
 	}
 	defer tx.Rollback()
+	if err := validateListenConflictTx(ctx, tx, request.RelayNodeID, request.ListenHost, request.ListenPort, request.Network, ""); err != nil {
+		return RelayService{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO relay_services(id,relay_node_id,name,listen_host,listen_port,network,mode,enabled,dial_timeout_ms,udp_idle_timeout_seconds,health_enabled,health_interval_seconds,health_timeout_ms,failure_threshold,success_threshold,recovery_cooldown_seconds,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		serviceID, request.RelayNodeID, strings.TrimSpace(request.Name), request.ListenHost, request.ListenPort, request.Network, request.Mode, boolInt(enabled), request.DialTimeoutMillis, request.UDPIdleTimeoutSeconds,
 		boolInt(request.Health.Enabled), request.Health.IntervalSeconds, request.Health.TimeoutMillis, request.Health.FailureThreshold, request.Health.SuccessThreshold, request.Health.RecoveryCooldownSecs, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
@@ -1256,6 +1307,47 @@ func (s *Store) CreateRelayService(ctx context.Context, request CreateRelayServi
 		}
 	}
 	return RelayService{}, errors.New("service was created but could not be loaded")
+}
+
+// validateListenConflictTx catches transport overlaps before an Agent receives
+// an impossible revision. SQLite's uniqueness constraint only compares the
+// literal network string, while a tcp+udp listener occupies both sockets.
+func validateListenConflictTx(ctx context.Context, tx *sql.Tx, relayNodeID, listenHost string, listenPort int, network, excludeID string) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id,listen_host,listen_port,network FROM relay_services WHERE relay_node_id=?`, relayNodeID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, existingHost, existingNetwork string
+		var existingPort int
+		if err := rows.Scan(&id, &existingHost, &existingPort, &existingNetwork); err != nil {
+			return err
+		}
+		if id == excludeID || existingPort != listenPort || !listenHostsOverlap(existingHost, listenHost) || !networksOverlap(existingNetwork, network) {
+			continue
+		}
+		return fmt.Errorf("relay listener conflicts with existing service %s on %s:%d (%s)", id, listenHost, listenPort, existingNetwork)
+	}
+	return rows.Err()
+}
+
+func listenHostsOverlap(left, right string) bool {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if left == "" || right == "" || left == right {
+		return true
+	}
+	return left == "0.0.0.0" || left == "::" || right == "0.0.0.0" || right == "::"
+}
+
+func networksOverlap(left, right string) bool {
+	left = strings.ToLower(strings.TrimSpace(left))
+	right = strings.ToLower(strings.TrimSpace(right))
+	if left == right {
+		return true
+	}
+	return left == "tcp+udp" || right == "tcp+udp"
 }
 
 func (s *Store) UpdateRelayService(ctx context.Context, id string, request CreateRelayServiceRequest) (RelayService, error) {
@@ -1303,6 +1395,9 @@ func (s *Store) UpdateRelayService(ctx context.Context, id string, request Creat
 		return RelayService{}, err
 	}
 	defer tx.Rollback()
+	if err := validateListenConflictTx(ctx, tx, existingNodeID, request.ListenHost, request.ListenPort, request.Network, id); err != nil {
+		return RelayService{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE relay_services SET name=?,listen_host=?,listen_port=?,network=?,mode=?,enabled=?,dial_timeout_ms=?,udp_idle_timeout_seconds=?,health_enabled=?,health_interval_seconds=?,health_timeout_ms=?,failure_threshold=?,success_threshold=?,recovery_cooldown_seconds=?,updated_at=? WHERE id=?`,
 		strings.TrimSpace(request.Name), request.ListenHost, request.ListenPort, request.Network, request.Mode, boolInt(enabled), request.DialTimeoutMillis, request.UDPIdleTimeoutSeconds,
 		boolInt(request.Health.Enabled), request.Health.IntervalSeconds, request.Health.TimeoutMillis, request.Health.FailureThreshold, request.Health.SuccessThreshold, request.Health.RecoveryCooldownSecs, now, id); err != nil {
@@ -1431,7 +1526,7 @@ func (s *Store) ListCloudAccounts(ctx context.Context, enabledOnly bool) ([]Clou
 		COALESCE(traffic_limit_gb,200),COALESCE(threshold_percent,95),COALESCE(outstanding_threshold,0),COALESCE(shutdown_mode,'StopCharging'),
 		COALESCE(keep_alive,0),COALESCE(auto_start_time,''),COALESCE(auto_stop_time,''),COALESCE(manual_stopped,0),COALESCE(nostock_notified,0),
 		COALESCE(protection_mode,'alert_only'),COALESCE(protection_triggered,0),protection_triggered_at,
-		COALESCE(protection_action_completed,0),COALESCE(a.protection_last_error,''),COALESCE(a.enabled,1),a.created_at,
+		COALESCE(protection_action_completed,0),COALESCE(a.protection_last_error,''),COALESCE(a.protection_drain_published,0),COALESCE(a.enabled,1),a.created_at,
 		(SELECT COUNT(*) FROM relay_nodes rn LEFT JOIN instances ri ON ri.instance_id=rn.ecs_instance_id
 		 WHERE rn.cloud_account_id=a.id OR (rn.cloud_account_id IS NULL AND ri.account_id=a.id)),
 		(SELECT COUNT(*) FROM relay_nodes rn LEFT JOIN instances ri ON ri.instance_id=rn.ecs_instance_id
@@ -1450,13 +1545,13 @@ func (s *Store) ListCloudAccounts(ctx context.Context, enabledOnly bool) ([]Clou
 	accounts := make([]CloudAccount, 0)
 	for rows.Next() {
 		var account CloudAccount
-		var enabled, keepAlive, manualStopped, noStockNotified, triggered, actionCompleted int
+		var enabled, keepAlive, manualStopped, noStockNotified, triggered, actionCompleted, drainPublished int
 		var agentCount, onlineAgentCount int
 		var triggeredAt, createdAt sql.NullString
 		if err := rows.Scan(&account.ID, &account.Name, &account.AccessKeyID, &account.AccessKeySecret, &account.RegionID, &account.SiteType,
 			&account.ProtectedInstanceID, &account.TrafficLimitGB, &account.ThresholdPercent, &account.OutstandingThreshold, &account.ShutdownMode,
 			&keepAlive, &account.AutoStartTime, &account.AutoStopTime, &manualStopped, &noStockNotified,
-			&account.ProtectionMode, &triggered, &triggeredAt, &actionCompleted, &account.ProtectionLastError, &enabled, &createdAt, &agentCount, &onlineAgentCount); err != nil {
+			&account.ProtectionMode, &triggered, &triggeredAt, &actionCompleted, &account.ProtectionLastError, &drainPublished, &enabled, &createdAt, &agentCount, &onlineAgentCount); err != nil {
 			return nil, err
 		}
 		account.Enabled = enabled != 0
@@ -1465,6 +1560,7 @@ func (s *Store) ListCloudAccounts(ctx context.Context, enabledOnly bool) ([]Clou
 		account.NoStockNotified = noStockNotified != 0
 		account.ProtectionTriggered = triggered != 0
 		account.ProtectionActionCompleted = actionCompleted != 0
+		account.ProtectionDrainPublished = drainPublished != 0
 		account.AgentCount = agentCount
 		account.OnlineAgentCount = onlineAgentCount
 		account.AgentInstalled = agentCount > 0
@@ -1532,12 +1628,20 @@ func (s *Store) UpdateCloudAccount(ctx context.Context, id int64, request CloudA
 	if err != nil {
 		return CloudAccount{}, err
 	}
+	autoDrain, err := accountHasAutoDrainPoolTx(ctx, tx, id)
+	if err != nil {
+		return CloudAccount{}, err
+	}
 	if triggered != 0 && oldMode != request.ProtectionMode && (oldMode == ProtectionDrainRelay || request.ProtectionMode == ProtectionDrainRelay) {
 		if err := bumpAccountRelayRevisions(ctx, tx, id); err != nil {
 			return CloudAccount{}, err
 		}
+		published := request.ProtectionMode == ProtectionDrainRelay || autoDrain
+		if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_drain_published=? WHERE id=?`, boolInt(published), id); err != nil {
+			return CloudAccount{}, err
+		}
 	}
-	if triggered != 0 && !enabled && oldMode == request.ProtectionMode && oldMode == ProtectionDrainRelay {
+	if triggered != 0 && !enabled && (oldMode == ProtectionDrainRelay || autoDrain) {
 		if err := bumpAccountRelayRevisions(ctx, tx, id); err != nil {
 			return CloudAccount{}, err
 		}
@@ -1553,7 +1657,7 @@ func (s *Store) UpdateCloudAccount(ctx context.Context, id int64, request CloudA
 		}
 	}
 	if triggered != 0 && !enabled {
-		if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_triggered=0,protection_triggered_at=NULL,protection_action_completed=0,protection_last_error='' WHERE id=?`, id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_triggered=0,protection_triggered_at=NULL,protection_action_completed=0,protection_drain_published=0,protection_last_error='' WHERE id=?`, id); err != nil {
 			return CloudAccount{}, err
 		}
 	}
@@ -1609,11 +1713,13 @@ func (s *Store) CloudOverview(ctx context.Context) (CloudOverview, error) {
 	for index := range accounts {
 		accounts[index].AccessKeySecret = ""
 	}
+	// CDT usage is deliberately not joined onto instance rows here. The
+	// ListCdtInternetTraffic API returns an account-level aggregate, so joining
+	// account_traffic_snapshots would duplicate the same total for every ECS
+	// instance and make it look like a per-instance measurement.
 	rows, err := s.db.QueryContext(ctx, `SELECT i.id,i.account_id,i.instance_id,COALESCE(i.instance_name,''),COALESCE(i.region_id,''),COALESCE(i.status,'Unknown'),COALESCE(i.public_ip,''),COALESCE(i.instance_type,''),COALESCE(i.bandwidth_mbps,0),COALESCE(i.is_spot,0),
-		COALESCE(s.used_gb,COALESCE(i.traffic_used_gb,0)),
-		CASE WHEN COALESCE(a.traffic_limit_gb,200)>0 THEN COALESCE(s.used_gb,COALESCE(i.traffic_used_gb,0))/COALESCE(a.traffic_limit_gb,200)*100 ELSE COALESCE(i.traffic_percent,0) END,
 		i.last_synced,i.updated_at
-		FROM instances i JOIN accounts a ON a.id=i.account_id LEFT JOIN account_traffic_snapshots s ON s.account_id=i.account_id ORDER BY i.account_id,i.id`)
+		FROM instances i JOIN accounts a ON a.id=i.account_id ORDER BY i.account_id,i.id`)
 	if err != nil {
 		return CloudOverview{}, err
 	}
@@ -1622,7 +1728,7 @@ func (s *Store) CloudOverview(ctx context.Context) (CloudOverview, error) {
 		var instance CloudInstance
 		var isSpot int
 		var lastSynced, updatedAt sql.NullString
-		if err := rows.Scan(&instance.ID, &instance.AccountID, &instance.InstanceID, &instance.InstanceName, &instance.RegionID, &instance.Status, &instance.PublicIP, &instance.InstanceType, &instance.BandwidthMbps, &isSpot, &instance.TrafficUsedGB, &instance.TrafficPercent, &lastSynced, &updatedAt); err != nil {
+		if err := rows.Scan(&instance.ID, &instance.AccountID, &instance.InstanceID, &instance.InstanceName, &instance.RegionID, &instance.Status, &instance.PublicIP, &instance.InstanceType, &instance.BandwidthMbps, &isSpot, &lastSynced, &updatedAt); err != nil {
 			rows.Close()
 			return CloudOverview{}, err
 		}
@@ -1652,6 +1758,7 @@ func (s *Store) CloudOverview(ctx context.Context) (CloudOverview, error) {
 		if err := trafficRows.Scan(&snapshot.AccountID, &snapshot.UsedGB, &synced, &snapshot.LastError); err != nil {
 			return CloudOverview{}, err
 		}
+		snapshot.Scope = TrafficScopeAccount
 		if synced.Valid {
 			parsed := parseDatabaseTime(synced.String)
 			snapshot.SyncedAt = &parsed
@@ -1677,7 +1784,7 @@ func (s *Store) SaveCloudSync(ctx context.Context, account CloudAccount, instanc
 				account.ID, instance.InstanceID, instance.InstanceName, instance.RegionID, instance.Status, instance.PublicIP, instance.InstanceType, instance.BandwidthMbps, boolInt(instance.IsSpot), now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET cloud_account_id=?,region_id=?,public_ip=CASE WHEN public_ip='' THEN ? ELSE public_ip END WHERE ecs_instance_id=?`, account.ID, instance.RegionID, instance.PublicIP, instance.InstanceID); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET cloud_account_id=?,region_id=?,public_ip=CASE WHEN ?<>'' THEN ? ELSE public_ip END WHERE ecs_instance_id=?`, account.ID, instance.RegionID, instance.PublicIP, instance.PublicIP, instance.InstanceID); err != nil {
 				return err
 			}
 		}
@@ -1726,12 +1833,12 @@ func (s *Store) ApplyTrafficProtection(ctx context.Context, accountID int64, tra
 	defer tx.Rollback()
 	var decision TrafficProtectionDecision
 	var trafficLimit, threshold float64
-	var triggered, actionCompleted int
+	var triggered, actionCompleted, drainPublished int
 	if err := tx.QueryRowContext(ctx, `SELECT id,name,COALESCE(instance_id,''),COALESCE(traffic_limit_gb,200),COALESCE(threshold_percent,95),
-		COALESCE(protection_mode,'alert_only'),COALESCE(protection_triggered,0),COALESCE(protection_action_completed,0)
+		COALESCE(protection_mode,'alert_only'),COALESCE(protection_triggered,0),COALESCE(protection_action_completed,0),COALESCE(protection_drain_published,0)
 		FROM accounts WHERE id=?`, accountID).Scan(
 		&decision.AccountID, &decision.AccountName, &decision.InstanceID, &trafficLimit, &threshold,
-		&decision.Mode, &triggered, &actionCompleted,
+		&decision.Mode, &triggered, &actionCompleted, &drainPublished,
 	); err != nil {
 		return TrafficProtectionDecision{}, err
 	}
@@ -1743,18 +1850,26 @@ func (s *Store) ApplyTrafficProtection(ctx context.Context, accountID int64, tra
 	}
 	decision.Percent = trafficGB / trafficLimit * 100
 	exceeded := decision.Percent >= threshold
+	autoDrain, err := accountHasAutoDrainPoolTx(ctx, tx, accountID)
+	if err != nil {
+		return TrafficProtectionDecision{}, err
+	}
 	now := time.Now().UTC()
 	if exceeded {
 		decision.Triggered = true
 		if triggered == 0 {
 			decision.Changed = true
-			if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_triggered=1,protection_triggered_at=?,protection_action_completed=0,protection_last_error='' WHERE id=?`, now.Format(time.RFC3339Nano), accountID); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_triggered=1,protection_triggered_at=?,protection_action_completed=0,protection_drain_published=0,protection_last_error='' WHERE id=?`, now.Format(time.RFC3339Nano), accountID); err != nil {
 				return TrafficProtectionDecision{}, err
 			}
-			if decision.Mode == ProtectionDrainRelay {
+			if decision.Mode == ProtectionDrainRelay || autoDrain {
 				if err := bumpAccountRelayRevisions(ctx, tx, accountID); err != nil {
 					return TrafficProtectionDecision{}, err
 				}
+				if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_drain_published=1 WHERE id=?`, accountID); err != nil {
+					return TrafficProtectionDecision{}, err
+				}
+				drainPublished = 1
 			}
 			message := fmt.Sprintf("[%s] CDT 流量达到保护阈值：%.2f%%", decision.AccountName, decision.Percent)
 			if err := insertEvent(ctx, tx, "", "warning", "traffic_protection", message, now); err != nil {
@@ -1762,15 +1877,26 @@ func (s *Store) ApplyTrafficProtection(ctx context.Context, accountID int64, tra
 			}
 			actionCompleted = 0
 		}
+		// Existing installations may have a triggered account from before the
+		// drain-revision marker was introduced. Publish one catch-up revision,
+		// but never increment on every periodic sync.
+		if triggered != 0 && (decision.Mode == ProtectionDrainRelay || autoDrain) && drainPublished == 0 {
+			if err := bumpAccountRelayRevisions(ctx, tx, accountID); err != nil {
+				return TrafficProtectionDecision{}, err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_drain_published=1 WHERE id=?`, accountID); err != nil {
+				return TrafficProtectionDecision{}, err
+			}
+		}
 		decision.NeedsStop = decision.Mode == ProtectionStopECS && decision.InstanceID != "" && actionCompleted == 0
 	} else {
 		decision.Triggered = false
 		if triggered != 0 {
 			decision.Changed = true
-			if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_triggered=0,protection_triggered_at=NULL,protection_action_completed=0,protection_last_error='' WHERE id=?`, accountID); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_triggered=0,protection_triggered_at=NULL,protection_action_completed=0,protection_drain_published=0,protection_last_error='' WHERE id=?`, accountID); err != nil {
 				return TrafficProtectionDecision{}, err
 			}
-			if decision.Mode == ProtectionDrainRelay {
+			if decision.Mode == ProtectionDrainRelay || autoDrain {
 				if err := bumpAccountRelayRevisions(ctx, tx, accountID); err != nil {
 					return TrafficProtectionDecision{}, err
 				}
@@ -1834,8 +1960,68 @@ func (s *Store) ConfirmTrafficProtectionStop(ctx context.Context, accountID int6
 }
 
 func bumpAccountRelayRevisions(ctx context.Context, tx *sql.Tx, accountID int64) error {
-	_, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET desired_revision=desired_revision+1 WHERE cloud_account_id=?`, accountID)
+	_, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET desired_revision=desired_revision+1
+		WHERE cloud_account_id=? OR (cloud_account_id IS NULL AND ecs_instance_id IN (
+			SELECT instance_id FROM instances WHERE account_id=?
+		))`, accountID, accountID)
 	return err
+}
+
+func accountHasAutoDrainPoolTx(ctx context.Context, tx *sql.Tx, accountID int64) (bool, error) {
+	var enabled int
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM relay_services rs
+		JOIN relay_pools rp ON rp.id=rs.pool_id
+		JOIN relay_nodes rn ON rn.id=rs.relay_node_id
+		WHERE (rn.cloud_account_id=? OR (rn.cloud_account_id IS NULL AND rn.ecs_instance_id IN (
+			SELECT instance_id FROM instances WHERE account_id=?
+		))) AND rs.enabled=1 AND COALESCE(rp.enabled,1)=1 AND COALESCE(rp.auto_drain,1)=1
+	)`, accountID, accountID).Scan(&enabled)
+	return enabled != 0, err
+}
+
+// EnsureProtectionRevisions repairs the one bit of state that cannot be
+// inferred by an Agent: whether a triggered account's drain revision has
+// already been published. It is called by the DNS scheduler at startup so a
+// controller restart cannot leave a triggered pool listening until the next
+// cloud API poll.
+func (s *Store) EnsureProtectionRevisions(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT a.id
+		FROM accounts a JOIN relay_nodes rn ON rn.cloud_account_id=a.id OR (rn.cloud_account_id IS NULL AND rn.ecs_instance_id IN (SELECT instance_id FROM instances WHERE account_id=a.id))
+		JOIN relay_services rs ON rs.relay_node_id=rn.id
+		LEFT JOIN relay_pools rp ON rp.id=rs.pool_id
+		WHERE COALESCE(a.enabled,1)=1 AND COALESCE(a.protection_triggered,0)=1
+		AND COALESCE(a.protection_drain_published,0)=0
+		AND (COALESCE(a.protection_mode,'alert_only')='drain_relay' OR (rs.pool_id IS NOT NULL AND COALESCE(rp.enabled,1)=1 AND COALESCE(rp.auto_drain,1)=1))`)
+	if err != nil {
+		return err
+	}
+	accountIDs := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		accountIDs = append(accountIDs, id)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, id := range accountIDs {
+		if err := bumpAccountRelayRevisions(ctx, tx, id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_drain_published=1 WHERE id=?`, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) CloudAccountForInstance(ctx context.Context, instanceID string) (CloudAccount, error) {

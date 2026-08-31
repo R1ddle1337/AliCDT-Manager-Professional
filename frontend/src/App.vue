@@ -17,20 +17,51 @@
           </div>
         </div>
 
-        <nav class="flex-1 px-3 py-6" aria-label="主导航">
-          <div class="nav-section-label">工作区</div>
-          <div class="space-y-1">
+        <nav class="sidebar-nav" aria-label="主导航">
+          <section class="nav-section" aria-labelledby="primary-navigation">
+            <div id="primary-navigation" class="nav-section-label">核心流程</div>
+            <div class="nav-list">
+              <button
+                v-for="item in primaryNavItems"
+                :key="item.path"
+                type="button"
+                class="nav-item"
+                :class="isActive(item.path) ? 'nav-item-active' : ''"
+                :aria-current="isActive(item.path) ? 'page' : undefined"
+                @click="navigate(item.path)"
+              >
+                <span>{{ item.label }}</span>
+                <span v-if="item.recommended" class="nav-item-badge">推荐</span>
+              </button>
+            </div>
+          </section>
+
+          <section class="nav-section nav-section-advanced">
             <button
-              v-for="(item, index) in navItems"
-              :key="item.path"
               type="button"
-              class="nav-item"
-              :class="activeIndex === index ? 'nav-item-active' : ''"
-              @click="navigate(item.path)"
+              class="nav-group-toggle"
+              :class="advancedActive ? 'nav-group-toggle-active' : ''"
+              :aria-expanded="advancedOpen"
+              aria-controls="advanced-navigation"
+              @click="advancedOpen = !advancedOpen"
             >
-              <span>{{ item.label }}</span>
+              <span>高级管理</span>
+              <span class="nav-group-chevron" :class="advancedOpen ? 'nav-group-chevron-open' : ''" aria-hidden="true">›</span>
             </button>
-          </div>
+            <div v-show="advancedOpen" id="advanced-navigation" class="nav-list nav-list-advanced">
+              <button
+                v-for="item in advancedNavItems"
+                :key="item.path"
+                type="button"
+                class="nav-item nav-item-secondary"
+                :class="isActive(item.path) ? 'nav-item-active' : ''"
+                :aria-current="isActive(item.path) ? 'page' : undefined"
+                @click="navigate(item.path)"
+              >
+                <span>{{ item.label }}</span>
+              </button>
+            </div>
+          </section>
         </nav>
 
         <div class="sidebar-footer">
@@ -74,7 +105,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useRelayStore } from './stores/relay'
 
@@ -83,25 +114,39 @@ const router = useRouter()
 const relayStore = useRelayStore()
 const isLogin = computed(() => route.path === '/login')
 
-const navItems = [
-  { path: '/', label: '中转总览' },
-  { path: '/instances', label: '实例工作区' },
-  { path: '/accounts', label: '云账户' },
-  { path: '/cloud-resources', label: '流量保护' },
-  { path: '/relay-nodes', label: '中转节点' },
-  { path: '/landing-nodes', label: '落地节点' },
-  { path: '/relay-services', label: '转发服务' },
-  { path: '/relay-pools', label: '入口池' },
-  { path: '/logs', label: '系统日志' },
-  { path: '/settings', label: '系统设置' },
-  { path: '/dns', label: 'DNS 入口' },
+const primaryNavItems = [
+  { path: '/', label: '运行总览' },
+  { path: '/relay-pools', label: '统一入口', recommended: true },
+  { path: '/relay-nodes', label: 'CDT 中转' },
+  { path: '/landing-nodes', label: '全球落地' },
+  { path: '/cloud-resources', label: '云资源' },
 ]
 
-const activeIndex = computed(() => {
-  const index = navItems.findIndex(item => item.path === '/' ? route.path === '/' : route.path.startsWith(item.path))
-  return index === -1 ? 0 : index
+const advancedNavItems = [
+  { path: '/dns', label: 'DNS 托管' },
+  { path: '/relay-services', label: '单机转发' },
+  { path: '/accounts', label: '云账户（兼容）' },
+  { path: '/instances', label: '实例工作区（兼容）' },
+  { path: '/logs', label: '系统日志' },
+  { path: '/settings', label: '系统设置' },
+]
+
+// Keep every existing URL represented so bookmarks and older workflows remain
+// discoverable, while the default view focuses on the unified entry flow.
+const allNavItems = [...primaryNavItems, ...advancedNavItems]
+const advancedOpen = ref(false)
+
+function isActive(path) {
+  return path === '/' ? route.path === '/' : route.path === path || route.path.startsWith(`${path}/`)
+}
+
+const advancedActive = computed(() => advancedNavItems.some(item => isActive(item.path)))
+const activeItem = computed(() => {
+  return allNavItems.find(item => isActive(item.path)) || primaryNavItems[0]
 })
-const activeItem = computed(() => navItems[activeIndex.value] || navItems[0])
+watch(advancedActive, active => {
+  if (active) advancedOpen.value = true
+}, { immediate: true })
 const updateState = ref({ status: 'idle', message: '暂无更新任务' })
 const updateBusy = computed(() => ['pending', 'running'].includes(updateState.value.status))
 const updateButtonLabel = computed(() => {

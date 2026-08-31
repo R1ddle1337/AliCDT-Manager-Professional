@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -12,6 +13,60 @@ import (
 	"github.com/R1ddle1337/AliCDT-Manager-Professional/internal/protocol"
 	_ "modernc.org/sqlite"
 )
+
+func TestCloudOverviewKeepsAccountTrafficSeparateFromInstances(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	account, err := store.CreateCloudAccount(context.Background(), CloudAccountRequest{
+		Name: "shared-account", AccessKeyID: "key", AccessKeySecret: "secret",
+		RegionID: "cn-hongkong", SiteType: "china", TrafficLimitGB: 200, ThresholdPercent: 95,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	instances := []CloudInstanceUpdate{
+		{InstanceID: "i-one", InstanceName: "relay-one", RegionID: "cn-hongkong", Status: "Running", PublicIP: "203.0.113.1"},
+		{InstanceID: "i-two", InstanceName: "relay-two", RegionID: "cn-hongkong", Status: "Running", PublicIP: "203.0.113.2"},
+	}
+	if err := store.SaveCloudSync(context.Background(), account, instances, true, "", 12.5, true, ""); err != nil {
+		t.Fatal(err)
+	}
+	overview, err := store.CloudOverview(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(overview.Instances) != 2 || len(overview.Traffic) != 1 {
+		t.Fatalf("unexpected overview cardinality: %+v", overview)
+	}
+	if overview.Traffic[0].Scope != TrafficScopeAccount {
+		t.Fatalf("expected account-scoped traffic snapshot, got %+v", overview.Traffic[0])
+	}
+	encoded, err := json.Marshal(overview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Instances []map[string]interface{} `json:"instances"`
+		Traffic   []map[string]interface{} `json:"traffic"`
+	}
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatal(err)
+	}
+	for _, instance := range payload.Instances {
+		if _, exists := instance["traffic_used_gb"]; exists {
+			t.Fatalf("instance payload must not expose account traffic as per-instance usage: %v", instance)
+		}
+		if _, exists := instance["traffic_percent"]; exists {
+			t.Fatalf("instance payload must not expose account traffic percent: %v", instance)
+		}
+	}
+	if got := payload.Traffic[0]["scope"]; got != TrafficScopeAccount {
+		t.Fatalf("traffic payload scope = %v, want %q", got, TrafficScopeAccount)
+	}
+}
 
 func TestCloudTrafficFailurePreservesLastValidValue(t *testing.T) {
 	store, err := OpenStore(":memory:")
@@ -73,6 +128,37 @@ func TestCloudInstanceFailurePreservesLastValidInventory(t *testing.T) {
 	}
 	if len(overview.Instances) != 1 || overview.Instances[0].InstanceID != "i-test" {
 		t.Fatalf("last valid instance inventory was lost: %+v", overview.Instances)
+	}
+}
+
+func TestCloudSyncUpdatesRelayPublicIPWhenECSAddressChanges(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	account, err := store.CreateCloudAccount(context.Background(), CloudAccountRequest{
+		Name: "ip-change", AccessKeyID: "key", AccessKeySecret: "secret", RegionID: "cn-hongkong", SiteType: "china",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateEnrollmentToken(context.Background(), "ip-change-token", time.Hour, account.ID); err != nil {
+		t.Fatal(err)
+	}
+	agent, err := store.EnrollAgent(context.Background(), protocol.AgentEnrollmentRequest{Token: "ip-change-token", NodeName: "relay", ECSInstanceID: "i-ip", PublicIP: "203.0.113.60"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveCloudSync(context.Background(), account, []CloudInstanceUpdate{{InstanceID: "i-ip", PublicIP: "203.0.113.61", RegionID: "cn-hongkong", Status: "Running"}}, true, "", 0, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := store.ListRelayNodes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || nodes[0].ID != agent.AgentID || nodes[0].PublicIP != "203.0.113.61" {
+		t.Fatalf("relay public IP was not refreshed: %+v", nodes)
 	}
 }
 
@@ -335,6 +421,97 @@ func TestDrainRelayProtectionIsIdempotentAndRecovers(t *testing.T) {
 	}
 	if transitions != 2 {
 		t.Fatalf("expected one trigger and one recovery event, got %d: %+v", transitions, events)
+	}
+}
+
+func TestTriggeredAccountPublishesCatchupDrainRevisionOnce(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	account, nodeID := createProtectedRelay(t, store, ProtectionDrainRelay)
+	if _, err := store.db.Exec(`UPDATE accounts SET protection_triggered=1,protection_triggered_at=?,protection_drain_published=0 WHERE id=?`, time.Now().UTC().Format(time.RFC3339Nano), account.ID); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.AgentConfig(context.Background(), nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := store.ApplyTrafficProtection(context.Background(), account.ID, 190)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Changed {
+		t.Fatalf("pre-existing trigger should not create a new transition: %+v", decision)
+	}
+	after, err := store.AgentConfig(context.Background(), nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Revision != before.Revision+1 {
+		t.Fatalf("missing catch-up drain revision: before=%+v after=%+v", before, after)
+	}
+	if _, err := store.ApplyTrafficProtection(context.Background(), account.ID, 191); err != nil {
+		t.Fatal(err)
+	}
+	repeated, err := store.AgentConfig(context.Background(), nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeated.Revision != after.Revision {
+		t.Fatalf("catch-up marker caused repeated revisions: after=%d repeated=%d", after.Revision, repeated.Revision)
+	}
+}
+
+func TestEnsureProtectionRevisionsRepairsTriggeredPoolAfterRestart(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	account, nodeID := createProtectedRelay(t, store, ProtectionAlertOnly)
+	// Attach the existing relay service to a pool so the pool's default
+	// auto-drain policy applies even though the account itself is alert-only.
+	landing, err := store.CreateLandingNode(context.Background(), CreateLandingNodeRequest{Name: "pool-landing", Address: "127.0.0.1", Port: 9443, Network: "tcp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The helper service is intentionally left standalone; create a dedicated
+	// pool on another port for the restart-repair assertion.
+	pool, err := store.CreateRelayPool(context.Background(), CreateRelayPoolRequest{
+		Name: "restart", Hostname: "relay.example.com", ListenPort: 18447, Network: "tcp", Mode: "failover",
+		Members: []CreateRelayPoolMember{{RelayNodeID: nodeID}}, Targets: []CreateServiceTarget{{LandingNodeID: landing.ID}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE accounts SET protection_triggered=1,protection_triggered_at=?,protection_drain_published=0 WHERE id=?`, time.Now().UTC().Format(time.RFC3339Nano), account.ID); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.AgentConfig(context.Background(), nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.EnsureProtectionRevisions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	after, err := store.AgentConfig(context.Background(), nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Revision != before.Revision+1 {
+		t.Fatalf("restart repair did not publish revision: before=%+v after=%+v pool=%+v", before, after, pool)
+	}
+	if err := store.EnsureProtectionRevisions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	repeated, err := store.AgentConfig(context.Background(), nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeated.Revision != after.Revision {
+		t.Fatalf("restart repair published duplicate revision: after=%d repeated=%d", after.Revision, repeated.Revision)
 	}
 }
 

@@ -112,7 +112,16 @@ func (s *Store) RefreshRelayAgentDNSRecords(ctx context.Context) error {
 		}
 		var publicIP, status string
 		var draining int
-		err := s.db.QueryRowContext(ctx, `SELECT COALESCE(rn.public_ip,''),CASE WHEN (COALESCE(a.protection_triggered,0)=1 AND COALESCE(a.protection_mode,'alert_only')='drain_relay') OR COALESCE(rn.update_status,'idle') IN ('draining','updating') THEN 'draining' ELSE rn.status END,CASE WHEN (COALESCE(a.protection_triggered,0)=1 AND COALESCE(a.protection_mode,'alert_only')='drain_relay') OR COALESCE(rn.update_status,'idle') IN ('draining','updating') THEN 1 ELSE 0 END FROM relay_nodes rn LEFT JOIN accounts a ON a.id=rn.cloud_account_id WHERE rn.id=?`, record.RelayNodeID).Scan(&publicIP, &status, &draining)
+		err := s.db.QueryRowContext(ctx, `SELECT COALESCE(rn.public_ip,''),
+			CASE WHEN (COALESCE(a.protection_triggered,0)=1 AND (COALESCE(a.protection_mode,'alert_only')='drain_relay' OR EXISTS(
+				SELECT 1 FROM relay_services ars JOIN relay_pools arp ON arp.id=ars.pool_id
+				WHERE ars.relay_node_id=rn.id AND ars.enabled=1 AND COALESCE(arp.enabled,1)=1 AND COALESCE(arp.auto_drain,1)=1
+			))) OR COALESCE(rn.update_status,'idle') IN ('draining','updating') THEN 'draining' ELSE rn.status END,
+			CASE WHEN (COALESCE(a.protection_triggered,0)=1 AND (COALESCE(a.protection_mode,'alert_only')='drain_relay' OR EXISTS(
+				SELECT 1 FROM relay_services ars JOIN relay_pools arp ON arp.id=ars.pool_id
+				WHERE ars.relay_node_id=rn.id AND ars.enabled=1 AND COALESCE(arp.enabled,1)=1 AND COALESCE(arp.auto_drain,1)=1
+			))) OR COALESCE(rn.update_status,'idle') IN ('draining','updating') THEN 1 ELSE 0 END
+			FROM relay_nodes rn LEFT JOIN accounts a ON a.id=rn.cloud_account_id OR (rn.cloud_account_id IS NULL AND rn.ecs_instance_id IN (SELECT instance_id FROM instances WHERE account_id=a.id)) WHERE rn.id=?`, record.RelayNodeID).Scan(&publicIP, &status, &draining)
 		if err != nil {
 			continue
 		}
@@ -153,14 +162,16 @@ func recordKey(name, recordType, value string) string {
 	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(name), ".")) + "|" + strings.ToUpper(strings.TrimSpace(recordType)) + "|" + strings.TrimSpace(value)
 }
 
-// RunDNSScheduler periodically reconciles managed records. A relatively long
-// interval avoids rate limiting while manual sync remains available from the
-// UI.
+// RunDNSScheduler periodically reconciles managed records. Thirty seconds is
+// short enough to make a protection/offline transition useful while still
+// avoiding an unnecessarily aggressive provider polling loop; manual sync
+// remains available from the UI.
 func (s *Server) RunDNSScheduler(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
-		interval = time.Minute
+		interval = 30 * time.Second
 	}
 	initialCtx, initialCancel := context.WithTimeout(ctx, 45*time.Second)
+	_ = s.store.EnsureProtectionRevisions(initialCtx)
 	_ = s.store.RefreshRelayAgentDNSRecords(initialCtx)
 	_ = s.store.RefreshAllRelayPoolDNS(initialCtx)
 	_, _ = s.store.SyncAllDNS(initialCtx)
@@ -173,6 +184,7 @@ func (s *Server) RunDNSScheduler(ctx context.Context, interval time.Duration) {
 			return
 		case <-ticker.C:
 			syncCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+			_ = s.store.EnsureProtectionRevisions(syncCtx)
 			_ = s.store.RefreshRelayAgentDNSRecords(syncCtx)
 			_ = s.store.RefreshAllRelayPoolDNS(syncCtx)
 			_, _ = s.store.SyncAllDNS(syncCtx)

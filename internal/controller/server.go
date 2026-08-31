@@ -608,6 +608,13 @@ func (s *Server) updateCloudAccount(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	// A mode change can release or trigger a relay drain. Recompute managed
+	// record desired state before returning so the next DNS provider sync sees
+	// the new eligibility immediately.
+	refreshCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	_ = s.store.RefreshRelayAgentDNSRecords(refreshCtx)
+	_ = s.store.RefreshAllRelayPoolDNS(refreshCtx)
+	cancel()
 	writeJSON(w, http.StatusOK, account)
 }
 

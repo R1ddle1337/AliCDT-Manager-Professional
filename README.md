@@ -34,6 +34,10 @@
 - 国内站暂不启用余额与账单功能，国际站账单功能保持可用
 - DNS 入口托管抽象层：支持阿里云 DNS 与 Cloudflare，多 A 记录自动同步与健康排空
 - 逻辑入口池：一份用户节点绑定多台 CDT Relay，成员上线/排空状态自动同步到 DNS
+- 统一入口池默认启用流量自动排空：绑定账户达到 CDT 阈值后先撤 DNS，再停止新连接，恢复后自动加入
+
+注意：阿里云 `ListCdtInternetTraffic` 按账户统计公网出向流量，接口不提供 ECS 级明细。
+同一账户绑定多台 Relay 时会共享该账户的额度和保护状态；若需要独立额度，请使用独立的阿里云计费账户。
 
 Agent 更新说明：生产控制器通过 `CDT_AGENT_RELEASE_SOURCE=github` 从
 `CDT_AGENT_RELEASE_REPO` 的 GitHub Release 获取并校验 AMD64/ARM64 二进制，缓存目录默认为
