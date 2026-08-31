@@ -1,7 +1,6 @@
-// Parse timestamps produced by both the legacy Python service and the Go
-// controller. Python's SQLite values are UTC strings with a space separator
-// and up to six fractional-second digits; Go emits RFC3339 values that already
-// carry a timezone suffix.
+// Parse timestamps from the historical SQLite schema and the Go controller.
+// Historical values are UTC strings with a space separator and up to six
+// fractional-second digits; Go emits RFC3339 values with a timezone suffix.
 export function parseDate(value) {
   if (value instanceof Date) {
     return Number.isNaN(value.getTime()) ? null : value

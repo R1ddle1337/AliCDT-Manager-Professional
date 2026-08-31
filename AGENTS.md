@@ -5,8 +5,7 @@
 - `cmd/controller` and `cmd/relay-agent` contain the Go entry points.
 - Shared Go implementation lives under `internal/` (`controller`, `relay`, `agent`, `aliyun`, `dnsprovider`, and `protocol`); package tests sit beside code as `*_test.go`.
 - `frontend/src` is the Vue 3 console, organized into `components/`, `views/`, and `stores/`; Vite/Tailwind configuration is in `frontend/`.
-- `backend/` is the retained FastAPI implementation used by the root `Dockerfile` and `docker-compose.yml`.
-- `deploy/` contains Go controller Compose variants and systemd/Nginx assets; `scripts/` contains agent installers. `docs/` holds runbooks, while ignored `data*` directories hold runtime state.
+- `deploy/` contains Go controller/Dispatcher Compose variants and systemd/Nginx assets; `scripts/` contains Agent/Dispatcher installers. `docs/` holds runbooks, while ignored `data*` directories hold runtime state.
 
 ## Build, Test, and Development Commands
 
@@ -14,11 +13,10 @@
 - `make build` builds the controller, relay agent, and frontend; use `make controller`, `make agent`, or `make frontend` for one target.
 - `cd frontend && npm install` installs UI dependencies; `npm run dev` starts Vite and `npm run build` creates the production bundle.
 - Run the Go development stack with `CDT_ADMIN_TOKEN=... CDT_BOOTSTRAP_ENROLL_TOKEN=... docker compose -f deploy/docker-compose.go.yml up --build`.
-- The legacy-compatible stack can be built with `docker compose up --build`.
 
 ## Coding Style & Naming Conventions
 
-Format Go changes with `gofmt`, return contextual errors, and honor `context.Context` in I/O paths. Use `CamelCase` for exported Go identifiers. Match the Vue style: two-space indentation, semicolon-free JavaScript, PascalCase component filenames, and camelCase functions/state. Follow four-space PEP 8 conventions in Python; no repository-wide formatter or linter is configured.
+Format Go changes with `gofmt`, return contextual errors, and honor `context.Context` in I/O paths. Use `CamelCase` for exported Go identifiers. Match the Vue style: two-space indentation, semicolon-free JavaScript, PascalCase component filenames, and camelCase functions/state. No repository-wide formatter or linter is configured.
 
 ## Testing Guidelines
 

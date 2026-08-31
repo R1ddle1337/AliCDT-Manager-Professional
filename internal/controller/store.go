@@ -781,8 +781,8 @@ func (s *Store) migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `UPDATE relay_nodes SET cloud_account_id=(SELECT account_id FROM instances WHERE instances.instance_id=relay_nodes.ecs_instance_id) WHERE (cloud_account_id IS NULL OR cloud_account_id=0) AND COALESCE(ecs_instance_id,'')<>''`); err != nil {
 		return err
 	}
-	// The Python version stored account-level CDT usage on every instance row.
-	// Seed only clearly valid, positive legacy values. An absent snapshot is
+	// The historical schema stored account-level CDT usage on every instance
+	// row. Seed only clearly valid, positive values. An absent snapshot is
 	// preferable to presenting an unknown or previously failed request as 0 GB.
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO account_traffic_snapshots(account_id,used_gb,synced_at,last_error,updated_at)
@@ -791,7 +791,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		GROUP BY account_id
 		HAVING MAX(COALESCE(traffic_used_gb,0)) > 0
 		ON CONFLICT(account_id) DO NOTHING`, now); err != nil {
-		return fmt.Errorf("seed legacy traffic snapshots: %w", err)
+		return fmt.Errorf("seed historical traffic snapshots: %w", err)
 	}
 	return nil
 }

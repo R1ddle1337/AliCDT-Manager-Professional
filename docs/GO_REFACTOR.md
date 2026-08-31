@@ -1,9 +1,10 @@
 # Go Relay Platform Refactor
 
 This branch contains the Go-based relay platform and the production controller
-deployed behind `https://cdt.7b.tn/`. The original cloud-resource workflows are
-kept through the compatibility API while the relay control plane uses the
-versioned Go API.
+deployed behind `https://cdt.7b.tn/`. The former FastAPI/Python runtime has been
+removed; all production processes are Go-based. A small set of `/api` handlers
+remains inside the Go controller solely for existing compatibility-page URLs
+and bookmarks, not as a second backend service.
 
 ## Components
 
@@ -23,7 +24,7 @@ Relay data plane: deploy two or more independent, high-bandwidth non-CDT
 gateways and keep the controller's read-only dispatch token out of Git and
 administrator credentials.
 
-## Cloud-resource compatibility
+## Cloud-resource workflows
 
 The controller keeps the original account workflow and SQLite data in place:
 

@@ -85,9 +85,10 @@ rollback() {
       docker tag "$rollback_image" alicdt-controller:production >/dev/null 2>&1 || true
       docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --force-recreate --no-build --wait --wait-timeout 120 >/dev/null 2>&1 || true
     else
+      # The Go controller is the only supported runtime. If no previous image
+      # was available, leave the service stopped and report the failure rather
+      # than attempting to revive the removed Python stack.
       docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down >/dev/null 2>&1 || true
-      docker update --restart=always alicdt-manager >/dev/null 2>&1 || true
-      docker start alicdt-manager >/dev/null 2>&1 || true
     fi
   fi
   write_status "error" "更新失败，已尝试恢复上一个版本" "$request_id" "$target_commit" "$started_at" "$finished_at" || true

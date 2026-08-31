@@ -65,35 +65,25 @@ AliyunCDTFullAccess
 AliyunBSSFullAccess
 ```
 
-## 一键安装
+## Go 控制器部署
+
+仓库现在只保留 Go 控制器、Relay Agent 和 Dispatcher 运行栈。旧的
+FastAPI/Python 镜像、根目录旧 Compose 文件和旧安装脚本已移除。
+
+开发环境：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/R1ddle1337/AliCDT-Manager-Professional/main/install.sh)
+export CDT_ADMIN_TOKEN="replace-with-random-admin-token"
+export CDT_BOOTSTRAP_ENROLL_TOKEN="replace-with-one-time-enrollment-token"
+docker compose -f deploy/docker-compose.go.yml up --build
 ```
 
-docker-compose.yml 默认端口为
-ports:
-     - "127.0.0.1:8000:8000"
-在安装完成需要配置 Nginx 反代通过域名访问
+生产环境请使用 `deploy/docker-compose.go.production.yml`，将
+`CDT_ADMIN_TOKEN` 放在仓库外的权限为 `0600` 的环境文件中，并把
+`/app/alicdt-manager/data` 作为唯一数据库目录。生产更新可通过面板的“一键更新”
+或 `deploy/alicdt-manager-update.sh` 执行；脚本会先备份数据库，再重建并等待健康检查。
 
-
-## 手动部署
-
-```bash
-mkdir -p /app/alicdt-manager/data && cd /app/alicdt-manager
-```
-```bash
-echo "SECRET_KEY=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 48)" > .env
-```
-```bash
-curl -fsSL https://raw.githubusercontent.com/R1ddle1337/AliCDT-Manager-Professional/main/docker-compose.yml -o docker-compose.yml
-```
-```bash
-docker compose build
-docker compose up -d --no-build
-```
-
-## Nginx Cloudflare 配置示例
+## Nginx/Cloudflare 配置示例
 
 请手动填写 #端口 #域名 #Pem证书路径 #Key证书路径
 
@@ -121,7 +111,7 @@ server {
     }
 
     location / {
-        proxy_pass http://127.0.0.1:8000;
+        proxy_pass http://127.0.0.1:18000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -136,23 +126,6 @@ server {
 ```
 
 ---
-
-## 常用命令
-
-```bash
-# 重启服务
-cd /app/alicdt-manager && docker compose restart
-
-# 重新构建并更新
-cd /app/alicdt-manager && docker compose build && docker compose up -d --no-build
-
-# 停止服务/卸载（保留数据）
-cd /app/alicdt-manager && docker compose down
-
-# 彻底卸载
-cd /app/alicdt-manager && docker compose down && rm -rf /app/alicdt-manager
-```
-
 
 ## Tech Stack
 
