@@ -2,12 +2,30 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/R1ddle1337/AliCDT-Manager-Professional/internal/protocol"
 )
+
+func TestRelayPoolMemberJSONRetainsKnownZeroTraffic(t *testing.T) {
+	member := RelayPoolMember{TrafficKnown: true}
+	encoded, err := json.Marshal(member)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"traffic_used_gb", "traffic_limit_gb", "traffic_percent", "traffic_remaining_gb", "traffic_rate_gb_per_minute", "traffic_threshold_percent"} {
+		if _, ok := payload[field]; !ok {
+			t.Fatalf("known zero traffic field %q was omitted: %s", field, encoded)
+		}
+	}
+}
 
 func TestRelayPoolReplicatesServiceAndGeneratesLogicalLink(t *testing.T) {
 	store, err := OpenStore(":memory:")

@@ -344,25 +344,29 @@ type RelayPool struct {
 }
 
 type RelayPoolMember struct {
-	ID                        string     `json:"id"`
-	PoolID                    string     `json:"pool_id"`
-	RelayNodeID               string     `json:"relay_node_id"`
-	RelayNodeName             string     `json:"relay_node_name"`
-	PublicIP                  string     `json:"public_ip,omitempty"`
-	Status                    string     `json:"status"`
-	Weight                    int        `json:"weight"`
-	Enabled                   bool       `json:"enabled"`
-	ServiceID                 string     `json:"service_id,omitempty"`
-	CloudAccountID            *int64     `json:"cloud_account_id,omitempty"`
-	CloudAccountName          string     `json:"cloud_account_name,omitempty"`
-	TrafficKnown              bool       `json:"traffic_known"`
-	TrafficUsedGB             float64    `json:"traffic_used_gb,omitempty"`
-	TrafficLimitGB            float64    `json:"traffic_limit_gb,omitempty"`
-	TrafficPercent            float64    `json:"traffic_percent,omitempty"`
-	TrafficRemainingGB        float64    `json:"traffic_remaining_gb,omitempty"`
-	TrafficRateGBPerMinute    float64    `json:"traffic_rate_gb_per_minute,omitempty"`
+	ID               string `json:"id"`
+	PoolID           string `json:"pool_id"`
+	RelayNodeID      string `json:"relay_node_id"`
+	RelayNodeName    string `json:"relay_node_name"`
+	PublicIP         string `json:"public_ip,omitempty"`
+	Status           string `json:"status"`
+	Weight           int    `json:"weight"`
+	Enabled          bool   `json:"enabled"`
+	ServiceID        string `json:"service_id,omitempty"`
+	CloudAccountID   *int64 `json:"cloud_account_id,omitempty"`
+	CloudAccountName string `json:"cloud_account_name,omitempty"`
+	TrafficKnown     bool   `json:"traffic_known"`
+	// These values are part of the relay-pool traffic contract. Keep zero
+	// values in the JSON response: zero is a valid, known usage measurement
+	// and omitting it makes clients mistake a known account for an incomplete
+	// response.
+	TrafficUsedGB             float64    `json:"traffic_used_gb"`
+	TrafficLimitGB            float64    `json:"traffic_limit_gb"`
+	TrafficPercent            float64    `json:"traffic_percent"`
+	TrafficRemainingGB        float64    `json:"traffic_remaining_gb"`
+	TrafficRateGBPerMinute    float64    `json:"traffic_rate_gb_per_minute"`
 	TrafficMinutesToThreshold *float64   `json:"traffic_minutes_to_threshold,omitempty"`
-	TrafficThresholdPercent   float64    `json:"traffic_threshold_percent,omitempty"`
+	TrafficThresholdPercent   float64    `json:"traffic_threshold_percent"`
 	ProtectionMode            string     `json:"protection_mode,omitempty"`
 	ProtectionTriggered       bool       `json:"protection_triggered"`
 	ProtectionPredictive      bool       `json:"protection_predictive"`
