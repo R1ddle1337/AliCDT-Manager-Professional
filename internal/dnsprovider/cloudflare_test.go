@@ -41,6 +41,43 @@ func TestCloudflareEnsureRecordsUsesManagedRecordID(t *testing.T) {
 	}
 }
 
+func TestCloudflareEnsureRecordsRecreatesStaleManagedRecordID(t *testing.T) {
+	var methods []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method+" "+r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/zones":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "result": []map[string]string{{"id": "zone-1", "name": "example.com"}}})
+		case r.URL.Path == "/zones/zone-1/dns_records" && r.Method == http.MethodGet:
+			// The desired record was removed out-of-band, so it is absent from
+			// the provider listing and must be recreated.
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "result": []map[string]interface{}{}})
+		case r.URL.Path == "/zones/zone-1/dns_records/stale" && r.Method == http.MethodPut:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"success":false,"errors":[{"code":81044,"message":"Record does not exist."}]}`))
+		case r.URL.Path == "/zones/zone-1/dns_records" && r.Method == http.MethodPost:
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "result": map[string]interface{}{"id": "record-recreated", "name": "relay.example.com", "type": "A", "content": "192.0.2.9", "ttl": 60}})
+		default:
+			http.Error(w, `{"success":false,"errors":[{"message":"unexpected request"}]}`, http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	provider := NewCloudflare(Config{Zone: "example.com", Endpoint: server.URL, APIToken: "test-token", HTTPClient: server.Client()})
+	result, err := provider.EnsureRecords(context.Background(), "example.com", []RecordScope{{Name: "relay", Type: "A"}}, []DesiredRecord{{Name: "relay", Type: "A", Value: "192.0.2.9", TTL: 60, ProviderRecordID: "stale"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Created != 1 || result.Updated != 0 || len(result.Records) != 1 || result.Records[0].ID != "record-recreated" {
+		t.Fatalf("unexpected stale-record recovery result: %+v", result)
+	}
+	joined := strings.Join(methods, "\n")
+	if !strings.Contains(joined, "PUT /zones/zone-1/dns_records/stale") || !strings.Contains(joined, "POST /zones/zone-1/dns_records") {
+		t.Fatalf("stale record was not recovered: %s", joined)
+	}
+}
+
 func TestCloudflareEnsureRecordsSupportsAutomaticTTL(t *testing.T) {
 	var payload map[string]interface{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -92,11 +92,18 @@ func (p *cloudflareProvider) EnsureRecords(ctx context.Context, zone string, sco
 		}
 		if item.ProviderRecordID != "" {
 			if err := p.update(ctx, item.ProviderRecordID, item); err != nil {
-				return result, err
+				// Provider-side records can be removed manually or by a prior
+				// cleanup. Do not let one stale ID abort reconciliation for the
+				// whole pool: fall through to the normal name/value lookup and
+				// create a replacement when necessary.
+				if !isCloudflareRecordNotFound(err) {
+					return result, err
+				}
+			} else {
+				result.Updated++
+				result.Records = append(result.Records, Record{ID: item.ProviderRecordID, Name: item.Name, Type: item.Type, Value: item.Value, TTL: item.TTL})
+				continue
 			}
-			result.Updated++
-			result.Records = append(result.Records, Record{ID: item.ProviderRecordID, Name: item.Name, Type: item.Type, Value: item.Value, TTL: item.TTL})
-			continue
 		}
 		key := recordKey(item.Name, item.Type, item.Value)
 		if current, ok := managed[key]; ok {
