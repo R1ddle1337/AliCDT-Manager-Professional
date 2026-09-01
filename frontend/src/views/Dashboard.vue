@@ -18,14 +18,14 @@
       </div>
     </header>
 
-    <section class="grid grid-cols-2 gap-3 xl:grid-cols-4 layout-collection layout-collection--strip">
-      <StatCard class="layout-card" label="实例总数" :value="instances.length" />
-      <StatCard class="layout-card" label="运行中" :value="runningCount" color="success" />
-      <StatCard class="layout-card" label="已停机" :value="stoppedCount" color="danger" />
-      <StatCard class="layout-card" label="自动保活" :value="keepAliveCount" color="accent" />
+    <section class="grid grid-cols-2 gap-3 xl:grid-cols-4 summary-fixed">
+      <StatCard label="实例总数" :value="instances.length" />
+      <StatCard label="运行中" :value="runningCount" color="success" />
+      <StatCard label="已停机" :value="stoppedCount" color="danger" />
+      <StatCard label="自动保活" :value="keepAliveCount" color="accent" />
     </section>
 
-    <section class="dashboard-grid layout-shell">
+    <section class="dashboard-grid">
       <div class="card workspace-card min-w-0 p-5 sm:p-6">
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div><h2 class="section-title">实例工作区</h2><p class="section-caption">拖动卡片可调整展示顺序</p></div>

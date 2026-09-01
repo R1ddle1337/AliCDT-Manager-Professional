@@ -1339,13 +1339,162 @@ func (s *Store) UpdateLandingNode(ctx context.Context, id string, request Create
 }
 
 func (s *Store) DeleteLandingNode(ctx context.Context, id string) error {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM landing_nodes WHERE id=?`, id)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("begin delete landing node: %w", err)
+	}
+	defer tx.Rollback()
+
+	var exists int
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM landing_nodes WHERE id=?)`, id).Scan(&exists); err != nil {
+		return fmt.Errorf("check landing node: %w", err)
+	}
+	if exists == 0 {
+		return sql.ErrNoRows
+	}
+
+	// Landing nodes are referenced by both standalone services and the
+	// replicated services behind relay pools. The schema deliberately uses
+	// RESTRICT for these foreign keys; detach every reference in one
+	// transaction, then disable any route that no longer has a valid target.
+	type serviceRef struct {
+		id     string
+		nodeID string
+		poolID string
+	}
+	serviceRefs := make(map[string]serviceRef)
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT st.service_id,rs.relay_node_id,COALESCE(rs.pool_id,'')
+		FROM service_targets st JOIN relay_services rs ON rs.id=st.service_id WHERE st.landing_node_id=?`, id)
+	if err != nil {
+		return fmt.Errorf("list landing service references: %w", err)
+	}
+	for rows.Next() {
+		var ref serviceRef
+		if err := rows.Scan(&ref.id, &ref.nodeID, &ref.poolID); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan landing service reference: %w", err)
+		}
+		serviceRefs[ref.id] = ref
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close landing service references: %w", err)
+	}
+
+	poolIDs := make(map[string]bool)
+	rows, err = tx.QueryContext(ctx, `SELECT DISTINCT pool_id FROM relay_pool_targets WHERE landing_node_id=?`, id)
+	if err != nil {
+		return fmt.Errorf("list landing pool references: %w", err)
+	}
+	for rows.Next() {
+		var poolID string
+		if err := rows.Scan(&poolID); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan landing pool reference: %w", err)
+		}
+		if poolID != "" {
+			poolIDs[poolID] = true
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close landing pool references: %w", err)
+	}
+	for _, ref := range serviceRefs {
+		if ref.poolID != "" {
+			poolIDs[ref.poolID] = true
+		}
+	}
+
+	// Include every Relay member of an affected pool so each Agent receives a
+	// fresh desired revision, even when an older database has incomplete target
+	// rows for that pool.
+	changedNodes := make(map[string]bool)
+	for _, ref := range serviceRefs {
+		if ref.nodeID != "" {
+			changedNodes[ref.nodeID] = true
+		}
+	}
+	for poolID := range poolIDs {
+		memberRows, memberErr := tx.QueryContext(ctx, `SELECT relay_node_id FROM relay_pool_members WHERE pool_id=?`, poolID)
+		if memberErr != nil {
+			return fmt.Errorf("list pool members for landing node: %w", memberErr)
+		}
+		for memberRows.Next() {
+			var nodeID string
+			if scanErr := memberRows.Scan(&nodeID); scanErr != nil {
+				memberRows.Close()
+				return fmt.Errorf("scan pool member for landing node: %w", scanErr)
+			}
+			changedNodes[nodeID] = true
+		}
+		if closeErr := memberRows.Close(); closeErr != nil {
+			return fmt.Errorf("close pool members for landing node: %w", closeErr)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM service_targets WHERE landing_node_id=?`, id); err != nil {
+		return fmt.Errorf("detach landing service targets: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM relay_pool_targets WHERE landing_node_id=?`, id); err != nil {
+		return fmt.Errorf("detach landing pool targets: %w", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, ref := range serviceRefs {
+		var remaining int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM service_targets WHERE service_id=?`, ref.id).Scan(&remaining); err != nil {
+			return fmt.Errorf("check remaining service targets: %w", err)
+		}
+		if remaining != 0 {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE relay_services SET enabled=0,updated_at=? WHERE id=?`, now, ref.id); err != nil {
+			return fmt.Errorf("disable targetless relay service: %w", err)
+		}
+		if ref.poolID != "" {
+			if _, err := tx.ExecContext(ctx, `UPDATE relay_pool_members SET enabled=0 WHERE pool_id=? AND service_id=?`, ref.poolID, ref.id); err != nil {
+				return fmt.Errorf("disable targetless pool member: %w", err)
+			}
+		}
+	}
+	for poolID := range poolIDs {
+		var remaining int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM relay_pool_targets WHERE pool_id=?`, poolID).Scan(&remaining); err != nil {
+			return fmt.Errorf("check remaining pool targets: %w", err)
+		}
+		if remaining != 0 {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE relay_pools SET enabled=0,updated_at=? WHERE id=?`, now, poolID); err != nil {
+			return fmt.Errorf("disable targetless relay pool: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE relay_pool_members SET enabled=0 WHERE pool_id=?`, poolID); err != nil {
+			return fmt.Errorf("disable targetless pool members: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE relay_services SET enabled=0,updated_at=? WHERE pool_id=?`, now, poolID); err != nil {
+			return fmt.Errorf("disable targetless pool services: %w", err)
+		}
+	}
+
+	result, err := tx.ExecContext(ctx, `DELETE FROM landing_nodes WHERE id=?`, id)
+	if err != nil {
+		return fmt.Errorf("delete landing node: %w", err)
 	}
 	if affected, _ := result.RowsAffected(); affected == 0 {
 		return sql.ErrNoRows
 	}
+	for nodeID := range changedNodes {
+		if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET desired_revision=desired_revision+1 WHERE id=?`, nodeID); err != nil {
+			return fmt.Errorf("bump relay revision after landing delete: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit landing node delete: %w", err)
+	}
+
+	// Reconcile local DNS desired state immediately. Provider API failures are
+	// intentionally left to the scheduler so a landing-node delete is not
+	// rolled back by a transient external DNS outage.
+	_ = s.RefreshAllRelayPoolDNS(ctx)
+	_ = s.RefreshRelayAgentDNSRecords(ctx)
 	return nil
 }
 

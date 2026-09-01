@@ -198,7 +198,6 @@ button:focus-visible, input:focus-visible, select:focus-visible {
  */
 .layout-collection { min-width: 0; }
 .layout-card { min-width: 0; }
-[data-card-layout="horizontal"] .layout-shell { grid-template-columns: minmax(0, 1fr) !important; }
 [data-card-layout="horizontal"] .layout-collection { grid-template-columns: minmax(0, 1fr) !important; }
 [data-card-layout="horizontal"] .layout-collection > .layout-card { width: 100%; }
 [data-card-layout="horizontal"] .layout-collection > .layout-card { grid-column: auto !important; }
@@ -211,27 +210,9 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 [data-card-layout="horizontal"] .layout-collection--strip > .layout-card:hover {
   transform: translateX(2px);
 }
-[data-card-layout="horizontal"] .layout-collection--strip > .summary-card,
-[data-card-layout="horizontal"] .layout-collection--strip > .metric-card {
-  display: grid !important;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: auto auto;
-  align-items: center;
-  column-gap: 18px;
-  padding-block: 13px;
-}
-[data-card-layout="horizontal"] .layout-collection--strip > .summary-card > strong,
-[data-card-layout="horizontal"] .layout-collection--strip > .metric-card > strong {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  margin-top: 0;
-}
-[data-card-layout="horizontal"] .layout-collection--strip > .summary-card > small,
-[data-card-layout="horizontal"] .layout-collection--strip > .metric-card > small {
-  grid-column: 1;
-  grid-row: 2;
-  margin-top: 3px;
-}
+/* Summary metrics stay in their compact grid in both modes. Only the
+ * lower resource collections switch between tiles and information rows. */
+.summary-fixed { min-width: 0; }
 
 /* Row cards expose their identity, details and actions as a deliberate
  * horizontal information strip on wide screens. */

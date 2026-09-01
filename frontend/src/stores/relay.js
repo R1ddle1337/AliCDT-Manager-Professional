@@ -178,7 +178,10 @@ export const useRelayStore = defineStore('relay-platform', () => {
 
   async function deleteLandingNode(id) {
     await api.delete(`/landing-nodes/${id}`)
-    await fetchLandingNodes()
+    // The delete is already committed on the controller. Refresh each view
+    // independently so a transient DNS/list refresh failure does not make the
+    // operator think the landing node deletion itself failed.
+    await Promise.allSettled([fetchLandingNodes(), fetchServices(), fetchPools(), fetchRelayNodes(), fetchDNSRecords()])
   }
 
   async function fetchLandingRelayLinks(id) {

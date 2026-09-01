@@ -18,18 +18,18 @@
       {{ message }}
     </div>
 
-    <section class="summary-grid layout-collection layout-collection--strip" aria-label="云资源摘要">
-      <article class="card summary-card layout-card">
+    <section class="summary-grid summary-fixed" aria-label="云资源摘要">
+      <article class="card summary-card">
         <span>云账户</span>
         <strong>{{ store.cloud.accounts.length }}</strong>
         <small>{{ enabledAccountCount }} 个账户已启用</small>
       </article>
-      <article class="card summary-card layout-card">
+      <article class="card summary-card">
         <span>ECS 实例</span>
         <strong>{{ store.cloud.instances.length }}</strong>
         <small>{{ runningInstanceCount }} 个实例运行中</small>
       </article>
-      <article class="card summary-card layout-card">
+      <article class="card summary-card">
         <span>账户流量合计</span>
         <strong>{{ store.cloud.traffic.length ? totalTraffic.toFixed(2) + ' GB' : '待同步' }}</strong>
         <small>{{ store.cloud.traffic.length }} 个账户已有快照 · {{ activeProtectionCount }} 个保护中</small>
