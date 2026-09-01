@@ -41,6 +41,39 @@ func TestCloudflareEnsureRecordsUsesManagedRecordID(t *testing.T) {
 	}
 }
 
+func TestCloudflareEnsureRecordsSupportsAutomaticTTL(t *testing.T) {
+	var payload map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/zones":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "result": []map[string]string{{"id": "zone-1", "name": "example.com"}}})
+		case r.URL.Path == "/zones/zone-1/dns_records" && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "result": []map[string]interface{}{}})
+		case r.URL.Path == "/zones/zone-1/dns_records" && r.Method == http.MethodPost:
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Errorf("decode create payload: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "result": map[string]interface{}{"id": "record-auto", "name": "relay.example.com", "type": "A", "content": "192.0.2.1", "ttl": 1}})
+		default:
+			http.Error(w, `{"success":false,"errors":[{"message":"unexpected request"}]}`, http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	provider := NewCloudflare(Config{Zone: "example.com", Endpoint: server.URL, APIToken: "test-token", HTTPClient: server.Client()})
+	result, err := provider.EnsureRecords(context.Background(), "example.com", []RecordScope{{Name: "relay", Type: "A"}}, []DesiredRecord{{Name: "relay", Type: "A", Value: "192.0.2.1", TTL: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Created != 1 || len(result.Records) != 1 || result.Records[0].TTL != 1 {
+		t.Fatalf("unexpected automatic-TTL sync result: %+v", result)
+	}
+	if got, ok := payload["ttl"].(float64); !ok || got != 1 {
+		t.Fatalf("Cloudflare automatic TTL was not sent as ttl=1: %#v", payload["ttl"])
+	}
+}
+
 func TestCloudflareDeleteRecordTreatsMissingRecordAsSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

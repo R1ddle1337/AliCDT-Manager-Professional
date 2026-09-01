@@ -53,10 +53,13 @@ func normalizeRelayPoolRequestWithDrain(request CreateRelayPoolRequest) (CreateR
 	if len(request.Targets) == 0 {
 		return request, false, false, errors.New("at least one landing target is required")
 	}
-	if request.DNSTTL < 30 {
-		request.DNSTTL = 60
+	// 1 is Cloudflare's automatic-TTL sentinel. Provider-specific
+	// normalization happens after the provider has been loaded below; keep the
+	// sentinel intact here so Cloudflare pools can use it.
+	if request.DNSTTL < dnsTTLMinimumSeconds && request.DNSTTL != cloudflareAutomaticTTL {
+		request.DNSTTL = dnsTTLDefaultSeconds
 	}
-	if request.DNSTTL > 86400 {
+	if request.DNSTTL > dnsTTLMaximumSeconds {
 		return request, false, false, errors.New("DNS TTL must not exceed 86400 seconds")
 	}
 	if request.DialTimeoutMillis <= 0 {
@@ -102,10 +105,17 @@ func (s *Store) CreateRelayPool(ctx context.Context, request CreateRelayPoolRequ
 	if err != nil {
 		return RelayPool{}, err
 	}
+	providerType := ""
 	if request.DNSProviderID != "" {
-		if _, err := s.GetDNSProvider(ctx, request.DNSProviderID); err != nil {
+		providerInfo, providerErr := s.GetDNSProvider(ctx, request.DNSProviderID)
+		if providerErr != nil {
 			return RelayPool{}, errors.New("DNS provider not found")
 		}
+		providerType = providerInfo.Type
+	}
+	request.DNSTTL, err = normalizeDNSProviderTTL(request.DNSTTL, providerType)
+	if err != nil {
+		return RelayPool{}, err
 	}
 	now := time.Now().UTC()
 	poolID := randomID("pool")
@@ -193,10 +203,17 @@ func (s *Store) UpdateRelayPool(ctx context.Context, id string, request CreateRe
 	if request.AutoDrain == nil {
 		autoDrain = existing.AutoDrain
 	}
+	providerType := ""
 	if request.DNSProviderID != "" {
-		if _, err := s.GetDNSProvider(ctx, request.DNSProviderID); err != nil {
+		providerInfo, providerErr := s.GetDNSProvider(ctx, request.DNSProviderID)
+		if providerErr != nil {
 			return RelayPool{}, errors.New("DNS provider not found")
 		}
+		providerType = providerInfo.Type
+	}
+	request.DNSTTL, err = normalizeDNSProviderTTL(request.DNSTTL, providerType)
+	if err != nil {
+		return RelayPool{}, err
 	}
 	// Switching to a fixed Dispatcher is the one safe exception to the
 	// provider-change guard: the post-commit reconciliation deliberately
@@ -690,6 +707,14 @@ func (s *Store) RefreshRelayPoolDNS(ctx context.Context, poolID string) error {
 	if pool.DNSProviderID == "" {
 		return nil
 	}
+	providerInfo, err := s.GetDNSProvider(ctx, pool.DNSProviderID)
+	if err != nil {
+		return err
+	}
+	dnsTTL, err := normalizeDNSProviderTTL(pool.DNSTTL, providerInfo.Type)
+	if err != nil {
+		return err
+	}
 	records, err := s.ListDNSRecords(ctx, pool.DNSProviderID)
 	if err != nil {
 		return err
@@ -748,7 +773,7 @@ func (s *Store) RefreshRelayPoolDNS(ctx context.Context, poolID string) error {
 		}
 		if existing == nil {
 			recordID := randomID("record")
-			_, err := s.db.ExecContext(ctx, `INSERT INTO dns_managed_records(id,provider_id,pool_id,relay_node_id,name,type,value,ttl,enabled,desired_enabled,status,last_error,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,'pending','',?,?)`, recordID, pool.DNSProviderID, pool.ID, member.RelayNodeID, recordName, "A", member.PublicIP, pool.DNSTTL, boolInt(enabled), 1, time.Now().UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano))
+			_, err := s.db.ExecContext(ctx, `INSERT INTO dns_managed_records(id,provider_id,pool_id,relay_node_id,name,type,value,ttl,enabled,desired_enabled,status,last_error,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,'pending','',?,?)`, recordID, pool.DNSProviderID, pool.ID, member.RelayNodeID, recordName, "A", member.PublicIP, dnsTTL, boolInt(enabled), 1, time.Now().UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano))
 			if err != nil {
 				if !isUniqueConstraint(err) {
 					return err
@@ -779,7 +804,7 @@ func (s *Store) RefreshRelayPoolDNS(ctx context.Context, poolID string) error {
 			return err
 		}
 		enabled = sharedEnabled
-		_, err = s.db.ExecContext(ctx, `UPDATE dns_managed_records SET provider_id=?,pool_id=CASE WHEN COALESCE(pool_id,'')='' THEN ? ELSE pool_id END,name=?,type='A',value=?,ttl=?,enabled=?,desired_enabled=1,status=CASE WHEN enabled<>? OR value<>? THEN 'pending' ELSE status END,last_error='',updated_at=? WHERE id=?`, pool.DNSProviderID, pool.ID, recordName, member.PublicIP, pool.DNSTTL, boolInt(enabled), boolInt(enabled), member.PublicIP, time.Now().UTC().Format(time.RFC3339Nano), existing.ID)
+		_, err = s.db.ExecContext(ctx, `UPDATE dns_managed_records SET provider_id=?,pool_id=CASE WHEN COALESCE(pool_id,'')='' THEN ? ELSE pool_id END,name=?,type='A',value=?,ttl=?,enabled=?,desired_enabled=1,status=CASE WHEN enabled<>? OR value<>? THEN 'pending' ELSE status END,last_error='',updated_at=? WHERE id=?`, pool.DNSProviderID, pool.ID, recordName, member.PublicIP, dnsTTL, boolInt(enabled), boolInt(enabled), member.PublicIP, time.Now().UTC().Format(time.RFC3339Nano), existing.ID)
 		if err != nil {
 			return err
 		}

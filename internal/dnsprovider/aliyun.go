@@ -82,7 +82,10 @@ func (p *aliyunProvider) EnsureRecords(ctx context.Context, zone string, scopes 
 		if item.Type == "" || item.Name == "" || item.Value == "" {
 			return result, errors.New("DNS record name, type and value are required")
 		}
-		if item.TTL <= 0 {
+		// TTL=1 is Cloudflare's automatic-TTL sentinel and is not a portable
+		// Aliyun value. Treat legacy rows carrying that sentinel as the shortest
+		// normal TTL instead of sending an invalid request to AliDNS.
+		if item.TTL <= 0 || item.TTL == 1 {
 			item.TTL = 60
 		}
 		if item.ProviderRecordID != "" {

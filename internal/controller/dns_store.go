@@ -323,8 +323,13 @@ func (s *Store) CreateDNSRecord(ctx context.Context, request CreateDNSRecordRequ
 	if !oneOf(request.Type, "A", "AAAA", "CNAME", "TXT") {
 		return DNSManagedRecord{}, errors.New("supported DNS record types are A, AAAA, CNAME and TXT")
 	}
-	if _, err := s.GetDNSProvider(ctx, request.ProviderID); err != nil {
+	providerInfo, err := s.GetDNSProvider(ctx, request.ProviderID)
+	if err != nil {
 		return DNSManagedRecord{}, errors.New("DNS provider not found")
+	}
+	request.TTL, err = normalizeDNSProviderTTL(request.TTL, providerInfo.Type)
+	if err != nil {
+		return DNSManagedRecord{}, err
 	}
 	enabled := true
 	if request.Enabled != nil {
@@ -405,8 +410,13 @@ func (s *Store) UpdateDNSRecord(ctx context.Context, id string, request CreateDN
 	if !oneOf(request.Type, "A", "AAAA", "CNAME", "TXT") {
 		return DNSManagedRecord{}, errors.New("supported DNS record types are A, AAAA, CNAME and TXT")
 	}
-	if _, err := s.GetDNSProvider(ctx, request.ProviderID); err != nil {
+	providerInfo, err := s.GetDNSProvider(ctx, request.ProviderID)
+	if err != nil {
 		return DNSManagedRecord{}, errors.New("DNS provider not found")
+	}
+	request.TTL, err = normalizeDNSProviderTTL(request.TTL, providerInfo.Type)
+	if err != nil {
+		return DNSManagedRecord{}, err
 	}
 	enabled := true
 	if request.Enabled != nil {

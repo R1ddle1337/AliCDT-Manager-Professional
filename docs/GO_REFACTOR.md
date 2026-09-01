@@ -313,13 +313,16 @@ console and are reconciled every 30 seconds or on demand. Reconciliation updates
 or creates only those declared records and never performs a broad zone delete.
 Use a separate hostname such as `panel.example.com` for the console and
 `relay.example.com` for a multi-IP relay entry. Add one A record per healthy
-CDT Relay and keep TTL around 30--60 seconds.
+CDT Relay; use Cloudflare automatic TTL or 60 seconds when fast transitions are
+important.
 
 Relay pools replicate one logical service to each selected Agent. A pool can
 bind a DNS Provider; online members create managed A records, draining or
-offline members are disabled and removed on the next DNS reconciliation. The
-landing-node link generator emits the pool hostname and port, so users keep a
-single logical node instead of importing one link per Relay.
+offline members are disabled and removed on the next DNS reconciliation. For
+Cloudflare, TTL `1` means provider-managed automatic TTL; choose 60 seconds
+when the fastest health-transition propagation is preferred. The landing-node
+link generator emits the pool hostname and port, so users keep a single
+logical node instead of importing one link per Relay.
 
 ### Hostname and port constraints
 

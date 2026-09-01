@@ -98,8 +98,9 @@ systemd 单元带 `CAP_NET_BIND_SERVICE`，可直接监听 443。Alpine OpenRC �
 `front_door_mode=dispatcher`）。该模式会自动禁止并清理 Relay DNS 托管，避免
 控制器把 CDT Relay IP 写回固定域名。在 DNS Provider 页面使用**独立托管记录**
 声明 Dispatcher 的公网 IP：同一固定域名创建两条或更多 DNS-only（不经过
-Cloudflare 代理）的 A/AAAA 记录，TTL 建议 30--60 秒。不要
-把 CDT Relay IP 和 Dispatcher IP 混在同一个 RRset。先用独立灰度域名验证：
+Cloudflare 代理）的 A/AAAA 记录；Cloudflare 可选择自动 TTL，需要最快切换时
+选择 60 秒。不要把 CDT Relay IP 和 Dispatcher IP 混在同一个 RRset。先用独立
+灰度域名验证：
 
 如果希望由控制器定期校验 DNS，可在“DNS 托管 → 添加记录”中为每个网关各建
 一条**手动** A/AAAA 记录；不要选择 Relay Agent 来源，也不要把这些记录绑定到
