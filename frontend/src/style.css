@@ -241,7 +241,29 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 [data-card-layout="horizontal"] .layout-collection--row > .layout-card > .node-row-wide,
 [data-card-layout="horizontal"] .layout-collection--row > .layout-card > .account-row-wide,
 [data-card-layout="horizontal"] .layout-collection--row > .layout-card > .pool-row-wide { grid-column: 1 / -1; margin-top: 0 !important; }
-[data-card-layout="horizontal"] .layout-collection--row > .layout-card > .pool-row-members { grid-column: 2; margin-top: 0 !important; }
+[data-card-layout="horizontal"] .layout-collection--row > .layout-card > .pool-row-members {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-row: 2;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 0 !important;
+}
+[data-card-layout="horizontal"] .layout-collection--row > .layout-card > .pool-warnings {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  display: grid;
+  gap: 8px;
+}
+[data-card-layout="horizontal"] .layout-collection--row > .layout-card > .pool-row-wide {
+  grid-column: 1 / -1;
+  grid-row: auto;
+}
+[data-card-layout="horizontal"] .layout-collection--row > .layout-card > .service-row-wide {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
 [data-card-layout="horizontal"] .layout-collection--row > .layout-card > .node-row-head { align-self: start; }
 [data-card-layout="horizontal"] .layout-collection--row > .layout-card > .account-row-head { grid-row: 1 / span 3; align-self: center; }
 [data-card-layout="horizontal"] .layout-collection--row > .layout-card > .account-row-body { grid-row: 1; }
@@ -263,6 +285,22 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 [data-card-layout="horizontal"] .layout-collection--compact > .layout-card > :first-child { min-width: 0; }
 [data-card-layout="horizontal"] .layout-collection--compact > .layout-card > :last-child { min-width: 0; }
+[data-card-layout="horizontal"] .layout-collection--compact > .account-card {
+  grid-template-columns: minmax(220px, .75fr) minmax(360px, 1.65fr) minmax(220px, .8fr);
+  gap: 20px;
+  padding-block: 16px;
+}
+[data-card-layout="horizontal"] .layout-collection--compact > .account-card > .account-card-head { grid-column: 1; }
+[data-card-layout="horizontal"] .layout-collection--compact > .account-card > .account-card-metrics { grid-column: 2; margin-top: 0 !important; }
+[data-card-layout="horizontal"] .layout-collection--compact > .account-card > .account-card-actions { grid-column: 3; margin-top: 0 !important; border-top: 0; padding-top: 0; }
+[data-card-layout="horizontal"] .layout-collection--compact > .relay-node-card {
+  grid-template-columns: minmax(220px, .8fr) minmax(360px, 1.6fr) minmax(180px, .7fr);
+  gap: 20px;
+  padding-block: 16px;
+}
+[data-card-layout="horizontal"] .layout-collection--compact > .relay-node-card > .relay-node-head { grid-column: 1; }
+[data-card-layout="horizontal"] .layout-collection--compact > .relay-node-card > .relay-node-metrics { grid-column: 2; margin-top: 0; }
+[data-card-layout="horizontal"] .layout-collection--compact > .relay-node-card > .relay-node-foot { grid-column: 3; margin-top: 0; border-top: 0; padding-top: 0; }
 
 [data-card-layout="horizontal"] .instance-card {
   display: grid !important;
@@ -290,7 +328,13 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   [data-card-layout="horizontal"] .layout-collection--row > .layout-card > .node-row-body,
   [data-card-layout="horizontal"] .layout-collection--row > .layout-card > .account-row-body,
   [data-card-layout="horizontal"] .layout-collection--row > .layout-card > .pool-row-body,
-  [data-card-layout="horizontal"] .layout-collection--row > .layout-card > .pool-row-members { margin-top: 14px !important; }
+  [data-card-layout="horizontal"] .layout-collection--row > .layout-card > .pool-row-members {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    margin-top: 14px !important;
+  }
+  [data-card-layout="horizontal"] .layout-collection--row > .layout-card > .pool-warnings { grid-row: auto; }
+  [data-card-layout="horizontal"] .layout-collection--row > .layout-card > .service-row-wide { grid-template-columns: minmax(0, 1fr); }
   [data-card-layout="horizontal"] .layout-collection--row > .layout-card > .provider-row-actions,
   [data-card-layout="horizontal"] .layout-collection--row > .layout-card > .service-row-actions,
   [data-card-layout="horizontal"] .layout-collection--row > .layout-card > .account-row-actions,
@@ -308,6 +352,12 @@ button:focus-visible, input:focus-visible, select:focus-visible {
     display: block;
   }
   [data-card-layout="horizontal"] .layout-collection--compact > .layout-card > * + * { margin-top: 14px; }
+  [data-card-layout="horizontal"] .layout-collection--compact > .account-card > .account-card-metrics,
+  [data-card-layout="horizontal"] .layout-collection--compact > .account-card > .account-card-actions,
+  [data-card-layout="horizontal"] .layout-collection--compact > .relay-node-card > .relay-node-metrics,
+  [data-card-layout="horizontal"] .layout-collection--compact > .relay-node-card > .relay-node-foot { margin-top: 14px !important; }
+  [data-card-layout="horizontal"] .layout-collection--compact > .account-card > .account-card-actions { border-top: 1px solid #eef2f7; padding-top: 11px; }
+  [data-card-layout="horizontal"] .layout-collection--compact > .relay-node-card > .relay-node-foot { border-top: 1px solid #eef2f7; padding-top: 13px; }
   [data-card-layout="horizontal"] .instance-card {
     display: flex !important;
     flex-direction: column;

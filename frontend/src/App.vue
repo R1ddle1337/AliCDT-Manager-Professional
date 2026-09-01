@@ -122,9 +122,9 @@ const isLogin = computed(() => route.path === '/login')
 const primaryNavItems = [
   { path: '/', label: '运行总览' },
   { path: '/relay-pools', label: '统一入口', recommended: true },
-  { path: '/relay-nodes', label: 'CDT 中转' },
-  { path: '/landing-nodes', label: '全球落地' },
-  { path: '/cloud-resources', label: '云资源' },
+  { path: '/relay-nodes', label: '中转节点' },
+  { path: '/landing-nodes', label: '落地节点' },
+  { path: '/cloud-resources', label: '资源概览' },
 ]
 
 const advancedNavItems = [

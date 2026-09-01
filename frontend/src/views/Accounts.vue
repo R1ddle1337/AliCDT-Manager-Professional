@@ -20,7 +20,7 @@
 
     <div v-else class="grid grid-cols-1 gap-4 xl:grid-cols-2 layout-collection layout-collection--compact">
       <article v-for="acc in store.accounts" :key="acc.id" class="card account-card layout-card">
-        <div class="flex items-start justify-between gap-4">
+        <div class="account-card-head flex items-start justify-between gap-4">
           <div class="flex min-w-0 items-center gap-3">
             <div class="account-mark">{{ initials(acc.name) }}</div>
             <div class="min-w-0">
@@ -31,14 +31,14 @@
           <span class="region-badge">{{ acc.region_id }}</span>
         </div>
 
-        <div class="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div class="account-card-metrics mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
           <div class="metric-box"><span>站点</span><strong>{{ acc.site_type === 'international' ? '国际站' : '中国站' }}</strong></div>
           <div class="metric-box"><span>流量上限</span><strong>{{ acc.traffic_limit_gb }} GB</strong></div>
           <div class="metric-box"><span>熔断阈值</span><strong>{{ acc.threshold_percent }}%</strong></div>
           <div class="metric-box"><span>实例</span><strong>{{ acc.instance_id || '未指定' }}</strong></div>
         </div>
 
-        <div class="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4 text-xs">
+        <div class="account-card-actions mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4 text-xs">
           <span class="tag" :class="acc.keep_alive ? 'tag-blue' : 'tag-muted'">{{ acc.keep_alive ? '自动保活' : '保活关闭' }}</span>
           <span class="tag tag-muted">{{ acc.shutdown_mode === 'StopCharging' ? '节省停机' : '普通停机' }}</span>
           <span v-if="acc.auto_stop_time" class="tag tag-muted">{{ acc.auto_stop_time }} 关机</span>
