@@ -91,6 +91,26 @@ func TestDailyUpdateScheduleUsesBeijingTime(t *testing.T) {
 	}
 }
 
+func TestDailyUpdateScheduleFallsBackForUnavailableTimezone(t *testing.T) {
+	client, err := New(Options{
+		ControllerURL:  "https://controller.invalid",
+		UpdateTime:     "04:00",
+		UpdateLocation: "Not/ARealTimezone",
+	}, relay.NewEngine())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.engine.Close()
+
+	// An invalid/missing zone must not leave a nil *time.Location and panic
+	// while the Agent is constructing its daily update timer.
+	beijing := time.FixedZone("Asia/Shanghai", 8*60*60)
+	before := time.Date(2026, 8, 30, 3, 59, 0, 0, beijing)
+	if got := client.durationUntilNextUpdate(before); got != time.Minute {
+		t.Fatalf("expected fallback schedule one minute before 04:00, got %s", got)
+	}
+}
+
 func TestPollConfigRollsBackWhenNewRevisionCannotBeApplied(t *testing.T) {
 	occupied, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

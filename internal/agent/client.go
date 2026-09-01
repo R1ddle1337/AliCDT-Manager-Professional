@@ -15,6 +15,12 @@ import (
 	"sync"
 	"time"
 
+	// Relay Agents are commonly installed on minimal Alpine hosts, which do
+	// not ship the system zoneinfo database. Importing the embedded database
+	// keeps the configured update timezone available without requiring an OS
+	// package on every Agent machine.
+	_ "time/tzdata"
+
 	"github.com/R1ddle1337/AliCDT-Manager-Professional/internal/protocol"
 	"github.com/R1ddle1337/AliCDT-Manager-Professional/internal/relay"
 )
@@ -179,10 +185,7 @@ func (c *Client) Run(ctx context.Context) error {
 }
 
 func (c *Client) durationUntilNextUpdate(now time.Time) time.Duration {
-	location, err := time.LoadLocation(c.opts.UpdateLocation)
-	if err != nil {
-		location, _ = time.LoadLocation("Asia/Shanghai")
-	}
+	location := agentUpdateLocation(c.opts.UpdateLocation)
 	localNow := now.In(location)
 	var hour, minute int
 	if _, err := fmt.Sscanf(strings.TrimSpace(c.opts.UpdateTime), "%d:%d", &hour, &minute); err != nil || hour < 0 || hour > 23 || minute < 0 || minute > 59 {
@@ -197,6 +200,22 @@ func (c *Client) durationUntilNextUpdate(now time.Time) time.Duration {
 		return time.Second
 	}
 	return delay
+}
+
+// agentUpdateLocation always returns a non-nil location. time.LoadLocation can
+// fail on stripped-down hosts when the requested zone is absent; passing the
+// resulting nil pointer to Time.In or time.Date would panic the Agent during
+// startup. The embedded tzdata import above handles normal named zones, while
+// the fixed-zone fallback keeps startup safe even if the embedded database is
+// unavailable or an invalid zone was configured.
+func agentUpdateLocation(requested string) *time.Location {
+	if location, err := time.LoadLocation(strings.TrimSpace(requested)); err == nil && location != nil {
+		return location
+	}
+	if location, err := time.LoadLocation("Asia/Shanghai"); err == nil && location != nil {
+		return location
+	}
+	return time.FixedZone("Asia/Shanghai", 8*60*60)
 }
 
 func (c *Client) credentialPath() string {
