@@ -189,6 +189,75 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   .nav-item { padding: 9px 11px; }
 }
 
+/* Modal forms share one readable rhythm. The scroll container keeps the
+ * action row reachable even when a form has many optional fields. */
+.modal-scroll > form.space-y-5,
+.modal-scroll > .space-y-5 {
+  display: grid;
+  min-width: 0;
+  gap: 18px;
+}
+.modal-scroll > form.space-y-5 > *,
+.modal-scroll > .space-y-5 > * { min-width: 0; }
+.modal-scroll > form.space-y-5 > * + *,
+.modal-scroll > .space-y-5 > * + * { margin-top: 0 !important; }
+.modal-scroll > form.space-y-5 > :first-child,
+.modal-scroll > .space-y-5 > :first-child {
+  min-height: 48px;
+  padding-right: 40px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid #eef2f7;
+}
+.modal-scroll > form.space-y-5 > :first-child h2,
+.modal-scroll > .space-y-5 > :first-child h2 { margin-top: 5px; color: #172033; font-size: 20px; font-weight: 750; letter-spacing: -.02em; }
+.modal-scroll > form.space-y-5 > :first-child p,
+.modal-scroll > .space-y-5 > :first-child p { margin-top: 6px; color: #64748b; font-size: 11px; line-height: 1.6; }
+.modal-scroll > form.space-y-5 > .grid,
+.modal-scroll > form.space-y-5 > .form-grid {
+  border: 1px solid #eef2f7;
+  border-radius: 12px;
+  background: #fbfcfe;
+  padding: 16px;
+}
+.modal-scroll > form.space-y-5 .input { min-height: 41px; }
+.modal-scroll > form.space-y-5 .target-picker { max-height: min(32vh, 280px); }
+.modal-scroll > form.space-y-5 > .flex:last-child,
+.modal-scroll > form.space-y-5 > .form-actions,
+.modal-scroll > .space-y-5 > .flex:last-child {
+  position: sticky;
+  bottom: -1px;
+  z-index: 3;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 0 !important;
+  border-top: 1px solid #eef2f7;
+  padding: 16px 0 0 !important;
+  background: #fff;
+  box-shadow: 0 -8px 16px rgba(255, 255, 255, .9);
+}
+.modal-scroll > form.space-y-5 > .flex:last-child button,
+.modal-scroll > form.space-y-5 > .form-actions button,
+.modal-scroll > .space-y-5 > .flex:last-child button { min-width: 116px; }
+.modal-form-title { margin-top: 5px; color: #172033; font-size: 20px; font-weight: 750; letter-spacing: -.02em; }
+.modal-form-subtitle { margin-top: 6px; color: #64748b; font-size: 11px; line-height: 1.6; }
+.modal-section-title { margin-bottom: 14px; color: #334155; font-size: 12px; font-weight: 750; letter-spacing: .02em; }
+.modal-form-section { min-width: 0; border: 1px solid #eef2f7; border-radius: 12px; background: #fbfcfe; padding: 16px; }
+.modal-resource-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.checkbox-field { display: flex; min-height: 41px; align-items: center; gap: 8px; color: #475569; font-size: 12px; }
+
+@media (max-width: 639px) {
+  .modal-scroll > form.space-y-5 > .grid,
+  .modal-scroll > form.space-y-5 > .form-grid { gap: 12px; padding: 12px; }
+  .modal-scroll > form.space-y-5 > .flex:last-child,
+  .modal-scroll > form.space-y-5 > .form-actions,
+  .modal-scroll > .space-y-5 > .flex:last-child { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .modal-scroll > form.space-y-5 > .flex:last-child button,
+  .modal-scroll > form.space-y-5 > .form-actions button,
+  .modal-scroll > .space-y-5 > .flex:last-child button { width: 100%; min-width: 0; }
+  .modal-resource-grid { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+}
+
 /*
  * Card layout system
  *

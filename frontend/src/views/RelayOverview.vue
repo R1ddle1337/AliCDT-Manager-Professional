@@ -18,7 +18,7 @@
         <div v-if="entries.length === 0" class="empty-panel">还没有转发服务</div>
         <div v-else class="divide-y divide-slate-100">
           <div v-for="entry in entries" :key="entry.id" class="service-row">
-            <div class="min-w-0"><div class="flex items-center gap-2"><div class="truncate font-semibold text-slate-800">{{ entry.name }}</div><span v-if="entry.kind === 'pool'" class="entry-kind">入口池</span></div><div class="mt-1 truncate text-xs text-slate-400">{{ entry.address }}</div></div>
+            <div class="min-w-0"><div class="flex items-center gap-2"><div class="truncate font-semibold text-slate-800">{{ entry.name }}</div><span v-if="entry.kind === 'pool'" class="entry-kind">入口池</span></div><div class="mt-1 truncate text-xs text-slate-400"><MaskedIP :value="entry.host" :suffix="`:${entry.port}`" placeholder="未设置入口地址" /></div></div>
             <span class="protocol-tag">{{ entry.network.toUpperCase() }}</span><span class="mode-tag">{{ entry.kind === 'pool' ? `Relay ${entry.onlineMembers}/${entry.activeMembers}` : modeLabel(entry.mode) }}</span>
             <div class="text-right"><div class="text-xs font-semibold" :class="entry.enabled ? 'text-success' : 'text-slate-400'">{{ entry.enabled ? '运行中' : '已停用' }}</div><div class="mt-1 text-[10px] text-slate-400">{{ entry.targetCount }} 个目标</div></div>
           </div>
@@ -27,7 +27,7 @@
 
       <aside class="space-y-4">
         <div class="card p-5"><div class="panel-title"><div><h2>节点状态</h2><p>Agent 心跳</p></div><span class="panel-code">AGENT</span></div><div class="mt-5 space-y-3"><div v-for="node in store.relayNodes" :key="node.id" class="node-line"><span class="status-dot" :class="node.status === 'online' ? 'status-dot-success' : 'status-dot-muted'"></span><span class="min-w-0 flex-1 truncate">{{ node.name }}</span><strong>{{ node.status === 'online' ? '在线' : '离线' }}</strong></div><div v-if="!store.relayNodes.length" class="text-xs text-slate-400">尚未注册中转节点</div></div></div>
-        <div class="card p-5"><div class="panel-title"><div><h2>最近事件</h2><p>发布与健康状态变化</p></div><span class="panel-code">EVENT</span></div><div class="mt-4 space-y-3"><div v-for="event in store.events.slice(0,6)" :key="event.id" class="event-line"><span class="event-dot" :class="event.level==='warning'?'event-warning':''"></span><div class="min-w-0"><p class="truncate">{{ event.message }}</p><small>{{ formatTime(event.created_at) }}</small></div></div><div v-if="!store.events.length" class="text-xs text-slate-400">暂无事件</div></div><div class="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-4"><span v-for="item in protocols" :key="item" class="protocol-chip">{{ item }}</span></div></div>
+        <div class="card p-5"><div class="panel-title"><div><h2>最近事件</h2><p>发布与健康状态变化</p></div><span class="panel-code">EVENT</span></div><div class="mt-4 space-y-3"><div v-for="event in store.events.slice(0,6)" :key="event.id" class="event-line"><span class="event-dot" :class="event.level==='warning'?'event-warning':''"></span><div class="min-w-0"><p class="truncate"><MaskedText :value="event.message" /></p><small>{{ formatTime(event.created_at) }}</small></div></div><div v-if="!store.events.length" class="text-xs text-slate-400">暂无事件</div></div><div class="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-4"><span v-for="item in protocols" :key="item" class="protocol-chip">{{ item }}</span></div></div>
       </aside>
     </section>
   </div>
@@ -37,6 +37,8 @@
 import { computed, onMounted } from 'vue'
 import { useRelayStore } from '../stores/relay'
 import { formatDateTime } from '../utils/time'
+import MaskedIP from '../components/MaskedIP.vue'
+import MaskedText from '../components/MaskedText.vue'
 const store = useRelayStore(); const protocols = ['SS2022', 'VLESS', 'REALITY', 'WebSocket', 'gRPC', 'TCP', 'UDP']
 const onlineNodes = computed(() => store.relayNodes.filter(node => node.status === 'online').length)
 const entries = computed(() => [
@@ -48,7 +50,8 @@ const entries = computed(() => [
       id: `pool:${pool.id}`,
       kind: 'pool',
       name: pool.name,
-      address: `${pool.hostname}:${pool.listen_port}`,
+      host: pool.hostname,
+      port: pool.listen_port,
       network: pool.network,
       mode: pool.mode,
       enabled: pool.enabled,
@@ -61,7 +64,8 @@ const entries = computed(() => [
     id: `service:${service.id}`,
     kind: 'service',
     name: service.name,
-    address: entryAddress(service),
+    host: entryHost(service),
+    port: service.listen_port,
     network: service.network,
     mode: service.mode,
     enabled: service.enabled,
@@ -73,7 +77,7 @@ const targetCount = computed(() => entries.value.reduce((sum, entry) => sum + en
 const serviceStatuses = computed(() => store.relayNodes.flatMap(node => Array.isArray(node.service_status) ? node.service_status : []))
 const activeConnections = computed(() => serviceStatuses.value.reduce((sum, item) => sum + Number(item.active_connections || 0), 0))
 const totalConnections = computed(() => serviceStatuses.value.reduce((sum, item) => sum + Number(item.total_connections || 0), 0))
-function entryAddress(service) { const node = store.relayNodes.find(item => item.id === service.relay_node_id); return `${node?.public_ip || service.listen_host}:${service.listen_port}` }
+function entryHost(service) { const node = store.relayNodes.find(item => item.id === service.relay_node_id); return node?.public_ip || service.listen_host }
 function modeLabel(mode) { return { failover: '主备', round_robin: '轮询', ip_hash: 'IP Hash', weighted: '加权' }[mode] || mode }
 function formatTime(value) { return formatDateTime(value) }
 onMounted(() => store.fetchAll())

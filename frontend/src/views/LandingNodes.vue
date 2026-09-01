@@ -15,12 +15,12 @@
     <div v-else class="node-grid layout-collection layout-collection--row">
       <article v-for="node in store.landingNodes" :key="node.id" class="card node-card layout-card">
         <div class="node-row-head node-head">
-          <div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><span class="protocol-tag">{{ (node.protocol || node.network || 'legacy').toUpperCase() }}</span><span class="state-tag" :class="node.enabled ? 'state-online' : ''">{{ node.enabled ? '启用' : '停用' }}</span></div><h2 class="mt-3 truncate text-base font-bold text-slate-800">{{ node.name }}</h2><p class="mt-1 truncate font-mono text-[11px] text-slate-400">{{ node.address }}:{{ node.port }}</p></div>
+          <div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><span class="protocol-tag">{{ (node.protocol || node.network || 'legacy').toUpperCase() }}</span><span class="state-tag" :class="node.enabled ? 'state-online' : ''">{{ node.enabled ? '启用' : '停用' }}</span></div><h2 class="mt-3 truncate text-base font-bold text-slate-800">{{ node.name }}</h2><p class="mt-1 truncate font-mono text-[11px] text-slate-400"><MaskedIP :value="node.address" :suffix="`:${node.port}`" placeholder="未设置地址" /></p></div>
           <div class="node-actions"><button class="btn-ghost px-2 py-1 text-xs" @click="openEdit(node)">编辑</button><button class="btn-danger px-2 py-1 text-xs" @click="remove(node)">删除</button></div>
         </div>
 
         <div v-if="node.share_uri" class="node-row-body source-panel">
-          <div class="panel-label">原始节点链接</div><code class="source-uri">{{ node.share_uri }}</code>
+          <div class="panel-label">原始节点链接</div><code class="source-uri"><MaskedText :value="node.share_uri" /></code>
         </div>
         <div v-else class="node-row-body legacy-panel"><strong>兼容旧节点录入</strong><span>当前节点只有地址和端口，编辑时可补充完整分享链接。</span></div>
 
@@ -28,9 +28,9 @@
           <div class="relay-panel-head"><div><h3>中转后的节点</h3><p>仅替换 Host 和 Port，其余参数保持不变</p></div><span class="panel-code">{{ linksFor(node).length }} 个入口</span></div>
           <div v-if="linksFor(node).length" class="relay-link-list">
             <div v-for="link in linksFor(node)" :key="link.pool_id || link.service_id || `${link.host}:${link.port}:${link.service_name}`" class="relay-link-item">
-              <div class="min-w-0"><strong class="block truncate text-xs text-slate-700">{{ link.service_name }}</strong><small class="mt-1 block truncate text-[10px] text-slate-400">{{ link.relay_node_name }} · {{ link.host || '未设置入口地址' }}:{{ link.port }}</small></div>
+              <div class="min-w-0"><strong class="block truncate text-xs text-slate-700">{{ link.service_name }}</strong><small class="mt-1 block truncate text-[10px] text-slate-400">{{ link.relay_node_name }} · <MaskedIP :value="link.host" :suffix="link.port ? `:${link.port}` : ''" placeholder="未设置入口地址" /></small></div>
               <button v-if="link.uri" class="btn-ghost flex-none border border-slate-200 px-2 py-1 text-[10px]" @click="copyLink(link.uri)">复制</button>
-              <code v-if="link.uri" class="relay-uri">{{ link.uri }}</code><span v-else class="col-span-full text-[10px] text-amber-700">{{ link.message || '暂时无法生成中转链接' }}</span>
+              <code v-if="link.uri" class="relay-uri"><MaskedText :value="link.uri" /></code><span v-else class="col-span-full text-[10px] text-amber-700">{{ link.message || '暂时无法生成中转链接' }}</span>
             </div>
           </div>
           <div v-else class="relay-empty">请先创建转发服务或逻辑入口池，并将此落地节点加入目标列表。</div>
@@ -39,7 +39,7 @@
     </div>
 
     <Modal v-if="showForm" @close="showForm = false">
-      <form class="space-y-5" @submit.prevent="save">
+      <form class="space-y-5 modal-form" @submit.prevent="save">
         <div><div class="eyebrow">LANDING NODE</div><h2 class="mt-1 text-lg font-bold text-slate-900">{{ editTarget ? '编辑落地节点' : '添加完整节点' }}</h2><p class="mt-2 text-xs leading-5 text-slate-500">粘贴分享链接后，保存时会自动识别协议、地址和端口。生成中转链接时只改入口 Host/Port。</p></div>
         <div><label class="field-label" for="node-share-uri">完整节点分享链接 <span v-if="!editTarget" class="text-danger">*</span></label><textarea id="node-share-uri" v-model.trim="form.share_uri" class="input node-textarea" rows="4" placeholder="vless://... 或 ss://... 或 vmess://..."></textarea><p class="field-hint">支持 VLESS（含 REALITY/WS/gRPC 参数）、SS/SS2022、VMess、Trojan、Hysteria2、TUIC。链接中的密钥和传输参数会原样保留。</p></div>
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2"><div class="sm:col-span-2"><label class="field-label">节点名称 <span class="font-normal text-slate-400">（可选，留空则从链接名称推断）</span></label><input v-model.trim="form.name" class="input" placeholder="例如：香港 REALITY 主节点" /></div></div>
@@ -55,6 +55,8 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useRelayStore } from '../stores/relay'
 import Modal from '../components/Modal.vue'
+import MaskedIP from '../components/MaskedIP.vue'
+import MaskedText from '../components/MaskedText.vue'
 
 const store = useRelayStore()
 const showForm = ref(false); const editTarget = ref(null); const saving = ref(false); const formError = ref(''); const message = ref(''); const messageType = ref('success')

@@ -27,7 +27,7 @@
       <div class="mt-2 flex justify-between text-[11px] text-slate-400"><span>熔断阈值 {{ account?.threshold_percent || 95 }}%</span><span :class="trafficColor">{{ trafficPct.toFixed(1) }}%</span></div>
     </div>
 
-    <div class="instance-card-details mt-4 grid grid-cols-2 gap-2"><div class="detail-box"><span>公网 IP</span><strong>{{ instance.public_ip || '—' }}</strong></div><div class="detail-box"><span>实例规格</span><strong :title="instance.instance_type">{{ instance.instance_type || '—' }}</strong></div></div>
+    <div class="instance-card-details mt-4 grid grid-cols-2 gap-2"><div class="detail-box"><span>公网 IP</span><MaskedIP :value="instance.public_ip" placeholder="—" /></div><div class="detail-box"><span>实例规格</span><strong :title="instance.instance_type">{{ instance.instance_type || '—' }}</strong></div></div>
 
     <div class="instance-card-tags mt-3 flex flex-wrap gap-2"><span v-if="account?.keep_alive" class="tag tag-blue">自动保活</span><span v-if="account?.auto_stop_time" class="tag tag-muted">{{ account.auto_stop_time }} 关机</span><span v-if="account?.auto_start_time" class="tag tag-muted">{{ account.auto_start_time }} 开机</span><span class="tag tag-muted">{{ account?.shutdown_mode === 'StopCharging' ? '节省停机' : '普通停机' }}</span></div>
 
@@ -43,6 +43,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useStore } from '../stores'
 import { formatTime as formatClockTime } from '../utils/time'
+import MaskedIP from './MaskedIP.vue'
 
 const props = defineProps({ instance: Object, account: Object })
 defineEmits(['release'])
@@ -86,6 +87,6 @@ function formatTime(t) { return formatClockTime(t) }
 .status-running { background: #ecfdf3; color: #15803d; }.status-stopped { background: #f1f5f9; color: #64748b; }.status-unknown { background: #fffbeb; color: #b45309; }
 .status-dot { width: 6px; height: 6px; border-radius: 50%; }.status-dot-success { background: #16a34a; }.status-dot-muted { background: #94a3b8; }
 .instance-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
-.traffic-panel, .billing-panel { border-radius: 9px; background: #f8fafc; padding: 12px; }.detail-box { min-width: 0; border-radius: 8px; background: #f8fafc; padding: 10px; }.detail-box span, .detail-label { display: block; color: #94a3b8; font-size: 10px; }.detail-box strong { display: block; overflow: hidden; margin-top: 4px; color: #334155; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 650; }.panel-label { color: #64748b; font-size: 11px; font-weight: 700; }.billing-panel strong { display: block; margin-top: 4px; font-size: 13px; }.tag { border-radius: 999px; padding: 4px 8px; font-size: 10px; font-weight: 650; }.tag-blue { background: #eff6ff; color: #2563eb; }.tag-muted { background: #f1f5f9; color: #64748b; }
+.traffic-panel, .billing-panel { border-radius: 9px; background: #f8fafc; padding: 12px; }.detail-box { min-width: 0; border-radius: 8px; background: #f8fafc; padding: 10px; }.detail-box span, .detail-label { display: block; color: #94a3b8; font-size: 10px; }.detail-box strong, .detail-box .masked-ip { display: block; overflow: hidden; margin-top: 4px; color: #334155; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 650; }.detail-box .masked-ip { display: flex; }.panel-label { color: #64748b; font-size: 11px; font-weight: 700; }.billing-panel strong { display: block; margin-top: 4px; font-size: 13px; }.tag { border-radius: 999px; padding: 4px 8px; font-size: 10px; font-weight: 650; }.tag-blue { background: #eff6ff; color: #2563eb; }.tag-muted { background: #f1f5f9; color: #64748b; }
 .action-button { flex: 1; border-radius: 8px; padding: 9px 10px; font-size: 11px; font-weight: 650; transition: background .15s ease, color .15s ease; }.action-start { border: 1px solid #bbf7d0; background: #f0fdf4; color: #15803d; }.action-start:hover { background: #dcfce7; }.action-stop { border: 1px solid #fed7aa; background: #fff7ed; color: #b45309; }.action-stop:hover { background: #ffedd5; }.action-release { flex: 0 0 auto; border: 1px solid #fecaca; background: #fff; color: #dc2626; padding-inline: 15px; }.action-release:hover { background: #fef2f2; }.action-button:disabled { cursor: not-allowed; opacity: .5; }
 </style>

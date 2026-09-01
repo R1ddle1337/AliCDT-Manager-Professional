@@ -116,7 +116,7 @@
             <strong>{{ instance.instance_name || instance.instance_id }}</strong>
             <small>{{ instance.instance_id }}</small>
           </div>
-          <div class="instance-cell" data-label="公网入口">{{ instance.public_ip || '无公网 IP' }}</div>
+          <div class="instance-cell" data-label="公网入口"><MaskedIP :value="instance.public_ip" placeholder="无公网 IP" /></div>
           <div class="instance-cell" data-label="规格">{{ instance.instance_type || '—' }}</div>
           <div class="instance-cell" data-label="带宽">{{ bandwidthLabel(instance) }}</div>
           <div class="instance-cell" data-label="状态">
@@ -137,8 +137,8 @@
       </div>
     </section>
 
-    <Modal v-if="showForm" @close="showForm = false">
-      <form class="space-y-5" @submit.prevent="saveAccount">
+    <Modal v-if="showForm" size="large" @close="showForm = false">
+      <form class="space-y-5 modal-form" @submit.prevent="saveAccount">
         <div>
           <div class="eyebrow">ALIYUN ACCOUNT</div>
           <h2 class="mt-1 text-lg font-bold text-slate-900">{{ editTarget ? '编辑阿里云账户' : '添加阿里云账户' }}</h2>
@@ -184,6 +184,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRelayStore } from '../stores/relay'
 import Modal from '../components/Modal.vue'
+import MaskedIP from '../components/MaskedIP.vue'
 
 const store = useRelayStore()
 const syncing = ref(false)

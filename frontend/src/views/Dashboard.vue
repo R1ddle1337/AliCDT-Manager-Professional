@@ -66,7 +66,7 @@
       </aside>
     </section>
 
-    <Modal v-if="releaseTarget" @close="releaseTarget = null"><div class="space-y-5"><div><div class="eyebrow text-danger">RELEASE INSTANCE</div><h2 class="mt-1 text-lg font-bold text-slate-900">确认释放实例？</h2><p class="mt-2 font-mono text-sm text-slate-500">{{ releaseTarget.instance_id }}</p></div><div class="notice notice-error">此操作不可撤销，实例及其云端资源将被永久删除。</div><div class="flex gap-3"><button type="button" @click="releaseTarget = null" class="btn-ghost flex-1 border border-slate-200">取消</button><button type="button" @click="doRelease" class="btn-danger flex-1">确认释放</button></div></div></Modal>
+    <Modal v-if="releaseTarget" size="compact" @close="releaseTarget = null"><div class="space-y-5 modal-stack"><div><div class="eyebrow text-danger">RELEASE INSTANCE</div><h2 class="mt-1 text-lg font-bold text-slate-900">确认释放实例？</h2><p class="mt-2 font-mono text-sm text-slate-500">{{ releaseTarget.instance_id }}</p></div><div class="notice notice-error">此操作不可撤销，实例及其云端资源将被永久删除。</div><div class="flex gap-3"><button type="button" @click="releaseTarget = null" class="btn-ghost flex-1 border border-slate-200">取消</button><button type="button" @click="doRelease" class="btn-danger flex-1">确认释放</button></div></div></Modal>
   </div>
 </template>
 

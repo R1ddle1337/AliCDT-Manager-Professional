@@ -55,14 +55,13 @@
       </article>
     </div>
 
-    <Modal v-if="showForm" @close="showForm = false">
-      <form class="space-y-5" @submit.prevent="submit">
+    <Modal v-if="showForm" size="large" @close="showForm = false">
+      <form class="space-y-5 modal-form" @submit.prevent="submit">
         <div class="flex items-start justify-between">
           <div>
             <div class="eyebrow">ACCOUNT</div>
             <h2 class="mt-1 text-lg font-bold text-slate-900">{{ editTarget ? '编辑账户' : '添加账户' }}</h2>
           </div>
-          <button type="button" class="btn-ghost px-2 text-lg leading-none" aria-label="关闭" @click="showForm = false">×</button>
         </div>
 
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -96,8 +95,8 @@
       </form>
     </Modal>
 
-    <Modal v-if="deleteTarget" @close="deleteTarget = null">
-      <div class="space-y-5">
+    <Modal v-if="deleteTarget" size="compact" @close="deleteTarget = null">
+      <div class="space-y-5 modal-stack">
         <div><div class="eyebrow text-danger">REMOVE ACCOUNT</div><h2 class="mt-1 text-lg font-bold text-slate-900">确认删除账户？</h2><p class="mt-2 text-sm text-slate-500">{{ deleteTarget.name }}</p></div>
         <div class="notice notice-error">删除账户后，关联的实例记录也会被清除。该操作不可撤销。</div>
         <div class="flex gap-3"><button type="button" @click="deleteTarget = null" class="btn-ghost flex-1 border border-slate-200">取消</button><button type="button" @click="doDelete" class="btn-danger flex-1">确认删除</button></div>
@@ -105,16 +104,15 @@
     </Modal>
 
     <Modal v-if="installAccount" @close="closeAgentInstall">
-      <div class="space-y-5">
+      <div class="space-y-5 modal-stack">
         <div class="flex items-start justify-between gap-4">
           <div><div class="eyebrow">RELAY AGENT</div><h2 class="mt-1 text-lg font-bold text-slate-900">为 {{ installAccount.name }} 安装 Agent</h2><p class="mt-2 text-sm leading-6 text-slate-500">在目标 CDT 机器上使用 root SSH 登录后，执行下面的一键命令。注册码 30 分钟内有效且只能使用一次。</p></div>
-          <button type="button" class="btn-ghost px-2 text-lg leading-none" aria-label="关闭" @click="closeAgentInstall">×</button>
         </div>
         <div v-if="installLoading" class="notice notice-info">正在生成一次性安装命令...</div>
         <div v-if="installError" class="notice notice-error">{{ installError }}</div>
         <div v-if="installCommand" class="space-y-3">
           <div class="flex items-center justify-between gap-3"><span class="text-xs font-semibold text-slate-600">root SSH 执行命令</span><button type="button" class="btn-ghost border border-slate-200 text-xs" @click="copyAgentCommand">复制命令</button></div>
-          <pre class="command-box">{{ installCommand }}</pre>
+          <pre class="command-box"><MaskedText :value="installCommand" /></pre>
           <p class="text-xs leading-5 text-slate-400">安装完成后，Agent 会通过 HTTPS 回连控制台；面板不会获取或保存目标服务器的 SSH 密码、私钥。</p>
         </div>
       </div>
@@ -127,6 +125,7 @@ import { ref, onMounted } from 'vue'
 import { useStore } from '../stores'
 import { useRelayStore } from '../stores/relay'
 import Modal from '../components/Modal.vue'
+import MaskedText from '../components/MaskedText.vue'
 
 const store = useStore()
 const relayStore = useRelayStore()
