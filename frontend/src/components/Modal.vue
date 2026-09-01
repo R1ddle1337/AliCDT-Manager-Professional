@@ -1,7 +1,7 @@
 <template>
   <div class="modal-layer" role="dialog" aria-modal="true" tabindex="-1" @keydown.esc="$emit('close')">
     <div class="modal-backdrop" @click="$emit('close')"></div>
-    <section class="modal-dialog fade-in" :class="`modal-dialog-${props.size}`" @click.stop>
+    <section ref="modalDialog" class="modal-dialog fade-in" :class="`modal-dialog-${props.size}`" tabindex="-1" @click.stop>
       <button v-if="props.showClose" type="button" class="modal-close" aria-label="关闭" title="关闭" @click="$emit('close')">×</button>
       <div class="modal-scroll"><slot /></div>
     </section>
@@ -9,17 +9,29 @@
 </template>
 
 <script setup>
+import { onMounted, onUnmounted, ref } from 'vue'
+
 const props = defineProps({
   size: { type: String, default: 'wide' },
   showClose: { type: Boolean, default: true },
 })
 defineEmits(['close'])
+
+const modalDialog = ref(null)
+let previousOverflow = ''
+onMounted(() => {
+  previousOverflow = document.body.style.overflow
+  document.body.style.overflow = 'hidden'
+  window.requestAnimationFrame(() => modalDialog.value?.focus())
+})
+onUnmounted(() => { document.body.style.overflow = previousOverflow })
 </script>
 
 <style scoped>
 .modal-layer { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; overflow-y: auto; padding: clamp(10px, 3vh, 30px) clamp(10px, 3vw, 30px); }
 .modal-backdrop { position: absolute; inset: 0; background: rgba(15, 23, 42, .46); backdrop-filter: blur(3px); }
 .modal-dialog { position: relative; z-index: 1; display: flex; width: min(100%, 920px); max-height: calc(100dvh - clamp(20px, 6vh, 60px)); flex-direction: column; overflow: hidden; border: 1px solid #dbe4ef; border-radius: 18px; background: #fff; box-shadow: 0 24px 70px rgba(15, 23, 42, .2); }
+.modal-dialog:focus { outline: none; }
 .modal-dialog-compact { width: min(100%, 540px); }
 .modal-dialog-wide { width: min(100%, 920px); }
 .modal-dialog-large { width: min(100%, 1080px); }
