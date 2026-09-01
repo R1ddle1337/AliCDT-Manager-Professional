@@ -152,11 +152,16 @@ install_scheduler() {
 install_mode() {
   install -d -m 0755 "$(dirname "$TARGET")"
   # When downloaded to a temporary path, install the exact verified script;
-  # when invoked from the installed path, avoid copying onto itself.
-  if [ "${0##*/}" != "${TARGET##*/}" ] || [ "$(CDPATH= cd -- "$(dirname "$0")" && pwd)" != "$(CDPATH= cd -- "$(dirname "$TARGET")" && pwd)" ]; then
+  # when invoked from the installed path, avoid copying onto itself.  A
+  # script piped directly to `sh` has no source file to copy; fail safely
+  # instead of accidentally installing the shell binary as the checker.
+  if [ -f "$0" ] && [ "$0" != "$TARGET" ]; then
     install -m 0755 "$0" "$TARGET"
-  else
+  elif [ -x "$TARGET" ]; then
     chmod 0755 "$TARGET"
+  else
+    echo "cannot install cleanup checker when script is read from stdin; save it to a file first" >&2
+    return 1
   fi
   write_default_config
   install_scheduler
