@@ -18,8 +18,8 @@
       <button type="button" @click="openAdd" class="btn-primary mt-5">添加第一个账户</button>
     </div>
 
-    <div v-else class="grid grid-cols-1 gap-4 xl:grid-cols-2">
-      <article v-for="acc in store.accounts" :key="acc.id" class="card account-card">
+    <div v-else class="grid grid-cols-1 gap-4 xl:grid-cols-2 layout-collection layout-collection--compact">
+      <article v-for="acc in store.accounts" :key="acc.id" class="card account-card layout-card">
         <div class="flex items-start justify-between gap-4">
           <div class="flex min-w-0 items-center gap-3">
             <div class="account-mark">{{ initials(acc.name) }}</div>

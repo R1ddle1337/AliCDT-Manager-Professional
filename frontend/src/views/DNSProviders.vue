@@ -6,14 +6,14 @@
     </header>
     <div v-if="message.text" class="notice" :class="`notice-${message.type}`">{{ message.text }}</div>
 
-    <section class="grid grid-cols-1 gap-4 xl:grid-cols-2">
-      <article v-for="provider in store.dnsProviders" :key="provider.id" class="card p-5">
-        <div class="flex items-start justify-between gap-3"><div class="min-w-0"><div class="flex items-center gap-2"><span class="provider-mark">{{ provider.type === 'cloudflare' ? 'CF' : 'ALI' }}</span><h2 class="truncate font-bold text-slate-800">{{ provider.name }}</h2></div><p class="mt-2 truncate font-mono text-[11px] text-slate-400">{{ provider.zone }}</p></div><span class="state-tag" :class="provider.enabled ? 'state-online' : ''">{{ provider.enabled ? '已启用' : '已停用' }}</span></div>
-        <div class="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4"><div class="info-box"><span>类型</span><strong>{{ provider.type === 'cloudflare' ? 'Cloudflare' : '阿里云 DNS' }}</strong></div><div class="info-box"><span>凭证</span><strong>{{ credentialLabel(provider) }}</strong></div><div class="info-box"><span>托管记录</span><strong>{{ recordsFor(provider.id).length }}</strong></div><div class="info-box"><span>最近测试</span><strong>{{ formatTime(provider.last_test_at) }}</strong></div></div>
-        <div v-if="provider.last_error" class="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">{{ provider.last_error }}</div>
-        <div class="mt-4 flex flex-wrap justify-end gap-1 border-t border-slate-100 pt-3"><button class="btn-ghost px-2 py-1 text-xs" :disabled="busyId === provider.id" @click="testProvider(provider)">{{ busyId === provider.id ? '测试中...' : '测试连接' }}</button><button class="btn-ghost px-2 py-1 text-xs" :disabled="busyId === provider.id" @click="syncProvider(provider)">同步记录</button><button class="btn-ghost px-2 py-1 text-xs" @click="openProvider(provider)">编辑</button><button class="btn-danger px-2 py-1 text-xs" @click="removeProvider(provider)">删除</button></div>
+    <section class="grid grid-cols-1 gap-4 xl:grid-cols-2 layout-collection layout-collection--row">
+      <article v-for="provider in store.dnsProviders" :key="provider.id" class="card p-5 layout-card">
+        <div class="provider-row-head flex items-start justify-between gap-3"><div class="min-w-0"><div class="flex items-center gap-2"><span class="provider-mark">{{ provider.type === 'cloudflare' ? 'CF' : 'ALI' }}</span><h2 class="truncate font-bold text-slate-800">{{ provider.name }}</h2></div><p class="mt-2 truncate font-mono text-[11px] text-slate-400">{{ provider.zone }}</p></div><span class="state-tag" :class="provider.enabled ? 'state-online' : ''">{{ provider.enabled ? '已启用' : '已停用' }}</span></div>
+        <div class="provider-row-body mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4"><div class="info-box"><span>类型</span><strong>{{ provider.type === 'cloudflare' ? 'Cloudflare' : '阿里云 DNS' }}</strong></div><div class="info-box"><span>凭证</span><strong>{{ credentialLabel(provider) }}</strong></div><div class="info-box"><span>托管记录</span><strong>{{ recordsFor(provider.id).length }}</strong></div><div class="info-box"><span>最近测试</span><strong>{{ formatTime(provider.last_test_at) }}</strong></div></div>
+        <div v-if="provider.last_error" class="provider-row-wide mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">{{ provider.last_error }}</div>
+        <div class="provider-row-actions mt-4 flex flex-wrap justify-end gap-1 border-t border-slate-100 pt-3"><button class="btn-ghost px-2 py-1 text-xs" :disabled="busyId === provider.id" @click="testProvider(provider)">{{ busyId === provider.id ? '测试中...' : '测试连接' }}</button><button class="btn-ghost px-2 py-1 text-xs" :disabled="busyId === provider.id" @click="syncProvider(provider)">同步记录</button><button class="btn-ghost px-2 py-1 text-xs" @click="openProvider(provider)">编辑</button><button class="btn-danger px-2 py-1 text-xs" @click="removeProvider(provider)">删除</button></div>
       </article>
-      <div v-if="!store.dnsProviders.length" class="card empty-panel xl:col-span-2">还没有配置 DNS Provider。先添加 Provider，再声明需要托管的 A 记录。</div>
+      <div v-if="!store.dnsProviders.length" class="card empty-panel layout-card xl:col-span-2">还没有配置 DNS Provider。先添加 Provider，再声明需要托管的 A 记录。</div>
     </section>
 
     <section class="card overflow-hidden">

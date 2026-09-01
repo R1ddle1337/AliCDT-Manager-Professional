@@ -5,14 +5,14 @@
       <button class="btn-primary" :disabled="store.loading" @click="store.fetchAll">{{ store.loading ? '刷新中...' : '刷新状态' }}</button>
     </header>
 
-    <section class="grid grid-cols-2 gap-3 xl:grid-cols-4">
-      <div class="metric-card"><span>中转节点</span><strong>{{ store.relayNodes.length }}</strong><small>{{ onlineNodes }} 在线</small></div>
-      <div class="metric-card"><span>转发服务</span><strong>{{ entries.length }}</strong><small>{{ enabledServices }} 已启用</small></div>
-      <div class="metric-card"><span>落地节点</span><strong>{{ store.landingNodes.length }}</strong><small>{{ targetCount }} 个服务目标</small></div>
-      <div class="metric-card"><span>当前连接</span><strong>{{ activeConnections }}</strong><small>累计 {{ totalConnections }}</small></div>
+    <section class="grid grid-cols-2 gap-3 xl:grid-cols-4 layout-collection layout-collection--strip">
+      <div class="card metric-card layout-card"><span>中转节点</span><strong>{{ store.relayNodes.length }}</strong><small>{{ onlineNodes }} 在线</small></div>
+      <div class="card metric-card layout-card"><span>转发服务</span><strong>{{ entries.length }}</strong><small>{{ enabledServices }} 已启用</small></div>
+      <div class="card metric-card layout-card"><span>落地节点</span><strong>{{ store.landingNodes.length }}</strong><small>{{ targetCount }} 个服务目标</small></div>
+      <div class="card metric-card layout-card"><span>当前连接</span><strong>{{ activeConnections }}</strong><small>累计 {{ totalConnections }}</small></div>
     </section>
 
-    <section class="overview-grid">
+    <section class="overview-grid layout-shell">
       <div class="card overflow-hidden">
         <div class="panel-header"><div><h2>运行中的入口</h2><p>用户连接保持使用同一个 CDT IP 和端口</p></div><span class="panel-code">ENTRY</span></div>
         <div v-if="entries.length === 0" class="empty-panel">还没有转发服务</div>

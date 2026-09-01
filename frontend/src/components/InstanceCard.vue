@@ -1,8 +1,8 @@
 <template>
-  <article class="instance-card">
+  <article class="instance-card layout-card">
     <div class="drag-handle" title="拖动排序"><span v-for="i in 6" :key="i"></span></div>
 
-    <div class="flex items-start justify-between gap-4">
+    <div class="instance-card-header flex items-start justify-between gap-4">
       <div class="min-w-0 flex-1">
         <div v-if="!editingName" class="group/edit flex cursor-pointer items-center gap-2" @click="startEditName">
           <h3 class="truncate text-base font-bold text-slate-800 group-hover/edit:text-accent">{{ instance.instance_name || instance.instance_id }}</h3>
@@ -21,21 +21,21 @@
       </div>
     </div>
 
-    <div class="traffic-panel mt-5">
+    <div class="instance-card-traffic traffic-panel mt-5">
       <div class="flex items-center justify-between gap-3 text-xs"><span class="font-semibold text-slate-500">本月流量</span><span class="font-bold tabular-nums" :class="trafficColor">{{ instance.traffic_used_gb?.toFixed(2) || '0.00' }} <span class="font-normal text-slate-400">/ {{ account?.traffic_limit_gb || 200 }} GB</span></span></div>
       <div class="mt-2 h-2 overflow-hidden rounded-full bg-slate-200"><div class="h-full rounded-full transition-all duration-700" :class="trafficBarColor" :style="{ width: Math.min(trafficPct, 100) + '%' }"></div></div>
       <div class="mt-2 flex justify-between text-[11px] text-slate-400"><span>熔断阈值 {{ account?.threshold_percent || 95 }}%</span><span :class="trafficColor">{{ trafficPct.toFixed(1) }}%</span></div>
     </div>
 
-    <div class="mt-4 grid grid-cols-2 gap-2"><div class="detail-box"><span>公网 IP</span><strong>{{ instance.public_ip || '—' }}</strong></div><div class="detail-box"><span>实例规格</span><strong :title="instance.instance_type">{{ instance.instance_type || '—' }}</strong></div></div>
+    <div class="instance-card-details mt-4 grid grid-cols-2 gap-2"><div class="detail-box"><span>公网 IP</span><strong>{{ instance.public_ip || '—' }}</strong></div><div class="detail-box"><span>实例规格</span><strong :title="instance.instance_type">{{ instance.instance_type || '—' }}</strong></div></div>
 
-    <div class="mt-3 flex flex-wrap gap-2"><span v-if="account?.keep_alive" class="tag tag-blue">自动保活</span><span v-if="account?.auto_stop_time" class="tag tag-muted">{{ account.auto_stop_time }} 关机</span><span v-if="account?.auto_start_time" class="tag tag-muted">{{ account.auto_start_time }} 开机</span><span class="tag tag-muted">{{ account?.shutdown_mode === 'StopCharging' ? '节省停机' : '普通停机' }}</span></div>
+    <div class="instance-card-tags mt-3 flex flex-wrap gap-2"><span v-if="account?.keep_alive" class="tag tag-blue">自动保活</span><span v-if="account?.auto_stop_time" class="tag tag-muted">{{ account.auto_stop_time }} 关机</span><span v-if="account?.auto_start_time" class="tag tag-muted">{{ account.auto_start_time }} 开机</span><span class="tag tag-muted">{{ account?.shutdown_mode === 'StopCharging' ? '节省停机' : '普通停机' }}</span></div>
 
-    <div v-if="showBilling" class="billing-panel mt-4"><div class="flex items-center justify-between"><span class="panel-label">账单摘要</span><span v-if="billingLoading" class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-accent/30 border-t-accent"></span></div><div v-if="billingError" class="mt-2 text-xs leading-5 text-danger">{{ billingError }}</div><div v-if="!billingLoading && (billing?.balance || billing?.bill)" class="mt-3 grid grid-cols-2 gap-3"><div><span class="detail-label">账户余额</span><strong class="tabular-nums" :class="(billing?.balance?.available_amount ?? 0) < 1 ? 'text-danger' : 'text-success'">{{ billing?.balance?.symbol }}{{ billing?.balance?.available_amount ?? '—' }}</strong></div><div><span class="detail-label">本月待还</span><strong class="tabular-nums" :class="(billing?.bill?.total_outstanding ?? 0) > 0 ? 'text-warning-dark' : 'text-slate-700'">{{ billing?.bill?.symbol }}{{ billing?.bill?.total_outstanding ?? '—' }}</strong></div></div></div>
+    <div v-if="showBilling" class="instance-card-billing billing-panel mt-4"><div class="flex items-center justify-between"><span class="panel-label">账单摘要</span><span v-if="billingLoading" class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-accent/30 border-t-accent"></span></div><div v-if="billingError" class="mt-2 text-xs leading-5 text-danger">{{ billingError }}</div><div v-if="!billingLoading && (billing?.balance || billing?.bill)" class="mt-3 grid grid-cols-2 gap-3"><div><span class="detail-label">账户余额</span><strong class="tabular-nums" :class="(billing?.balance?.available_amount ?? 0) < 1 ? 'text-danger' : 'text-success'">{{ billing?.balance?.symbol }}{{ billing?.balance?.available_amount ?? '—' }}</strong></div><div><span class="detail-label">本月待还</span><strong class="tabular-nums" :class="(billing?.bill?.total_outstanding ?? 0) > 0 ? 'text-warning-dark' : 'text-slate-700'">{{ billing?.bill?.symbol }}{{ billing?.bill?.total_outstanding ?? '—' }}</strong></div></div></div>
 
-    <div class="mt-4 flex items-center justify-between border-t border-slate-100 pt-4 text-[11px] text-slate-400"><span class="truncate pr-2">{{ account?.name || '未知账户' }}</span><div class="flex items-center gap-2"><span v-if="instance.last_synced">同步于 {{ formatTime(instance.last_synced) }}</span><button type="button" @click="syncThis" :disabled="isSyncing" class="btn-ghost border border-slate-200 px-2 py-1 text-[10px]">{{ isSyncing ? '同步中' : '同步' }}</button></div></div>
+    <div class="instance-card-footer mt-4 flex items-center justify-between border-t border-slate-100 pt-4 text-[11px] text-slate-400"><span class="truncate pr-2">{{ account?.name || '未知账户' }}</span><div class="flex items-center gap-2"><span v-if="instance.last_synced">同步于 {{ formatTime(instance.last_synced) }}</span><button type="button" @click="syncThis" :disabled="isSyncing" class="btn-ghost border border-slate-200 px-2 py-1 text-[10px]">{{ isSyncing ? '同步中' : '同步' }}</button></div></div>
 
-    <div class="mt-3 flex gap-2 border-t border-slate-100 pt-3"><button v-if="instance.status !== 'Running'" type="button" @click="handleStart" :disabled="isStarting" class="action-button action-start">{{ isStarting ? '启动中...' : '启动实例' }}</button><button v-if="instance.status === 'Running'" type="button" @click="handleStop" :disabled="isStopping" class="action-button action-stop">{{ isStopping ? '停止中...' : '停止实例' }}</button><button type="button" @click="$emit('release')" class="action-button action-release">释放</button></div>
+    <div class="instance-card-actions mt-3 flex gap-2 border-t border-slate-100 pt-3"><button v-if="instance.status !== 'Running'" type="button" @click="handleStart" :disabled="isStarting" class="action-button action-start">{{ isStarting ? '启动中...' : '启动实例' }}</button><button v-if="instance.status === 'Running'" type="button" @click="handleStop" :disabled="isStopping" class="action-button action-stop">{{ isStopping ? '停止中...' : '停止实例' }}</button><button type="button" @click="$emit('release')" class="action-button action-release">释放</button></div>
   </article>
 </template>
 

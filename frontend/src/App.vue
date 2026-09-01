@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen bg-background text-text font-sans antialiased">
+  <div class="app-shell min-h-screen bg-background text-text font-sans antialiased" :data-card-layout="ui.cardLayout">
     <div v-if="isLogin">
       <router-view v-slot="{ Component }">
         <transition name="fade" mode="out-in">
@@ -11,6 +11,7 @@
     <div v-else class="min-h-screen lg:flex">
       <aside class="app-sidebar">
         <div class="sidebar-brand">
+          <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
           <div>
             <div class="brand-name">AliCDT Console</div>
             <div class="brand-caption">云资源与中转控制台</div>
@@ -82,6 +83,7 @@
             <strong>{{ activeItem.label }}</strong>
           </div>
           <div class="topbar-actions">
+            <CardLayoutToggle />
             <span v-if="updateState.status !== 'idle'" class="update-status" :class="`update-status-${updateState.status}`" aria-live="polite">{{ updateStatusLabel }}</span>
             <button type="button" class="update-button" :disabled="updateBusy" @click="requestUpdate">
               <span class="update-code">UPD</span>
@@ -108,10 +110,13 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useRelayStore } from './stores/relay'
+import { useUIStore } from './stores/ui'
+import CardLayoutToggle from './components/CardLayoutToggle.vue'
 
 const route = useRoute()
 const router = useRouter()
 const relayStore = useRelayStore()
+const ui = useUIStore()
 const isLogin = computed(() => route.path === '/login')
 
 const primaryNavItems = [
@@ -233,7 +238,7 @@ onUnmounted(stopUpdatePolling)
 .fade-enter-from,
 .fade-leave-to { opacity: 0; }
 
-.app-topbar { display: flex; height: 64px; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid #e5eaf1; background: rgba(255,255,255,.96); padding: 0 30px; }
+.app-topbar { display: flex; height: 64px; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid #e5eaf1; background: rgba(255,255,255,.96); padding: 0 30px; backdrop-filter: blur(10px); }
 .topbar-context { display: flex; min-width: 0; align-items: baseline; gap: 10px; }
 .topbar-kicker { color: #94a3b8; font-size: 9px; font-weight: 800; letter-spacing: .16em; }
 .topbar-context strong { overflow: hidden; color: #334155; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }

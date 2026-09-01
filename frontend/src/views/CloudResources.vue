@@ -18,27 +18,27 @@
       {{ message }}
     </div>
 
-    <section class="summary-grid" aria-label="云资源摘要">
-      <article class="summary-card">
+    <section class="summary-grid layout-collection layout-collection--strip" aria-label="云资源摘要">
+      <article class="card summary-card layout-card">
         <span>云账户</span>
         <strong>{{ store.cloud.accounts.length }}</strong>
         <small>{{ enabledAccountCount }} 个账户已启用</small>
       </article>
-      <article class="summary-card">
+      <article class="card summary-card layout-card">
         <span>ECS 实例</span>
         <strong>{{ store.cloud.instances.length }}</strong>
         <small>{{ runningInstanceCount }} 个实例运行中</small>
       </article>
-      <article class="summary-card">
+      <article class="card summary-card layout-card">
         <span>账户流量合计</span>
         <strong>{{ store.cloud.traffic.length ? totalTraffic.toFixed(2) + ' GB' : '待同步' }}</strong>
         <small>{{ store.cloud.traffic.length }} 个账户已有快照 · {{ activeProtectionCount }} 个保护中</small>
       </article>
     </section>
 
-    <section class="account-grid">
-      <article v-for="account in store.cloud.accounts" :key="account.id" class="card account-card" :class="account.protection_triggered ? 'account-protected' : ''">
-        <div class="account-head">
+    <section class="account-grid layout-collection layout-collection--row">
+      <article v-for="account in store.cloud.accounts" :key="account.id" class="card account-card layout-card" :class="account.protection_triggered ? 'account-protected' : ''">
+        <div class="account-row-head account-head">
           <div class="min-w-0">
             <h2>{{ account.name }}</h2>
             <p>{{ maskAccessKey(account.access_key_id) }} · {{ account.region_id }}</p>
@@ -52,7 +52,7 @@
           </div>
         </div>
 
-        <div class="traffic-row">
+        <div class="account-row-body traffic-row">
           <div>
             <span class="traffic-scope">账户 CDT 本月出向流量</span>
             <span class="traffic-value">{{ trafficFor(account.id) ? trafficFor(account.id).used_gb.toFixed(2) : '待同步' }}</span>
@@ -65,44 +65,44 @@
           </dl>
         </div>
 
-        <div class="traffic-track">
+        <div class="account-row-wide traffic-track">
           <div
             class="traffic-fill"
             :class="trafficPercent(account) >= account.threshold_percent ? 'traffic-danger' : ''"
             :style="{ width: Math.min(100, trafficPercent(account)) + '%' }"
           ></div>
         </div>
-        <div class="traffic-meta">
+        <div class="account-row-wide traffic-meta">
           <span>{{ trafficSummary(account) }}</span>
           <span>{{ instancesFor(account.id).length }} 个实例共享该账户额度</span>
         </div>
 
-        <p class="traffic-disclaimer">阿里云接口不提供单个 ECS 的 CDT 用量；同一账户下多个实例共享此快照与保护阈值。</p>
+        <p class="account-row-wide traffic-disclaimer">阿里云接口不提供单个 ECS 的 CDT 用量；同一账户下多个实例共享此快照与保护阈值。</p>
 
-        <div v-if="trafficFor(account.id)?.last_error" class="sync-warning">
+        <div v-if="trafficFor(account.id)?.last_error" class="account-row-wide sync-warning">
           <strong>本次同步失败</strong>
           <span>已保留上次有效流量：{{ trafficFor(account.id).last_error }}</span>
         </div>
 
-        <div v-if="account.protection_triggered" class="protection-notice">
+        <div v-if="account.protection_triggered" class="account-row-wide protection-notice">
           <strong>{{ protectionModeLabel(account.protection_mode) }}</strong>
           <span>{{ protectionStatusText(account) }}</span>
           <small v-if="account.protection_last_error">最近一次执行失败：{{ account.protection_last_error }}</small>
         </div>
 
-        <div class="account-actions">
+        <div class="account-row-actions account-actions">
           <button class="btn-ghost" type="button" @click="openEdit(account)">编辑</button>
           <button class="btn-danger" type="button" @click="removeAccount(account)">删除</button>
         </div>
       </article>
-      <div v-if="!store.cloud.accounts.length" class="card empty-panel account-empty">还没有阿里云账户</div>
+      <div v-if="!store.cloud.accounts.length" class="card empty-panel account-empty layout-card">还没有阿里云账户</div>
     </section>
 
     <section class="card instance-panel">
       <div class="panel-header">
         <div>
           <h2>CDT 中转候选实例</h2>
-          <p>Agent 注册后会自动关联 ECS，可作为固定入口节点</p>
+          <p>Agent 注册后会自动关联 ECS；带宽优先读取 ECS 公网出口，绑定 EIP 时读取 EIP 限速</p>
         </div>
         <span class="panel-code">ECS</span>
       </div>
@@ -118,7 +118,7 @@
           </div>
           <div class="instance-cell" data-label="公网入口">{{ instance.public_ip || '无公网 IP' }}</div>
           <div class="instance-cell" data-label="规格">{{ instance.instance_type || '—' }}</div>
-          <div class="instance-cell" data-label="带宽">{{ instance.bandwidth_mbps }} Mbps</div>
+          <div class="instance-cell" data-label="带宽">{{ bandwidthLabel(instance) }}</div>
           <div class="instance-cell" data-label="状态">
             <span class="state-tag" :class="instance.status === 'Running' ? 'state-online' : ''">
               {{ instance.status === 'Running' ? '运行中' : '已停机' }}
@@ -231,6 +231,11 @@ function trafficSummary(account) {
 function maskAccessKey(value) {
   if (!value || value.length < 8) return value || '未设置 AccessKey'
   return value.slice(0, 4) + '••••' + value.slice(-4)
+}
+
+function bandwidthLabel(instance) {
+  const value = Number(instance?.bandwidth_mbps)
+  return Number.isFinite(value) && value > 0 ? `${value} Mbps` : '未配置'
 }
 
 function protectionModeLabel(mode) {

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -147,12 +148,20 @@ func (c *Client) GetInstances(ctx context.Context) ([]Instance, error) {
 					Status       string `json:"Status"`
 					InstanceType string `json:"InstanceType"`
 					SpotStrategy string `json:"SpotStrategy"`
-					Bandwidth    int    `json:"InternetMaxBandwidthOut"`
-					PublicIP     struct {
+					// Aliyun reports the instance bandwidth as a number for most
+					// ECS instances. When an EIP is attached, however,
+					// InternetMaxBandwidthOut is commonly zero and the effective
+					// limit is exposed as EipAddress.Bandwidth. Keep these fields
+					// flexible because the API has returned both JSON numbers and
+					// numeric strings across regions/SDK versions.
+					Bandwidth interface{} `json:"InternetMaxBandwidthOut"`
+					PublicIP  struct {
 						Items []string `json:"IpAddress"`
 					} `json:"PublicIpAddress"`
 					EIP struct {
-						Address string `json:"IpAddress"`
+						Address         string      `json:"IpAddress"`
+						Bandwidth       interface{} `json:"Bandwidth"`
+						MaxBandwidthOut interface{} `json:"InternetMaxBandwidthOut"`
 					} `json:"EipAddress"`
 				} `json:"Instance"`
 			} `json:"Instances"`
@@ -166,10 +175,17 @@ func (c *Client) GetInstances(ctx context.Context) ([]Instance, error) {
 			if publicIP == "" && len(item.PublicIP.Items) > 0 {
 				publicIP = item.PublicIP.Items[0]
 			}
+			bandwidth := bandwidthMbps(item.Bandwidth)
+			if bandwidth == 0 {
+				bandwidth = bandwidthMbps(item.EIP.Bandwidth)
+			}
+			if bandwidth == 0 {
+				bandwidth = bandwidthMbps(item.EIP.MaxBandwidthOut)
+			}
 			instances = append(instances, Instance{
 				InstanceID: item.InstanceID, InstanceName: item.InstanceName,
 				RegionID: item.RegionID, Status: item.Status, PublicIP: publicIP,
-				InstanceType: item.InstanceType, BandwidthMbps: item.Bandwidth,
+				InstanceType: item.InstanceType, BandwidthMbps: bandwidth,
 				IsSpot: item.SpotStrategy != "" && item.SpotStrategy != "NoSpot",
 			})
 		}
@@ -419,6 +435,21 @@ func number(value interface{}) (float64, error) {
 	default:
 		return 0, fmt.Errorf("unsupported number type %T", value)
 	}
+}
+
+// bandwidthMbps normalizes the bandwidth fields returned by ECS. The API
+// documents an integer value, but some endpoints/regions serialize it as a
+// quoted number. Invalid and negative values are treated as unavailable so a
+// malformed optional field cannot make the complete inventory request fail.
+func bandwidthMbps(value interface{}) int {
+	parsed, err := number(value)
+	if err != nil || parsed <= 0 {
+		return 0
+	}
+	if parsed > float64(math.MaxInt) {
+		return math.MaxInt
+	}
+	return int(math.Round(parsed))
 }
 
 func stringValue(value interface{}) string {

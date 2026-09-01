@@ -18,15 +18,15 @@
       </div>
     </header>
 
-    <section class="grid grid-cols-2 gap-3 xl:grid-cols-4">
-      <StatCard label="实例总数" :value="instances.length" />
-      <StatCard label="运行中" :value="runningCount" color="success" />
-      <StatCard label="已停机" :value="stoppedCount" color="danger" />
-      <StatCard label="自动保活" :value="keepAliveCount" color="accent" />
+    <section class="grid grid-cols-2 gap-3 xl:grid-cols-4 layout-collection layout-collection--strip">
+      <StatCard class="layout-card" label="实例总数" :value="instances.length" />
+      <StatCard class="layout-card" label="运行中" :value="runningCount" color="success" />
+      <StatCard class="layout-card" label="已停机" :value="stoppedCount" color="danger" />
+      <StatCard class="layout-card" label="自动保活" :value="keepAliveCount" color="accent" />
     </section>
 
-    <section class="dashboard-grid">
-      <div class="card min-w-0 p-5 sm:p-6">
+    <section class="dashboard-grid layout-shell">
+      <div class="card workspace-card min-w-0 p-5 sm:p-6">
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div><h2 class="section-title">实例工作区</h2><p class="section-caption">拖动卡片可调整展示顺序</p></div>
           <span class="count-badge">{{ instances.length }} 个实例</span>
@@ -35,11 +35,11 @@
         <div v-if="sortedInstances.length === 0" class="empty-state rounded-xl border border-dashed border-slate-200 py-12">
           <div class="empty-mark">VM</div><div class="mt-4 font-semibold text-slate-800">暂无实例数据</div><p class="mt-1 text-sm text-text-muted">请先添加账户，然后等待后台同步完成。</p>
         </div>
-        <div v-else class="instance-grid">
+        <div v-else class="instance-grid layout-collection layout-collection--strip">
           <div v-for="inst in sortedInstances" :key="inst.instance_id" draggable="true"
             @dragstart="onDragStart($event, inst.instance_id)" @dragover.prevent="onDragOver($event, inst.instance_id)"
             @dragend="onDragEnd" @drop.prevent="onDrop($event, inst.instance_id)"
-            :class="['transition-all duration-200', dragOverId === inst.instance_id && draggingId !== inst.instance_id ? 'scale-[1.01] opacity-80' : '', draggingId === inst.instance_id ? 'opacity-40 scale-[.98]' : '']">
+            :class="['layout-card transition-all duration-200', dragOverId === inst.instance_id && draggingId !== inst.instance_id ? 'scale-[1.01] opacity-80' : '', draggingId === inst.instance_id ? 'opacity-40 scale-[.98]' : '']">
             <InstanceCard :instance="inst" :account="accountMap[inst.account_id]" @start="store.controlInstance(inst.instance_id, 'start')" @stop="store.controlInstance(inst.instance_id, 'stop')" @release="confirmRelease(inst)" />
           </div>
         </div>

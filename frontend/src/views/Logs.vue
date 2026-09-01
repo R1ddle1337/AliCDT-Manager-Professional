@@ -1,11 +1,11 @@
 <template>
-  <div class="space-y-6 fade-in">
+  <div class="space-y-6 fade-in logs-page">
     <div class="flex flex-wrap items-end justify-between gap-4">
       <div><div class="eyebrow">AUDIT LOG</div><h1 class="page-title">系统日志</h1><p class="page-subtitle">查看自动化任务和账户操作记录</p></div>
       <div class="flex flex-wrap items-center gap-2"><select v-model="category" @change="load" class="input w-36 py-2"><option value="">全部分类</option><option value="traffic">流量</option><option value="keepalive">保活</option><option value="scheduler">定时任务</option><option value="ddns">DDNS</option><option value="notify">通知</option><option value="system">系统</option></select><button type="button" @click="load" class="btn-ghost border border-slate-200">刷新</button><button type="button" @click="clearLogs" class="btn-danger">清空</button></div>
     </div>
 
-    <div class="card overflow-hidden">
+    <div class="card overflow-hidden log-card layout-card">
       <div v-if="store.logs.length === 0" class="empty-state py-14"><div class="empty-mark">LOG</div><p class="mt-4 text-sm text-text-muted">暂无日志记录</p></div>
       <div v-else class="divide-y divide-slate-100"><div v-for="log in store.logs" :key="log.id" class="log-row"><span class="level-marker" :class="levelClass(log.level)"></span><span class="category-tag">{{ log.category }}</span><span class="min-w-0 flex-1 break-words text-xs leading-6 text-slate-600">{{ log.message }}</span><span class="flex-shrink-0 font-mono text-[11px] text-slate-400">{{ formatTime(log.created_at) }}</span></div></div>
     </div>

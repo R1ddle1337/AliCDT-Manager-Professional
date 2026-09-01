@@ -1,27 +1,114 @@
 <template>
-  <div class="space-y-5 fade-in">
-    <header class="flex flex-wrap items-end justify-between gap-4"><div><div class="eyebrow">CDT RELAYS</div><h1 class="page-title">中转节点</h1><p class="page-subtitle">安装在阿里云 CDT ECS 上的 Go Relay Agent</p></div><div class="flex flex-wrap items-end gap-2"><label class="account-picker"><span>绑定云账户</span><select v-model="selectedAccountID" class="input"><option value="">不绑定（Agent 有元数据时自动关联）</option><option v-for="account in store.cloud.accounts" :key="account.id" :value="String(account.id)">{{ account.name }} · {{ account.region_id }}</option></select></label><button class="btn-ghost border border-slate-200" @click="showUpgrade = !showUpgrade">{{ showUpgrade ? '收起升级命令' : '升级已安装 Agent' }}</button><button class="btn-primary" @click="generateToken">添加中转节点</button></div></header>
-    <div v-if="showUpgrade" class="card p-5"><div class="flex items-start justify-between gap-4"><div><h2 class="text-sm font-bold text-slate-800">已安装 Agent 一次性升级</h2><p class="mt-1 text-xs leading-5 text-slate-500">旧版 Agent 首次升级需要在对应 CDT 服务器 root 终端执行。升级会保留现有凭证和配置，之后由 Agent 自动检查更新。</p></div><button class="btn-ghost border border-slate-200 text-xs" @click="copyUpgradeCommand">复制</button></div><pre class="command-box mt-4">{{ upgradeCommand }}</pre></div>
-    <div v-if="installCommand" class="card p-5"><div class="flex items-start justify-between gap-4"><div><h2 class="text-sm font-bold text-slate-800">SSH 安装命令</h2><p class="mt-1 text-xs text-slate-500">在目标 CDT 服务器 root 终端执行；注册码 {{ tokenTTL }} 分钟内有效且只能使用一次。</p></div><button class="btn-ghost border border-slate-200 text-xs" @click="copyCommand">复制</button></div><pre class="command-box mt-4">{{ installCommand }}</pre></div>
+  <div class="space-y-5 fade-in relay-nodes-page">
+    <header class="flex flex-wrap items-end justify-between gap-4">
+      <div><div class="eyebrow">CDT RELAYS</div><h1 class="page-title">中转节点</h1><p class="page-subtitle">安装在阿里云 CDT ECS 上的 Go Relay Agent · 入口 IP 默认仅显示前两段</p></div>
+      <div class="flex flex-wrap items-end gap-2">
+        <label class="account-picker"><span>绑定云账户</span><select v-model="selectedAccountID" class="input"><option value="">不绑定（Agent 有元数据时自动关联）</option><option v-for="account in store.cloud.accounts" :key="account.id" :value="String(account.id)">{{ account.name }} · {{ account.region_id }}</option></select></label>
+        <button class="btn-ghost border border-slate-200" @click="showUpgrade = !showUpgrade">{{ showUpgrade ? '收起升级命令' : '升级已安装 Agent' }}</button>
+        <button class="btn-primary" @click="generateToken">添加中转节点</button>
+      </div>
+    </header>
+
+    <div v-if="showUpgrade" class="card command-card p-5"><div class="flex items-start justify-between gap-4"><div><h2 class="text-sm font-bold text-slate-800">已安装 Agent 一次性升级</h2><p class="mt-1 text-xs leading-5 text-slate-500">旧版 Agent 首次升级需要在对应 CDT 服务器 root 终端执行。升级会保留现有凭证和配置，之后由 Agent 自动检查更新。</p></div><button class="btn-ghost border border-slate-200 text-xs" @click="copyUpgradeCommand">复制</button></div><pre class="command-box mt-4">{{ upgradeCommand }}</pre></div>
+    <div v-if="installCommand" class="card command-card p-5"><div class="flex items-start justify-between gap-4"><div><h2 class="text-sm font-bold text-slate-800">SSH 安装命令</h2><p class="mt-1 text-xs text-slate-500">在目标 CDT 服务器 root 终端执行；注册码 {{ tokenTTL }} 分钟内有效且只能使用一次。</p></div><button class="btn-ghost border border-slate-200 text-xs" @click="copyCommand">复制</button></div><pre class="command-box mt-4">{{ installCommand }}</pre></div>
     <div v-if="error" class="notice notice-error">{{ error }}</div>
-    <div class="grid grid-cols-1 gap-4 xl:grid-cols-2"><article v-for="node in store.relayNodes" :key="node.id" class="card p-5"><div class="flex items-start justify-between gap-4"><div class="min-w-0"><div class="flex items-center gap-2"><span class="status-dot" :class="node.status === 'online' ? 'status-dot-success' : 'status-dot-muted'"></span><h2 class="truncate font-bold text-slate-800">{{ node.name }}</h2></div><p class="mt-2 font-mono text-[11px] text-slate-400">{{ node.id }}</p></div><span class="state-tag" :class="node.status === 'online' ? 'state-online' : ''">{{ node.status === 'online' ? '在线' : '离线' }}</span></div><div class="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4"><div class="info-box"><span>入口 IP</span><strong>{{ node.public_ip || '待设置' }}</strong></div><div class="info-box"><span>系统</span><strong>{{ node.os }}/{{ node.architecture }}</strong></div><div class="info-box"><span>配置版本</span><strong>{{ node.current_revision }}/{{ node.desired_revision }}</strong></div><div class="info-box"><span>Agent</span><strong>{{ node.agent_version || '—' }}</strong></div></div><div class="mt-4 border-t border-slate-100 pt-3 text-[11px] text-slate-400">最后心跳：{{ formatTime(node.last_seen_at) }}<span v-if="node.update_status && node.update_status !== 'idle'" class="ml-3" :class="node.update_status === 'failed' ? 'text-red-600' : 'text-blue-600'">Agent 更新：{{ updateLabel(node.update_status) }}<span v-if="node.update_error">（{{ node.update_error }}）</span></span></div></article><div v-if="!store.relayNodes.length" class="card empty-panel xl:col-span-2">尚未注册中转节点</div></div>
+
+    <section class="relay-node-grid layout-collection layout-collection--compact">
+      <article v-for="node in store.relayNodes" :key="node.id" class="card relay-node-card layout-card">
+        <div class="relay-node-head">
+          <div class="min-w-0"><div class="flex items-center gap-2"><span class="status-dot" :class="node.status === 'online' ? 'status-dot-success' : 'status-dot-muted'"></span><h2 class="truncate font-bold text-slate-800">{{ node.name }}</h2></div><p class="mt-2 font-mono text-[11px] text-slate-400">{{ node.id }}</p></div>
+          <div class="relay-node-actions">
+            <button type="button" class="ip-eye" :aria-pressed="!!revealedIPs[node.id]" :aria-label="revealedIPs[node.id] ? '隐藏完整入口 IP' : '显示完整入口 IP'" :title="revealedIPs[node.id] ? '隐藏完整入口 IP' : '显示完整入口 IP'" @click="toggleIP(node.id)">
+              <svg v-if="revealedIPs[node.id]" aria-hidden="true" viewBox="0 0 24 24" fill="none"><path d="M3 3l18 18M10.58 10.58a2 2 0 0 0 2.83 2.83M9.88 4.24A10.7 10.7 0 0 1 12 4c5.25 0 9.44 3.2 11 8a11.8 11.8 0 0 1-3.04 4.86M6.1 6.1A11.8 11.8 0 0 0 1 12c1.56 4.8 5.75 8 11 8a10.7 10.7 0 0 0 2.12-.21" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              <svg v-else aria-hidden="true" viewBox="0 0 24 24" fill="none"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" /><circle cx="12" cy="12" r="2.8" stroke="currentColor" stroke-width="1.7" /></svg>
+            </button>
+            <span class="state-tag" :class="node.status === 'online' ? 'state-online' : ''">{{ node.status === 'online' ? '在线' : '离线' }}</span>
+          </div>
+        </div>
+        <div class="relay-node-metrics">
+          <div class="info-box info-box-ip"><span>入口 IP</span><strong class="ip-value" :class="revealedIPs[node.id] ? 'ip-value-visible' : ''">{{ displayIP(node.public_ip, node.id) }}</strong></div>
+          <div class="info-box"><span>系统</span><strong>{{ node.os || '—' }}/{{ node.architecture || '—' }}</strong></div>
+          <div class="info-box"><span>配置版本</span><strong>{{ node.current_revision }}/{{ node.desired_revision }}</strong></div>
+          <div class="info-box"><span>Agent</span><strong>{{ node.agent_version || '—' }}</strong></div>
+        </div>
+        <div class="relay-node-foot">最后心跳：{{ formatTime(node.last_seen_at) }}<span v-if="node.update_status && node.update_status !== 'idle'" class="ml-3" :class="node.update_status === 'failed' ? 'text-red-600' : 'text-blue-600'">Agent 更新：{{ updateLabel(node.update_status) }}<span v-if="node.update_error">（{{ node.update_error }}）</span></span></div>
+      </article>
+      <div v-if="!store.relayNodes.length" class="card empty-panel layout-card">尚未注册中转节点</div>
+    </section>
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRelayStore } from '../stores/relay'
-const store=useRelayStore();const token=ref('');const tokenTTL=30;const error=ref('');const showUpgrade=ref(false);const selectedAccountID=ref('')
-const installCommand=computed(()=>token.value?`curl -fsSL https://${window.location.host}/agent/install.sh | sh -s -- --server https://${window.location.host} --token ${token.value}`: '')
-const upgradeCommand=computed(()=>`curl -fsSL https://${window.location.host}/agent/upgrade.sh | sh -s -- --server https://${window.location.host}`)
-async function generateToken(){error.value='';try{const accountID=selectedAccountID.value?Number(selectedAccountID.value):null;const data=await store.createEnrollmentToken(tokenTTL,accountID);token.value=data.token}catch(e){error.value=e.response?.data?.error||'生成注册码失败'}}
-async function copyCommand(){await navigator.clipboard.writeText(installCommand.value)}
-async function copyUpgradeCommand(){await navigator.clipboard.writeText(upgradeCommand.value)}
-function formatTime(value){return value?new Date(value).toLocaleString('zh-CN',{hour12:false}):'尚未上报'}
-function updateLabel(value){return {draining:'排空中',updating:'更新中',failed:'更新失败'}[value]||value}
-onMounted(()=>Promise.all([store.fetchRelayNodes(),store.fetchCloud()]))
+const store = useRelayStore()
+const token = ref('')
+const tokenTTL = 30
+const error = ref('')
+const showUpgrade = ref(false)
+const selectedAccountID = ref('')
+const revealedIPs = ref({})
+
+const installCommand = computed(() => token.value
+  ? `curl -fsSL https://${window.location.host}/agent/install.sh | sh -s -- --server https://${window.location.host} --token ${token.value}`
+  : '')
+const upgradeCommand = computed(() => `curl -fsSL https://${window.location.host}/agent/upgrade.sh | sh -s -- --server https://${window.location.host}`)
+
+async function generateToken() {
+  error.value = ''
+  try {
+    const accountID = selectedAccountID.value ? Number(selectedAccountID.value) : null
+    const data = await store.createEnrollmentToken(tokenTTL, accountID)
+    token.value = data.token
+  } catch (e) {
+    error.value = e.response?.data?.error || '生成注册码失败'
+  }
+}
+
+async function copyCommand() {
+  await navigator.clipboard.writeText(installCommand.value)
+}
+
+async function copyUpgradeCommand() {
+  await navigator.clipboard.writeText(upgradeCommand.value)
+}
+
+function formatTime(value) {
+  return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '尚未上报'
+}
+
+function updateLabel(value) {
+  return { draining: '排空中', updating: '更新中', failed: '更新失败' }[value] || value
+}
+
+function toggleIP(id) {
+  revealedIPs.value[id] = !revealedIPs.value[id]
+}
+
+function displayIP(value, id) {
+  if (!value) return '待设置'
+  return revealedIPs.value[id] ? value : maskIP(value)
+}
+
+function maskIP(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return '待设置'
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(raw)) {
+    const parts = raw.split('.')
+    return `${parts[0]}.${parts[1]}.•••.•••`
+  }
+  if (raw.includes(':')) {
+    const parts = raw.split(':')
+    if (parts.length > 2) return `${parts.slice(0, 2).join(':')}:•••:•••`
+  }
+  return raw
+}
+
+onMounted(() => Promise.all([store.fetchRelayNodes(), store.fetchCloud()]))
 </script>
 
 <style scoped>
-.eyebrow{color:#2563eb;font-size:10px;font-weight:800;letter-spacing:.16em}.page-title{margin-top:5px;color:#172033;font-size:27px;font-weight:750;letter-spacing:-.03em}.page-subtitle{margin-top:5px;color:#64748b;font-size:12px}.account-picker{display:grid;gap:4px;min-width:220px}.account-picker span{color:#64748b;font-size:9px;font-weight:700}.account-picker .input{min-height:36px;font-size:10px}.command-box{overflow:auto;border-radius:9px;background:#0f172a;padding:14px;color:#dbeafe;font-size:11px;line-height:1.7;white-space:pre-wrap}.state-tag{border-radius:999px;background:#f1f5f9;padding:5px 9px;color:#64748b;font-size:10px;font-weight:700}.state-online{background:#ecfdf3;color:#15803d}.info-box{min-width:0;border-radius:8px;background:#f8fafc;padding:9px}.info-box span{display:block;color:#94a3b8;font-size:9px}.info-box strong{display:block;overflow:hidden;margin-top:4px;color:#475569;text-overflow:ellipsis;white-space:nowrap;font-size:10px}.empty-panel{padding:52px;text-align:center;color:#94a3b8;font-size:12px}
+.eyebrow{color:#2563eb;font-size:10px;font-weight:800;letter-spacing:.16em}.page-title{margin-top:5px;color:#172033;font-size:27px;font-weight:750;letter-spacing:-.03em}.page-subtitle{margin-top:5px;color:#64748b;font-size:12px}.account-picker{display:grid;gap:4px;min-width:220px}.account-picker span{color:#64748b;font-size:9px;font-weight:700}.account-picker .input{min-height:36px;font-size:10px}.command-card{border-left:3px solid #93c5fd}.command-box{overflow:auto;border-radius:9px;background:#0f172a;padding:14px;color:#dbeafe;font-size:11px;line-height:1.7;white-space:pre-wrap}.relay-node-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.relay-node-card{display:flex;min-width:0;flex-direction:column;padding:18px}.relay-node-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.relay-node-actions{display:flex;align-items:center;gap:7px}.ip-eye{display:inline-flex;width:28px;height:28px;align-items:center;justify-content:center;border:1px solid #dbe4ef;border-radius:7px;background:#fff;color:#64748b;cursor:pointer;transition:color .15s ease,background .15s ease,border-color .15s ease}.ip-eye:hover{border-color:#93c5fd;background:#eff6ff;color:#1d4ed8}.ip-eye svg{width:15px;height:15px}.state-tag{border-radius:999px;background:#f1f5f9;padding:5px 9px;color:#64748b;font-size:10px;font-weight:700}.state-online{background:#ecfdf3;color:#15803d}.relay-node-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:18px}.info-box{min-width:0;border-radius:8px;background:#f8fafc;padding:10px}.info-box span{display:block;color:#94a3b8;font-size:9px}.info-box strong{display:block;overflow:hidden;margin-top:4px;color:#475569;text-overflow:ellipsis;white-space:nowrap;font-size:10px}.info-box-ip{background:#f5f9ff;border:1px solid #e0ecff}.ip-value{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.02em}.ip-value-visible{color:#1e3a8a}.relay-node-foot{margin-top:auto;border-top:1px solid #eef2f7;padding-top:13px;color:#94a3b8;font-size:10px;line-height:1.6}.empty-panel{padding:52px;text-align:center;color:#94a3b8;font-size:12px}
+@media(max-width:900px){.relay-node-grid{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:520px){.relay-node-head{flex-direction:column}.relay-node-actions{width:100%;justify-content:flex-end}.relay-node-card{padding:15px}}
 </style>

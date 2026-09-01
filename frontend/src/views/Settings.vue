@@ -1,8 +1,9 @@
 <template>
-  <div class="space-y-6 fade-in">
+  <div class="space-y-6 fade-in settings-page">
     <div><div class="eyebrow">PREFERENCES</div><h1 class="page-title">系统设置</h1><p class="page-subtitle">配置通知渠道和控制台安全策略</p></div>
 
-    <div class="card settings-card">
+    <div class="settings-card-grid layout-collection layout-collection--strip">
+    <div class="card settings-card layout-card">
       <div class="section-heading"><div><h2>Telegram 通知</h2><p>将熔断、保活和定时任务结果发送到指定会话。</p></div><span class="section-code">TG</span></div>
       <div class="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2"><div><label class="field-label" for="bot-token">Bot Token</label><input id="bot-token" v-model="form.tg_bot_token" class="input" placeholder="123456:ABC..." /></div><div><label class="field-label" for="chat-id">Chat ID</label><input id="chat-id" v-model="form.tg_chat_id" class="input" placeholder="123..." /></div></div>
       <div class="setting-row mt-5"><div><div class="text-sm font-semibold text-slate-700">每日流量汇报</div><div class="mt-1 text-xs text-slate-500">每天北京时间 00:00 推送所有实例的流量摘要。</div></div><button type="button" class="toggle" :class="form.tg_daily_report === '1' ? 'toggle-on' : ''" :aria-pressed="form.tg_daily_report === '1'" @click="form.tg_daily_report = form.tg_daily_report === '1' ? '0' : '1'"><span></span></button></div>
@@ -10,9 +11,10 @@
       <div class="mt-5 flex flex-wrap gap-2"><button type="button" @click="save" :disabled="saving" class="btn-primary">{{ saving ? '保存中...' : '保存设置' }}</button><button type="button" @click="testTg" :disabled="testing" class="btn-ghost border border-slate-200">{{ testing ? '发送中...' : '发送测试消息' }}</button><button type="button" @click="testDailyReport" :disabled="reportTesting" class="btn-ghost border border-slate-200">{{ reportTesting ? '发送中...' : '发送测试汇报' }}</button></div>
     </div>
 
-    <div class="card settings-card">
+    <div class="card settings-card layout-card">
       <div class="section-heading"><div><h2>修改密码</h2><p>更新控制台管理员登录凭据。</p></div><span class="section-code">SEC</span></div>
       <div class="mt-5 max-w-md"><label class="field-label" for="new-password">新密码</label><input id="new-password" v-model="newPassword" type="password" class="input" placeholder="至少 8 位字符" /></div><button type="button" @click="changePassword" class="btn-danger mt-4">更新密码</button>
+    </div>
     </div>
 
     <div v-if="msg.text" class="notice" :class="`notice-${msg.type}`">{{ msg.text }}</div>
@@ -40,5 +42,6 @@ async function changePassword() { if (!newPassword.value || newPassword.value.le
 </script>
 
 <style scoped>
-.eyebrow { color: #2563eb; font-size: 10px; font-weight: 800; letter-spacing: .16em; }.page-title { margin-top: 6px; color: #172033; font-size: 26px; font-weight: 750; letter-spacing: -.03em; }.page-subtitle { margin-top: 6px; color: #64748b; font-size: 13px; }.settings-card { padding: 22px; }.section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }.section-heading h2 { color: #1e293b; font-size: 15px; font-weight: 700; }.section-heading p { margin-top: 4px; color: #94a3b8; font-size: 12px; }.section-code { display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; background: #eff6ff; padding: 6px 8px; color: #2563eb; font-size: 9px; font-weight: 800; letter-spacing: .08em; }.setting-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; border-top: 1px solid #eef2f7; padding-top: 18px; }.toggle { position: relative; display: inline-flex; width: 40px; height: 23px; flex: 0 0 auto; border: 0; border-radius: 999px; background: #cbd5e1; transition: background .15s ease; }.toggle span { position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(15,23,42,.2); transition: transform .15s ease; }.toggle-on { background: #2563eb; }.toggle-on span { transform: translateX(17px); }
+.eyebrow { color: #2563eb; font-size: 10px; font-weight: 800; letter-spacing: .16em; }.page-title { margin-top: 6px; color: #172033; font-size: 26px; font-weight: 750; letter-spacing: -.03em; }.page-subtitle { margin-top: 6px; color: #64748b; font-size: 13px; }.settings-card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }.settings-card { padding: 22px; }.section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }.section-heading h2 { color: #1e293b; font-size: 15px; font-weight: 700; }.section-heading p { margin-top: 4px; color: #94a3b8; font-size: 12px; }.section-code { display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; background: #eff6ff; padding: 6px 8px; color: #2563eb; font-size: 9px; font-weight: 800; letter-spacing: .08em; }.setting-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; border-top: 1px solid #eef2f7; padding-top: 18px; }.toggle { position: relative; display: inline-flex; width: 40px; height: 23px; flex: 0 0 auto; border: 0; border-radius: 999px; background: #cbd5e1; transition: transform .15s ease, background .15s ease; }.toggle span { position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(15,23,42,.2); transition: transform .15s ease; }.toggle-on { background: #2563eb; }.toggle-on span { transform: translateX(17px); }
+@media (max-width: 900px) { .settings-card-grid { grid-template-columns: minmax(0, 1fr); } }
 </style>

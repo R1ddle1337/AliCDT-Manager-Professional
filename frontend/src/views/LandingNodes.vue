@@ -12,19 +12,19 @@
       <button class="btn-primary mt-5" @click="openCreate">添加第一个节点</button>
     </div>
 
-    <div v-else class="node-grid">
-      <article v-for="node in store.landingNodes" :key="node.id" class="card node-card">
-        <div class="node-head">
+    <div v-else class="node-grid layout-collection layout-collection--row">
+      <article v-for="node in store.landingNodes" :key="node.id" class="card node-card layout-card">
+        <div class="node-row-head node-head">
           <div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><span class="protocol-tag">{{ (node.protocol || node.network || 'legacy').toUpperCase() }}</span><span class="state-tag" :class="node.enabled ? 'state-online' : ''">{{ node.enabled ? '启用' : '停用' }}</span></div><h2 class="mt-3 truncate text-base font-bold text-slate-800">{{ node.name }}</h2><p class="mt-1 truncate font-mono text-[11px] text-slate-400">{{ node.address }}:{{ node.port }}</p></div>
           <div class="node-actions"><button class="btn-ghost px-2 py-1 text-xs" @click="openEdit(node)">编辑</button><button class="btn-danger px-2 py-1 text-xs" @click="remove(node)">删除</button></div>
         </div>
 
-        <div v-if="node.share_uri" class="source-panel">
+        <div v-if="node.share_uri" class="node-row-body source-panel">
           <div class="panel-label">原始节点链接</div><code class="source-uri">{{ node.share_uri }}</code>
         </div>
-        <div v-else class="legacy-panel"><strong>兼容旧节点录入</strong><span>当前节点只有地址和端口，编辑时可补充完整分享链接。</span></div>
+        <div v-else class="node-row-body legacy-panel"><strong>兼容旧节点录入</strong><span>当前节点只有地址和端口，编辑时可补充完整分享链接。</span></div>
 
-        <div class="relay-panel">
+        <div class="node-row-wide relay-panel">
           <div class="relay-panel-head"><div><h3>中转后的节点</h3><p>仅替换 Host 和 Port，其余参数保持不变</p></div><span class="panel-code">{{ linksFor(node).length }} 个入口</span></div>
           <div v-if="linksFor(node).length" class="relay-link-list">
             <div v-for="link in linksFor(node)" :key="link.pool_id || link.service_id || `${link.host}:${link.port}:${link.service_name}`" class="relay-link-item">

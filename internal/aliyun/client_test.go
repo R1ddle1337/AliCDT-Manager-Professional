@@ -79,3 +79,29 @@ func TestGetInstancesPaginatesAndNormalizesPublicIPs(t *testing.T) {
 		t.Fatalf("unexpected second instance: %+v", instances[1])
 	}
 }
+
+func TestGetInstancesUsesEIPBandwidthWhenInstanceBandwidthIsZero(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		if r.Form.Get("Action") != "DescribeInstances" {
+			t.Fatalf("unexpected action: %s", r.Form.Get("Action"))
+		}
+		_, _ = w.Write([]byte(`{"TotalCount":2,"Instances":{"Instance":[
+			{"InstanceId":"i-eip-number","InstanceName":"number","RegionId":"cn-hongkong","Status":"Running","InternetMaxBandwidthOut":0,"EipAddress":{"IpAddress":"203.0.113.20","Bandwidth":50}},
+			{"InstanceId":"i-eip-string","InstanceName":"string","RegionId":"cn-hongkong","Status":"Running","InternetMaxBandwidthOut":"0","EipAddress":{"IpAddress":"203.0.113.21","Bandwidth":"80"}}
+		]}}`))
+	}))
+	defer server.Close()
+	client := NewClient("id", "secret", "cn-hongkong", "china")
+	client.ECSEndpoint = server.URL
+	instances, err := client.GetInstances(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(instances) != 2 {
+		t.Fatalf("expected two instances, got %+v", instances)
+	}
+	if instances[0].BandwidthMbps != 50 || instances[1].BandwidthMbps != 80 {
+		t.Fatalf("EIP bandwidth was not used: %+v", instances)
+	}
+}
