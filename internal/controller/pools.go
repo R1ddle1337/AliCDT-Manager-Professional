@@ -349,141 +349,161 @@ func updatePoolServiceTx(ctx context.Context, tx *sql.Tx, serviceID string, requ
 	return nil
 }
 
-// DeleteRelayPool permanently removes a logical entry pool and its generated
-// per-Relay services. Managed DNS rows are retained as disabled records until
-// the DNS scheduler has removed the provider-side records.
-func (s *Store) DeleteRelayPool(ctx context.Context, id string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin: %w", err)
-	}
-	defer tx.Rollback()
+// poolDNSCleanupRecord identifies a provider-side record that belonged only to
+// a pool which has just been removed. The local tombstone is retained until
+// the provider delete succeeds, allowing the scheduler to retry transient
+// credential/network failures without ever re-publishing the record.
+type poolDNSCleanupRecord struct {
+	ID               string
+	ProviderID       string
+	ProviderRecordID string
+	Name             string
+	Type             string
+}
 
-	// Collect the members and generated services before removing anything. A
-	// pool owns the replicated services on each Relay, so deleting a pool must
-	// remove those listeners rather than leaving disabled/orphaned rows behind.
-	rows, err := tx.QueryContext(ctx, `SELECT relay_node_id FROM relay_pool_members WHERE pool_id=?`, id)
-	if err != nil {
-		return fmt.Errorf("list members: %w", err)
-	}
-	type member struct{ node string }
-	members := make([]member, 0)
-	for rows.Next() {
-		var item member
-		if err := rows.Scan(&item.node); err != nil {
-			rows.Close()
-			return fmt.Errorf("scan members: %w", err)
-		}
-		members = append(members, item)
-	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("close members: %w", err)
-	}
+type relayPoolDeleteResult struct {
+	ChangedNodes map[string]bool
+	DNSRecords   []poolDNSCleanupRecord
+}
+
+// deleteRelayPoolTx permanently removes a logical entry pool and its
+// generated per-Relay services. It must be called with an active transaction;
+// this lets landing-node deletion atomically cascade pools whose final target
+// disappeared.
+func (s *Store) deleteRelayPoolTx(ctx context.Context, tx *sql.Tx, id string) (relayPoolDeleteResult, error) {
+	result := relayPoolDeleteResult{ChangedNodes: make(map[string]bool), DNSRecords: make([]poolDNSCleanupRecord, 0)}
 	var poolExists int
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM relay_pools WHERE id=?)`, id).Scan(&poolExists); err != nil {
-		return fmt.Errorf("check pool: %w", err)
+		return result, fmt.Errorf("check pool: %w", err)
 	}
 	if poolExists == 0 {
-		return sql.ErrNoRows
+		return result, sql.ErrNoRows
 	}
 
-	changed := make(map[string]bool, len(members))
-	for _, item := range members {
-		changed[item.node] = true
-	}
-	// Include any pool members that may have been created by an older schema
-	// but are not returned by the first query due to a malformed service link.
-	memberRows, err := tx.QueryContext(ctx, `SELECT relay_node_id FROM relay_pool_members WHERE pool_id=?`, id)
-	if err != nil {
-		return fmt.Errorf("list relay nodes: %w", err)
-	}
-	for memberRows.Next() {
-		var nodeID string
-		if err := memberRows.Scan(&nodeID); err != nil {
-			memberRows.Close()
-			return fmt.Errorf("scan relay node: %w", err)
+	// A pool owns the replicated services on each Relay. Collect every affected
+	// node before deleting relationship rows so its desired revision can be
+	// advanced exactly once by the caller.
+	for _, query := range []string{
+		`SELECT relay_node_id FROM relay_pool_members WHERE pool_id=?`,
+		`SELECT relay_node_id FROM relay_services WHERE pool_id=?`,
+	} {
+		rows, err := tx.QueryContext(ctx, query, id)
+		if err != nil {
+			return result, fmt.Errorf("list pool relay nodes: %w", err)
 		}
-		changed[nodeID] = true
-	}
-	if err := memberRows.Close(); err != nil {
-		return fmt.Errorf("close relay nodes: %w", err)
-	}
-	serviceNodeRows, err := tx.QueryContext(ctx, `SELECT relay_node_id FROM relay_services WHERE pool_id=?`, id)
-	if err != nil {
-		return fmt.Errorf("list pool service nodes: %w", err)
-	}
-	for serviceNodeRows.Next() {
-		var nodeID string
-		if err := serviceNodeRows.Scan(&nodeID); err != nil {
-			serviceNodeRows.Close()
-			return fmt.Errorf("scan pool service node: %w", err)
+		for rows.Next() {
+			var nodeID string
+			if err := rows.Scan(&nodeID); err != nil {
+				rows.Close()
+				return result, fmt.Errorf("scan pool relay node: %w", err)
+			}
+			if nodeID != "" {
+				result.ChangedNodes[nodeID] = true
+			}
 		}
-		changed[nodeID] = true
-	}
-	if err := serviceNodeRows.Close(); err != nil {
-		return fmt.Errorf("close pool service nodes: %w", err)
+		if err := rows.Close(); err != nil {
+			return result, fmt.Errorf("close pool relay nodes: %w", err)
+		}
 	}
 
-	// Keep managed DNS rows long enough for the DNS scheduler to remove the
-	// provider-side record. Shared records are reassigned to another pool
-	// binding; records used only by this pool become disabled and unowned.
-	recordRows, err := tx.QueryContext(ctx, `SELECT record_id FROM dns_managed_record_pools WHERE pool_id=? UNION SELECT id FROM dns_managed_records WHERE pool_id=?`, id, id)
-	if err != nil {
-		return fmt.Errorf("list pool DNS records: %w", err)
+	type dnsRecordState struct {
+		poolDNSCleanupRecord
+		PoolID string
 	}
-	recordIDs := make([]string, 0)
+	recordRows, err := tx.QueryContext(ctx, `SELECT r.id,r.provider_id,COALESCE(r.provider_record_id,''),r.name,r.type,COALESCE(r.pool_id,'')
+		FROM dns_managed_records r
+		WHERE r.pool_id=? OR EXISTS(SELECT 1 FROM dns_managed_record_pools b WHERE b.record_id=r.id AND b.pool_id=?)`, id, id)
+	if err != nil {
+		return result, fmt.Errorf("list pool DNS records: %w", err)
+	}
+	records := make([]dnsRecordState, 0)
 	for recordRows.Next() {
-		var recordID string
-		if err := recordRows.Scan(&recordID); err != nil {
+		var item dnsRecordState
+		if err := recordRows.Scan(&item.ID, &item.ProviderID, &item.ProviderRecordID, &item.Name, &item.Type, &item.PoolID); err != nil {
 			recordRows.Close()
-			return fmt.Errorf("scan pool DNS record: %w", err)
+			return result, fmt.Errorf("scan pool DNS record: %w", err)
 		}
-		recordIDs = append(recordIDs, recordID)
+		records = append(records, item)
 	}
 	if err := recordRows.Close(); err != nil {
-		return fmt.Errorf("close pool DNS records: %w", err)
+		return result, fmt.Errorf("close pool DNS records: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM dns_managed_record_pools WHERE pool_id=?`, id); err != nil {
-		return fmt.Errorf("remove pool DNS bindings: %w", err)
+		return result, fmt.Errorf("remove pool DNS bindings: %w", err)
 	}
+
+	// Shared RRsets stay alive for another pool. Records used only by this pool
+	// become explicit deletion tombstones. The deleting status prevents the
+	// agent DNS reconciler from treating the row as a standalone record, while
+	// retaining relay_node_id lets a newly-created pool safely reclaim the row
+	// if it uses the same member and hostname before cleanup finishes.
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	for _, recordID := range recordIDs {
-		var replacement sql.NullString
-		lookupErr := tx.QueryRowContext(ctx, `SELECT pool_id FROM dns_managed_record_pools WHERE record_id=? ORDER BY pool_id LIMIT 1`, recordID).Scan(&replacement)
+	for _, record := range records {
+		var replacement string
+		lookupErr := tx.QueryRowContext(ctx, `SELECT pool_id FROM dns_managed_record_pools WHERE record_id=? ORDER BY pool_id LIMIT 1`, record.ID).Scan(&replacement)
 		if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
-			return fmt.Errorf("find replacement DNS pool: %w", lookupErr)
+			return result, fmt.Errorf("find replacement DNS pool: %w", lookupErr)
 		}
-		if replacement.Valid && replacement.String != "" {
-			if _, err := tx.ExecContext(ctx, `UPDATE dns_managed_records SET pool_id=?,updated_at=? WHERE id=? AND pool_id=?`, replacement.String, now, recordID, id); err != nil {
-				return fmt.Errorf("reassign shared DNS record: %w", err)
+		if replacement != "" {
+			if _, err := tx.ExecContext(ctx, `UPDATE dns_managed_records SET pool_id=?,updated_at=? WHERE id=? AND (COALESCE(pool_id,'')=? OR COALESCE(pool_id,'')='')`, replacement, now, record.ID, id); err != nil {
+				return result, fmt.Errorf("reassign shared DNS record: %w", err)
 			}
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE dns_managed_records SET pool_id=NULL,enabled=0,status='disabled',updated_at=? WHERE id=? AND (pool_id=? OR NOT EXISTS(SELECT 1 FROM dns_managed_record_pools b WHERE b.record_id=dns_managed_records.id))`, now, recordID, id); err != nil {
-			return fmt.Errorf("disable orphaned pool DNS record: %w", err)
+		// If an inconsistent legacy row points at a different pool, leave it
+		// untouched rather than deleting another pool's record.
+		if record.PoolID != "" && record.PoolID != id {
+			continue
 		}
+		if record.ProviderRecordID == "" {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM dns_managed_records WHERE id=? AND (COALESCE(pool_id,'')=? OR COALESCE(pool_id,'')='')`, record.ID, id); err != nil {
+				return result, fmt.Errorf("delete pending pool DNS record: %w", err)
+			}
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE dns_managed_records SET pool_id=NULL,enabled=0,desired_enabled=0,status='deleting',last_error='',updated_at=? WHERE id=? AND (COALESCE(pool_id,'')=? OR COALESCE(pool_id,'')='')`, now, record.ID, id); err != nil {
+			return result, fmt.Errorf("mark pool DNS record for deletion: %w", err)
+		}
+		result.DNSRecords = append(result.DNSRecords, record.poolDNSCleanupRecord)
 	}
 
 	// Delete relationship rows before generated services and the pool itself.
 	// The explicit deletes also work on installations whose migrations were
 	// created before all ON DELETE CASCADE clauses were present.
 	if _, err := tx.ExecContext(ctx, `DELETE FROM relay_pool_targets WHERE pool_id=?`, id); err != nil {
-		return fmt.Errorf("delete pool targets: %w", err)
+		return result, fmt.Errorf("delete pool targets: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM relay_pool_members WHERE pool_id=?`, id); err != nil {
-		return fmt.Errorf("delete pool members: %w", err)
+		return result, fmt.Errorf("delete pool members: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM relay_services WHERE pool_id=?`, id); err != nil {
-		return fmt.Errorf("delete pool services: %w", err)
+		return result, fmt.Errorf("delete pool services: %w", err)
 	}
-	result, err := tx.ExecContext(ctx, `DELETE FROM relay_pools WHERE id=?`, id)
+	deleted, err := tx.ExecContext(ctx, `DELETE FROM relay_pools WHERE id=?`, id)
 	if err != nil {
-		return fmt.Errorf("delete pool: %w", err)
+		return result, fmt.Errorf("delete pool: %w", err)
 	}
-	if affected, _ := result.RowsAffected(); affected == 0 {
-		return sql.ErrNoRows
+	if affected, _ := deleted.RowsAffected(); affected == 0 {
+		return result, sql.ErrNoRows
 	}
-	for nodeID := range changed {
+	return result, nil
+}
+
+// DeleteRelayPool permanently removes a logical entry pool, generated Relay
+// services and pool-owned DNS records. Provider API failures are deliberately
+// non-fatal to the database deletion; failed records remain as non-publishable
+// tombstones for the next DNS synchronization attempt.
+func (s *Store) DeleteRelayPool(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback()
+	deleted, err := s.deleteRelayPoolTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	for nodeID := range deleted.ChangedNodes {
 		if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET desired_revision=desired_revision+1 WHERE id=?`, nodeID); err != nil {
 			return fmt.Errorf("bump node: %w", err)
 		}
@@ -491,11 +511,9 @@ func (s *Store) DeleteRelayPool(ctx context.Context, id string) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
-	// The deleted pool can no longer be reconciled directly. Refresh the
-	// remaining pools and agent-sourced records so shared entries converge
-	// immediately; provider-side deletion remains handled by the scheduler.
 	_ = s.RefreshAllRelayPoolDNS(ctx)
 	_ = s.RefreshRelayAgentDNSRecords(ctx)
+	s.cleanupDeletedPoolDNS(ctx, deleted.DNSRecords)
 	return nil
 }
 
@@ -697,7 +715,7 @@ func (s *Store) RefreshRelayPoolDNS(ctx context.Context, poolID string) error {
 				return err
 			}
 			if !stillUsed {
-				if _, err := s.db.ExecContext(ctx, `UPDATE dns_managed_records SET pool_id=NULL,enabled=0,status='disabled',updated_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339Nano), recordID); err != nil {
+				if _, err := s.db.ExecContext(ctx, `UPDATE dns_managed_records SET pool_id=CASE WHEN COALESCE(pool_id,'')='' THEN ? ELSE pool_id END,enabled=0,desired_enabled=0,status='disabled',updated_at=? WHERE id=?`, pool.ID, time.Now().UTC().Format(time.RFC3339Nano), recordID); err != nil {
 					return err
 				}
 			}
@@ -733,7 +751,7 @@ func (s *Store) RefreshRelayPoolDNS(ctx context.Context, poolID string) error {
 				return err
 			}
 			if !stillUsed {
-				if _, err := s.db.ExecContext(ctx, `UPDATE dns_managed_records SET enabled=0,status='disabled',updated_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339Nano), recordID); err != nil {
+				if _, err := s.db.ExecContext(ctx, `UPDATE dns_managed_records SET pool_id=CASE WHEN COALESCE(pool_id,'')='' THEN ? ELSE pool_id END,enabled=0,desired_enabled=0,status='disabled',updated_at=? WHERE id=?`, pool.ID, time.Now().UTC().Format(time.RFC3339Nano), recordID); err != nil {
 					return err
 				}
 			}
@@ -821,7 +839,7 @@ func (s *Store) RefreshRelayPoolDNS(ctx context.Context, poolID string) error {
 				return err
 			}
 			if !stillUsed {
-				_, _ = s.db.ExecContext(ctx, `UPDATE dns_managed_records SET enabled=0,status='disabled',updated_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339Nano), record.ID)
+				_, _ = s.db.ExecContext(ctx, `UPDATE dns_managed_records SET pool_id=CASE WHEN COALESCE(pool_id,'')='' THEN ? ELSE pool_id END,enabled=0,desired_enabled=0,status='disabled',updated_at=? WHERE id=?`, pool.ID, time.Now().UTC().Format(time.RFC3339Nano), record.ID)
 			}
 		}
 	}

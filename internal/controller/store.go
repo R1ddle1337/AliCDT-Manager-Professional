@@ -1356,7 +1356,7 @@ func (s *Store) DeleteLandingNode(ctx context.Context, id string) error {
 	// Landing nodes are referenced by both standalone services and the
 	// replicated services behind relay pools. The schema deliberately uses
 	// RESTRICT for these foreign keys; detach every reference in one
-	// transaction, then disable any route that no longer has a valid target.
+	// transaction, then remove any pool that no longer has a target.
 	type serviceRef struct {
 		id     string
 		nodeID string
@@ -1455,6 +1455,11 @@ func (s *Store) DeleteLandingNode(ctx context.Context, id string) error {
 			}
 		}
 	}
+	// A pool with no remaining landing target has no useful behavior. Delete it
+	// in the same transaction (rather than merely disabling it), including its
+	// generated services and pool-owned DNS records. Pools with at least one
+	// other target remain intact.
+	poolDNSCleanup := make([]poolDNSCleanupRecord, 0)
 	for poolID := range poolIDs {
 		var remaining int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM relay_pool_targets WHERE pool_id=?`, poolID).Scan(&remaining); err != nil {
@@ -1463,15 +1468,14 @@ func (s *Store) DeleteLandingNode(ctx context.Context, id string) error {
 		if remaining != 0 {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE relay_pools SET enabled=0,updated_at=? WHERE id=?`, now, poolID); err != nil {
-			return fmt.Errorf("disable targetless relay pool: %w", err)
+		deletedPool, deleteErr := s.deleteRelayPoolTx(ctx, tx, poolID)
+		if deleteErr != nil {
+			return fmt.Errorf("delete targetless relay pool: %w", deleteErr)
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE relay_pool_members SET enabled=0 WHERE pool_id=?`, poolID); err != nil {
-			return fmt.Errorf("disable targetless pool members: %w", err)
+		for nodeID := range deletedPool.ChangedNodes {
+			changedNodes[nodeID] = true
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE relay_services SET enabled=0,updated_at=? WHERE pool_id=?`, now, poolID); err != nil {
-			return fmt.Errorf("disable targetless pool services: %w", err)
-		}
+		poolDNSCleanup = append(poolDNSCleanup, deletedPool.DNSRecords...)
 	}
 
 	result, err := tx.ExecContext(ctx, `DELETE FROM landing_nodes WHERE id=?`, id)
@@ -1495,6 +1499,7 @@ func (s *Store) DeleteLandingNode(ctx context.Context, id string) error {
 	// rolled back by a transient external DNS outage.
 	_ = s.RefreshAllRelayPoolDNS(ctx)
 	_ = s.RefreshRelayAgentDNSRecords(ctx)
+	s.cleanupDeletedPoolDNS(ctx, poolDNSCleanup)
 	return nil
 }
 

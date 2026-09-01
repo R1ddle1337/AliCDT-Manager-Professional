@@ -145,12 +145,8 @@ func TestDeleteLandingNodeDetachesRoutesBeforeDelete(t *testing.T) {
 			t.Fatalf("targetless service remained enabled: %+v", service)
 		}
 	}
-	updatedPool, err := store.GetRelayPool(context.Background(), pool.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if updatedPool.Enabled || len(updatedPool.Targets) != 0 {
-		t.Fatalf("pool was not safely disabled after its last target was deleted: %+v", updatedPool)
+	if _, err := store.GetRelayPool(context.Background(), pool.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("pool with no remaining landing targets was not deleted: err=%v", err)
 	}
 	var serviceRefs, poolRefs int
 	if err := store.db.QueryRow(`SELECT COUNT(1) FROM service_targets WHERE landing_node_id=?`, landing.ID).Scan(&serviceRefs); err != nil {

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -38,15 +39,37 @@ func (s *Store) SyncDNSProvider(ctx context.Context, providerID string) (dnsprov
 	}
 	scopes := make([]dnsprovider.RecordScope, 0, len(records))
 	desired := make([]dnsprovider.DesiredRecord, 0, len(records))
+	deletedTombstones := 0
 	for _, record := range records {
 		scopes = append(scopes, dnsprovider.RecordScope{Name: record.Name, Type: record.Type})
 		if record.Enabled {
 			desired = append(desired, dnsprovider.DesiredRecord{Name: record.Name, Type: record.Type, Value: record.Value, TTL: record.TTL, ProviderRecordID: record.ProviderRecordID})
-		} else if record.ProviderRecordID != "" {
-			if deleteErr := provider.DeleteRecord(ctx, record.ProviderRecordID, record.Name); deleteErr != nil {
+			continue
+		}
+		deleting := record.Status == "deleting" && record.PoolID == "" && !record.DesiredEnabled
+		if record.ProviderRecordID == "" {
+			if deleting {
+				if _, deleteErr := s.db.ExecContext(ctx, `DELETE FROM dns_managed_records WHERE id=? AND status='deleting' AND COALESCE(pool_id,'')='' AND desired_enabled=0 AND NOT EXISTS(SELECT 1 FROM dns_managed_record_pools WHERE record_id=dns_managed_records.id)`, record.ID); deleteErr != nil {
+					return dnsprovider.SyncResult{}, deleteErr
+				}
+				deletedTombstones++
+			}
+			continue
+		}
+		if deleteErr := provider.DeleteRecord(ctx, record.ProviderRecordID, record.Name); deleteErr != nil {
+			if deleting {
+				_, _ = s.db.ExecContext(ctx, `UPDATE dns_managed_records SET status='deleting',last_error=?,updated_at=? WHERE id=?`, deleteErr.Error(), time.Now().UTC().Format(time.RFC3339Nano), record.ID)
+			} else {
 				_ = s.UpdateDNSRecordSync(ctx, record.ID, record.ProviderRecordID, "error", deleteErr.Error(), false)
+			}
+			return dnsprovider.SyncResult{}, deleteErr
+		}
+		if deleting {
+			if _, deleteErr := s.db.ExecContext(ctx, `DELETE FROM dns_managed_records WHERE id=? AND status='deleting' AND COALESCE(pool_id,'')='' AND desired_enabled=0 AND NOT EXISTS(SELECT 1 FROM dns_managed_record_pools WHERE record_id=dns_managed_records.id)`, record.ID); deleteErr != nil {
 				return dnsprovider.SyncResult{}, deleteErr
 			}
+			deletedTombstones++
+		} else {
 			_ = s.UpdateDNSRecordSync(ctx, record.ID, "", "disabled", "", true)
 		}
 	}
@@ -54,6 +77,10 @@ func (s *Store) SyncDNSProvider(ctx context.Context, providerID string) (dnsprov
 	if err != nil {
 		_ = s.MarkDNSProviderSync(ctx, providerID, err)
 		for _, record := range records {
+			if record.Status == "deleting" && record.PoolID == "" && !record.DesiredEnabled {
+				_, _ = s.db.ExecContext(ctx, `UPDATE dns_managed_records SET status='deleting',desired_enabled=0,last_error=?,updated_at=? WHERE id=?`, err.Error(), time.Now().UTC().Format(time.RFC3339Nano), record.ID)
+				continue
+			}
 			_ = s.UpdateDNSRecordSync(ctx, record.ID, record.ProviderRecordID, "error", err.Error(), false)
 		}
 		return result, err
@@ -64,6 +91,10 @@ func (s *Store) SyncDNSProvider(ctx context.Context, providerID string) (dnsprov
 	}
 	for _, record := range records {
 		if !record.Enabled {
+			if record.Status == "deleting" && record.PoolID == "" && !record.DesiredEnabled {
+				// The tombstone was removed above after the provider-side delete.
+				continue
+			}
 			_ = s.UpdateDNSRecordSync(ctx, record.ID, "", "disabled", "", true)
 			continue
 		}
@@ -75,7 +106,57 @@ func (s *Store) SyncDNSProvider(ctx context.Context, providerID string) (dnsprov
 		_ = s.UpdateDNSRecordSync(ctx, record.ID, providerRecord.ID, "synced", "", true)
 	}
 	_ = s.MarkDNSProviderSync(ctx, providerID, nil)
+	result.Deleted += deletedTombstones
 	return result, nil
+}
+
+// cleanupDeletedPoolDNS removes provider-side records belonging only to a
+// deleted pool. The database transaction intentionally completes before this
+// network operation; a transient provider failure leaves a non-publishable
+// `deleting` tombstone for the regular DNS scheduler to retry.
+func (s *Store) cleanupDeletedPoolDNS(ctx context.Context, records []poolDNSCleanupRecord) {
+	if len(records) == 0 {
+		return
+	}
+	// A regular provider sync may already be in flight. Leave the tombstone for
+	// that sync (or the next scheduler tick) instead of making a delete request
+	// wait behind a potentially slow external API call.
+	if !dnsSyncMu.TryLock() {
+		return
+	}
+	defer dnsSyncMu.Unlock()
+
+	providers := make(map[string]dnsprovider.Provider)
+	for _, expected := range records {
+		var providerID, providerRecordID, name, recordType, poolID, status string
+		var desiredEnabled, hasPoolBinding int
+		err := s.db.QueryRowContext(ctx, `SELECT provider_id,COALESCE(provider_record_id,''),name,type,COALESCE(pool_id,''),status,desired_enabled,EXISTS(SELECT 1 FROM dns_managed_record_pools WHERE record_id=dns_managed_records.id) FROM dns_managed_records WHERE id=?`, expected.ID).
+			Scan(&providerID, &providerRecordID, &name, &recordType, &poolID, &status, &desiredEnabled, &hasPoolBinding)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil || poolID != "" || hasPoolBinding != 0 || status != "deleting" || desiredEnabled != 0 {
+			continue
+		}
+		if providerRecordID == "" {
+			_, _ = s.db.ExecContext(ctx, `DELETE FROM dns_managed_records WHERE id=? AND status='deleting' AND COALESCE(pool_id,'')='' AND desired_enabled=0 AND NOT EXISTS(SELECT 1 FROM dns_managed_record_pools WHERE record_id=dns_managed_records.id)`, expected.ID)
+			continue
+		}
+		provider := providers[providerID]
+		if provider == nil {
+			provider, err = s.DNSProvider(ctx, providerID)
+			if err != nil {
+				_, _ = s.db.ExecContext(ctx, `UPDATE dns_managed_records SET status='deleting',last_error=?,updated_at=? WHERE id=?`, err.Error(), time.Now().UTC().Format(time.RFC3339Nano), expected.ID)
+				continue
+			}
+			providers[providerID] = provider
+		}
+		if err := provider.DeleteRecord(ctx, providerRecordID, name); err != nil {
+			_, _ = s.db.ExecContext(ctx, `UPDATE dns_managed_records SET status='deleting',last_error=?,updated_at=? WHERE id=?`, err.Error(), time.Now().UTC().Format(time.RFC3339Nano), expected.ID)
+			continue
+		}
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM dns_managed_records WHERE id=? AND status='deleting' AND COALESCE(pool_id,'')='' AND desired_enabled=0 AND NOT EXISTS(SELECT 1 FROM dns_managed_record_pools WHERE record_id=dns_managed_records.id)`, expected.ID)
+	}
 }
 
 func (s *Store) SyncAllDNS(ctx context.Context) (map[string]dnsprovider.SyncResult, error) {
@@ -107,7 +188,7 @@ func (s *Store) RefreshRelayAgentDNSRecords(ctx context.Context) error {
 		return err
 	}
 	for _, record := range records {
-		if record.PoolID != "" || record.RelayNodeID == "" {
+		if record.PoolID != "" || record.RelayNodeID == "" || record.Status == "deleting" {
 			continue
 		}
 		var publicIP, status string

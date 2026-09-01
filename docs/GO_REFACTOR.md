@@ -324,6 +324,12 @@ when the fastest health-transition propagation is preferred. The landing-node
 link generator emits the pool hostname and port, so users keep a single
 logical node instead of importing one link per Relay.
 
+Deleting a landing node detaches it from every route; when that was a pool's
+last landing target, the pool and its generated Relay services are removed in
+the same transaction. Deleting a pool also removes its pool-owned managed DNS
+records (including the provider-side records); a temporary provider failure
+leaves a non-publishable cleanup tombstone for the next synchronization pass.
+
 ### Hostname and port constraints
 
 - One pool defines one hostname, one listen port and one transport. DNS maps the
