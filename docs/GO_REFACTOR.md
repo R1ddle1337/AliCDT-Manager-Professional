@@ -303,6 +303,18 @@ allow future atomic replacements. The command does not enroll a new node or
 consume an enrollment token. Containerized Agents must instead be updated by
 rebuilding/restarting their container image.
 
+### Small-disk sing-box log guard
+
+Agent installation and upgrade also installs
+`/usr/local/sbin/cdt-sing-box-log-cleanup`. It checks
+`/var/log/sing-box/access.log` every minute and truncates the file in place
+when it exceeds 50 MiB, preserving sing-box's open file descriptor. The path
+and limit can be changed in
+`/etc/cdt-relay/sing-box-log-cleanup.env` with
+`CDT_SINGBOX_ACCESS_LOG` and `CDT_SINGBOX_ACCESS_LOG_MAX_MB`. Alpine uses
+BusyBox `crond`; systemd hosts use `cdt-sing-box-log-cleanup.timer`. The task
+never removes sing-box configuration or error logs.
+
 ## DNS-managed relay pools
 
 DNS management uses a provider-neutral reconciliation layer. The first

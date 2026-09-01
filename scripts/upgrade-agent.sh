@@ -37,6 +37,19 @@ if [ -f "$ENV_FILE" ]; then
   if ! grep -q '^CDT_AGENT_UPDATE_LOCATION=' "$ENV_FILE"; then echo 'CDT_AGENT_UPDATE_LOCATION=Asia/Shanghai' >> "$ENV_FILE"; fi
 fi
 
+# Install/update the disk-protection task alongside the Agent.  It is kept
+# independent from the relay process and truncates only the configured
+# sing-box access log when it exceeds its limit.
+CLEANUP_TMP="$(mktemp -d)"
+if curl -fsSL --retry 3 "${CONTROLLER%/}/agent/cdt-sing-box-log-cleanup.sh" -o "$CLEANUP_TMP/cdt-sing-box-log-cleanup.sh"; then
+  if ! sh "$CLEANUP_TMP/cdt-sing-box-log-cleanup.sh" --install; then
+    echo "warning: sing-box access-log cleanup could not be installed" >&2
+  fi
+else
+  echo "warning: controller does not provide sing-box access-log cleanup" >&2
+fi
+rm -rf "$CLEANUP_TMP"
+
 install -d -m 700 /var/lib/cdt-relay /var/lib/cdt-relay/backups
 if [ -f "$BINARY" ]; then install -m 0700 "$BINARY" "/var/lib/cdt-relay/backups/agent-$(date +%s).bin"; fi
 install -m 0755 "${TMP_DIR}/${ASSET}" "${BINARY}.new"

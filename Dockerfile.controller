@@ -26,6 +26,7 @@ COPY --from=build /out/alicdt-controller /usr/local/bin/alicdt-controller
 COPY --from=frontend-build /src/frontend/dist /app/frontend
 COPY scripts/install-agent.sh /app/assets/install-agent.sh
 COPY scripts/upgrade-agent.sh /app/assets/upgrade-agent.sh
+COPY scripts/cdt-sing-box-log-cleanup.sh /app/assets/cdt-sing-box-log-cleanup.sh
 COPY scripts/install-dispatcher.sh /app/assets/install-dispatcher.sh
 COPY --from=build /out/cdt-relay-agent-linux-amd64 /app/assets/cdt-relay-agent-linux-amd64
 COPY --from=build /out/cdt-relay-agent-linux-arm64 /app/assets/cdt-relay-agent-linux-arm64

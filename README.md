@@ -27,6 +27,7 @@
 - 账户卡片直接生成 root SSH Agent 安装命令，注册码一次性使用
 - Agent 自动升级：HTTPS 下载、SHA-256 校验、原子替换、失败自动回滚
 - Agent 默认每天北京时间 04:00 检查 GitHub Release；控制器会缓存已验证版本，GitHub 暂时不可用时不影响现有转发
+- Alpine/小磁盘 Agent 自动安装 sing-box `access.log` 守护任务：每分钟检查，超过 50 MiB 原地清空（可配置）
 - TCP/UDP/TCP+UDP 透明转发，支持主备、轮询、加权和源 IP Hash
 - TCP 长连接与 UDP 会话固定落地目标，健康异常时新连接自动切换
 - 落地节点支持粘贴完整分享链接，自动生成仅替换中转 IP/端口的节点配置
@@ -48,6 +49,18 @@ Agent 更新说明：生产控制器通过 `CDT_AGENT_RELEASE_SOURCE=github` 从
 `/app/data/agent-releases`。GitHub 暂时不可用时继续提供最近一次校验成功的缓存版本，首次无缓存时使用镜像内置版本。
 Agent 安装脚本默认设置 `CDT_AGENT_UPDATE_TIME=04:00` 和 `CDT_AGENT_UPDATE_LOCATION=Asia/Shanghai`，每天只检查一次；如需兼容旧配置，可显式设置 `CDT_AGENT_UPDATE_INTERVAL`。
 Agent 安装支持 systemd 和 Alpine Linux 的 OpenRC；在没有这两种服务管理器的容器中，请使用容器编排器运行 Agent。
+
+为避免 1G 磁盘被 sing-box 访问日志占满，安装/升级 Agent 时会创建
+`cdt-sing-box-log-cleanup` 定时任务。默认每分钟检查
+`/var/log/sing-box/access.log`，超过 `50 MiB` 就原地截断，不重启 sing-box，也不删除配置。
+可在 `/etc/cdt-relay/sing-box-log-cleanup.env` 调整：
+
+```sh
+CDT_SINGBOX_ACCESS_LOG=/var/log/sing-box/access.log
+CDT_SINGBOX_ACCESS_LOG_MAX_MB=50
+```
+
+Alpine 使用 root 的 BusyBox `crond`，systemd 主机使用同名 `.timer`；没有对应调度器的容器需要由容器编排器自行运行该检查脚本。
 
 固定入口 Dispatcher 的部署、DNS-only 记录、灰度切换和回滚步骤见
 [`docs/DISPATCHER.md`](docs/DISPATCHER.md)。Dispatcher 必须部署在至少两台

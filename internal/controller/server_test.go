@@ -297,6 +297,32 @@ func TestDispatcherInstallerAndEmbeddedAssetAreServed(t *testing.T) {
 	}
 }
 
+func TestSingBoxLogCleanupAssetIsServed(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	directory := t.TempDir()
+	installer := filepath.Join(directory, "install-agent.sh")
+	if err := os.WriteFile(installer, []byte("#!/bin/sh\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	cleanup := filepath.Join(directory, "cdt-sing-box-log-cleanup.sh")
+	if err := os.WriteFile(cleanup, []byte("#!/bin/sh\necho cleanup\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	server, err := NewServer(store, ServerOptions{AdminToken: "admin", AgentInstallerPath: installer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/agent/cdt-sing-box-log-cleanup.sh", nil))
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "#!/bin/sh\necho cleanup\n" {
+		t.Fatalf("sing-box cleanup asset was not served: %d %q", recorder.Code, recorder.Body.String())
+	}
+}
+
 func boolPtr(value bool) *bool { return &value }
 
 func requestJSON(t *testing.T, url, token string, payload interface{}, expected int, output interface{}) {

@@ -33,6 +33,7 @@ jobs:
           CGO_ENABLED=0 go build -o /tmp/cdt-dispatcher ./cmd/dispatcher
       - name: Validate deployment assets
         run: |
+          sh -n scripts/install-agent.sh scripts/upgrade-agent.sh scripts/cdt-sing-box-log-cleanup.sh
           bash -n scripts/install-dispatcher.sh deploy/cdt-dispatcher-update.sh
           CDT_DISPATCH_CONTROLLER_URL=https://example.invalid CDT_DISPATCH_POOL_ID=pool CDT_DISPATCH_TOKEN=ci-token \
             docker compose -f deploy/docker-compose.dispatcher.yml config >/dev/null

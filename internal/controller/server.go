@@ -123,6 +123,7 @@ func (s *Server) routes() chi.Router {
 	if s.agentInstallerPath != "" {
 		router.Get("/agent/install.sh", s.serveAgentInstaller)
 		router.Get("/agent/upgrade.sh", s.serveAgentUpgrade)
+		router.Get("/agent/cdt-sing-box-log-cleanup.sh", s.serveSingBoxLogCleanup)
 		router.Get("/dispatcher/install.sh", s.serveDispatcherInstaller)
 		router.Get("/dispatcher/{asset}", s.serveDispatcherAsset)
 		router.Get("/agent/{asset}", s.serveAgentAsset)
@@ -229,6 +230,21 @@ func (s *Server) serveAgentUpgrade(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	http.ServeFile(w, r, filepath.Join(s.agentAssetsDir, "upgrade-agent.sh"))
+}
+
+func (s *Server) serveSingBoxLogCleanup(w http.ResponseWriter, r *http.Request) {
+	if s.agentAssetsDir == "" {
+		http.NotFound(w, r)
+		return
+	}
+	path := filepath.Join(s.agentAssetsDir, "cdt-sing-box-log-cleanup.sh")
+	if info, err := os.Stat(path); err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	http.ServeFile(w, r, path)
 }
 
 func (s *Server) serveDispatcherInstaller(w http.ResponseWriter, r *http.Request) {

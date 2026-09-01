@@ -116,6 +116,20 @@ CDT_AGENT_UPDATE_LOCATION=Asia/Shanghai
 EOF
 chmod 600 /etc/cdt-relay/agent.env
 
+# Keep the small root disks used by Alpine relay hosts safe.  This is a
+# separate, dependency-free checker so sing-box can continue writing to the
+# same inode after the access log is truncated.  Failure to fetch this
+# optional maintenance asset must not prevent the Agent itself from starting.
+CLEANUP_TMP="$(mktemp -d)"
+if curl -fsSL --retry 3 "${CONTROLLER%/}/agent/cdt-sing-box-log-cleanup.sh" -o "$CLEANUP_TMP/cdt-sing-box-log-cleanup.sh"; then
+  if ! sh "$CLEANUP_TMP/cdt-sing-box-log-cleanup.sh" --install; then
+    echo "warning: sing-box access-log cleanup could not be installed" >&2
+  fi
+else
+  echo "warning: controller does not provide sing-box access-log cleanup; install it after the controller is updated" >&2
+fi
+rm -rf "$CLEANUP_TMP"
+
 if [ "$SERVICE_MANAGER" = "systemd" ]; then
   install -d -m 0755 /etc/systemd/system
   cat > /etc/systemd/system/cdt-relay-agent.service <<'EOF'
