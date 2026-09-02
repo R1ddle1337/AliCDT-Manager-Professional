@@ -168,6 +168,7 @@
           </div>
           <div><label class="field-label">定时关机</label><input v-model="form.auto_stop_time" type="time" class="input" /></div>
           <div><label class="field-label">定时开机</label><input v-model="form.auto_start_time" type="time" class="input" /></div>
+          <p class="field-wide field-hint">节省停机会回收计算资源；未绑定 EIP 时公网 IP 可能变化。本地盘实例上的文件可能在停机后丢失，请将 Agent 安装在云系统盘；需要保留本地盘数据时选择普通停机。</p>
           <p v-if="form.protection_mode === 'stop_ecs'" class="field-wide field-hint">流量超过阈值后，会对上面绑定的实例发送一次停机指令；失败会在下次有效同步时重试。</p>
         </div>
         <div v-if="formError" class="notice notice-error">{{ formError }}</div>

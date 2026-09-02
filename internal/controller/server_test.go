@@ -73,6 +73,56 @@ func TestControllerAgentLifecycle(t *testing.T) {
 	}
 }
 
+func TestAgentReenrollmentReusesExistingECSNode(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	if err := store.CreateEnrollmentToken(ctx, "first-enroll", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.EnrollAgent(ctx, protocol.AgentEnrollmentRequest{
+		Token: "first-enroll", NodeName: "edge-old", ECSInstanceID: "i-edge", RegionID: "cn-hongkong", PublicIP: "203.0.113.10",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateEnrollmentToken(ctx, "replacement-enroll", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.EnrollAgent(ctx, protocol.AgentEnrollmentRequest{
+		Token: "replacement-enroll", NodeName: "edge-reinstalled", ECSInstanceID: "i-edge", RegionID: "cn-hongkong", PublicIP: "203.0.113.11",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.AgentID != first.AgentID {
+		t.Fatalf("re-enrollment created a new relay node: first=%+v second=%+v", first, second)
+	}
+	var count int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM relay_nodes WHERE ecs_instance_id=?`, "i-edge").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("expected one relay node for ECS instance, got %d", count)
+	}
+	if err := store.AuthenticateAgent(ctx, first.AgentID, first.Secret); err == nil {
+		t.Fatal("old Agent secret remained valid after re-enrollment")
+	}
+	if err := store.AuthenticateAgent(ctx, second.AgentID, second.Secret); err != nil {
+		t.Fatalf("new Agent secret was not accepted: %v", err)
+	}
+	nodes, err := store.ListRelayNodes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || nodes[0].Name != "edge-reinstalled" || nodes[0].PublicIP != "203.0.113.11" {
+		t.Fatalf("existing relay node metadata was not refreshed: %+v", nodes)
+	}
+}
+
 func TestDisabledLandingNodeIsExcludedFromAgentConfig(t *testing.T) {
 	store, err := OpenStore(":memory:")
 	if err != nil {

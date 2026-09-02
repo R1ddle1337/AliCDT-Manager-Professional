@@ -192,9 +192,33 @@ func (s *Store) UpdateCloudInstanceStatus(ctx context.Context, instanceID, statu
 	return nil
 }
 
+func (s *Store) CloudInstanceStatus(ctx context.Context, instanceID string) (string, error) {
+	var status string
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(status,'') FROM instances WHERE instance_id=?`, instanceID).Scan(&status)
+	return status, err
+}
+
 func (s *Store) SetAccountManualStopped(ctx context.Context, accountID int64, stopped bool) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE accounts SET manual_stopped=? WHERE id=?`, boolInt(stopped), accountID)
 	return err
+}
+
+// MarkRelayNodesForInstance immediately removes Relay nodes hosted by a
+// stopped ECS instance from the online set. Heartbeats will promote the node
+// back to online after the instance and its Agent have booted again. Without
+// this transition, an entry pool can keep publishing a dead address for up to
+// the stale-heartbeat timeout.
+func (s *Store) MarkRelayNodesForInstance(ctx context.Context, instanceID, status string) error {
+	instanceID = strings.TrimSpace(instanceID)
+	if instanceID == "" {
+		return nil
+	}
+	status = strings.ToLower(strings.TrimSpace(status))
+	if status == "stopped" || status == "offline" {
+		_, err := s.db.ExecContext(ctx, `UPDATE relay_nodes SET status='offline' WHERE ecs_instance_id=?`, instanceID)
+		return err
+	}
+	return nil
 }
 
 func (s *Store) SetAccountNoStockNotified(ctx context.Context, accountID int64, notified bool) error {

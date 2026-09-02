@@ -231,6 +231,11 @@ export const useRelayStore = defineStore('relay-platform', () => {
 
   async function controlCloudInstance(instanceId, action) {
     const { data } = await api.post(`/cloud/instances/${instanceId}/${action}`)
+    // The controller records the requested state immediately, while ECS may
+    // take a moment to finish the asynchronous transition. Refresh the local
+    // projection so the cloud workspace and entry-pool views do not continue
+    // showing the pre-command state until the next full page reload.
+    await Promise.allSettled([fetchCloud(), fetchRelayNodes(), fetchPools(), fetchDNSRecords()])
     return data
   }
 

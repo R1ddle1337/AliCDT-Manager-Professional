@@ -14,6 +14,7 @@ type CloudService struct {
 	store               *Store
 	syncMu              sync.Mutex
 	automationMu        sync.Mutex
+	lastAutomationAt    time.Time
 	clientFor           func(CloudAccount) cloudClient
 	trafficSafetyWindow time.Duration
 }
@@ -195,7 +196,7 @@ func (s *CloudService) StartInstance(ctx context.Context, instanceID string) err
 	if err := s.store.SetAccountManualStopped(ctx, account.ID, false); err != nil {
 		return err
 	}
-	_ = s.store.UpdateCloudInstanceStatus(ctx, instanceID, "Running")
+	s.reconcilePowerState(ctx, instanceID, "Running")
 	_ = s.store.AddSystemLog(ctx, "info", "system", fmt.Sprintf("手动开机: %s", instanceID))
 	return nil
 }
@@ -211,7 +212,7 @@ func (s *CloudService) StopInstance(ctx context.Context, instanceID string) erro
 	if err := s.store.SetAccountManualStopped(ctx, account.ID, true); err != nil {
 		return err
 	}
-	_ = s.store.UpdateCloudInstanceStatus(ctx, instanceID, "Stopped")
+	s.reconcilePowerState(ctx, instanceID, "Stopped")
 	_ = s.store.AddSystemLog(ctx, "info", "system", fmt.Sprintf("手动关机: %s", instanceID))
 	return nil
 }

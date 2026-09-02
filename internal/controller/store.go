@@ -1017,18 +1017,101 @@ func (s *Store) EnrollAgent(ctx context.Context, request protocol.AgentEnrollmen
 	if used.Valid || time.Now().UTC().After(expiresAt) {
 		return protocol.AgentEnrollmentResponse{}, errors.New("enrollment token is expired or already used")
 	}
-	agentID := randomID("relay")
 	secret := randomSecret(32)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	nodeName := strings.TrimSpace(request.NodeName)
 	accountExpression := `(SELECT account_id FROM instances WHERE instance_id=?)`
 	var accountValue interface{} = request.ECSInstanceID
 	if tokenAccountID.Valid {
 		accountExpression = `?`
 		accountValue = tokenAccountID.Int64
 	}
+
+	// A host can lose the Agent credential file when its local/ephemeral disk is
+	// recreated or when the Agent is reinstalled. Re-enrolling that same ECS
+	// instance must not create a second Relay node: entry pools and services are
+	// keyed by relay_nodes.id and would otherwise remain attached to the stale
+	// node forever. An account-bound token may only reclaim a node belonging to
+	// the same account; an unbound token can reclaim a node whose ECS metadata
+	// identifies the instance.
+	if instanceID := strings.TrimSpace(request.ECSInstanceID); instanceID != "" {
+		var existingID string
+		var existingAccountID sql.NullInt64
+		existingErr := tx.QueryRowContext(ctx, `SELECT id,cloud_account_id FROM relay_nodes rn
+			WHERE ecs_instance_id=?
+			ORDER BY
+				(SELECT COUNT(*) FROM relay_pool_members rpm WHERE rpm.relay_node_id=rn.id) DESC,
+				(SELECT COUNT(*) FROM relay_services rs WHERE rs.relay_node_id=rn.id) DESC,
+				CASE WHEN status='online' THEN 0 ELSE 1 END,created_at DESC LIMIT 1`, instanceID).
+			Scan(&existingID, &existingAccountID)
+		if existingErr == nil {
+			if tokenAccountID.Valid && existingAccountID.Valid && existingAccountID.Int64 != tokenAccountID.Int64 {
+				return protocol.AgentEnrollmentResponse{}, errors.New("ECS instance is already associated with another cloud account")
+			}
+			if tokenAccountID.Valid && !existingAccountID.Valid {
+				// Legacy nodes may not have cloud_account_id populated yet. Check
+				// the synchronized inventory before allowing an account-bound token
+				// to claim such a node.
+				var inventoryAccountID sql.NullInt64
+				if inventoryErr := tx.QueryRowContext(ctx, `SELECT account_id FROM instances WHERE instance_id=?`, instanceID).Scan(&inventoryAccountID); inventoryErr == nil && inventoryAccountID.Valid && inventoryAccountID.Int64 != tokenAccountID.Int64 {
+					return protocol.AgentEnrollmentResponse{}, errors.New("ECS instance is already associated with another cloud account")
+				} else if inventoryErr != nil && !errors.Is(inventoryErr, sql.ErrNoRows) {
+					return protocol.AgentEnrollmentResponse{}, inventoryErr
+				}
+			}
+			cloudAccountValue := interface{}(nil)
+			if tokenAccountID.Valid {
+				cloudAccountValue = tokenAccountID.Int64
+			} else if existingAccountID.Valid {
+				cloudAccountValue = existingAccountID.Int64
+			} else {
+				// Preserve the automatic ECS-to-account association for legacy
+				// nodes even when the node itself did not yet carry the backfilled
+				// cloud_account_id column.
+				var inventoryAccountID sql.NullInt64
+				if inventoryErr := tx.QueryRowContext(ctx, `SELECT account_id FROM instances WHERE instance_id=?`, instanceID).Scan(&inventoryAccountID); inventoryErr == nil && inventoryAccountID.Valid {
+					cloudAccountValue = inventoryAccountID.Int64
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET name=?,
+				public_ip=CASE WHEN ?<>'' THEN ? ELSE public_ip END,
+				ecs_instance_id=?,region_id=CASE WHEN ?<>'' THEN ? ELSE region_id END,cloud_account_id=?,
+				architecture=CASE WHEN ?<>'' THEN ? ELSE architecture END,
+				os=CASE WHEN ?<>'' THEN ? ELSE os END,
+				agent_version=CASE WHEN ?<>'' THEN ? ELSE agent_version END,
+				secret_hash=?,status='online',last_seen_at=? WHERE id=?`,
+				nodeName, request.PublicIP, request.PublicIP, instanceID, request.RegionID, request.RegionID, cloudAccountValue,
+				request.Architecture, request.Architecture, request.OS, request.OS, request.AgentVersion, request.AgentVersion,
+				hashSecret(secret), now, existingID); err != nil {
+				return protocol.AgentEnrollmentResponse{}, err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE enrollment_tokens SET used_at=? WHERE token_hash=?`, now, hashSecret(request.Token)); err != nil {
+				return protocol.AgentEnrollmentResponse{}, err
+			}
+			// Reinstalling an Agent before this controller fix could have created
+			// an unreferenced duplicate node. Remove only duplicates that own no
+			// services, pools or standalone DNS records; referenced nodes remain
+			// intact for an operator to reconcile explicitly.
+			if _, err := tx.ExecContext(ctx, `DELETE FROM relay_nodes WHERE ecs_instance_id=? AND id<>?
+				AND NOT EXISTS(SELECT 1 FROM relay_services WHERE relay_node_id=relay_nodes.id)
+				AND NOT EXISTS(SELECT 1 FROM relay_pool_members WHERE relay_node_id=relay_nodes.id)
+				AND NOT EXISTS(SELECT 1 FROM dns_managed_records WHERE relay_node_id=relay_nodes.id)`, instanceID, existingID); err != nil {
+				return protocol.AgentEnrollmentResponse{}, err
+			}
+			if err := tx.Commit(); err != nil {
+				return protocol.AgentEnrollmentResponse{}, err
+			}
+			return protocol.AgentEnrollmentResponse{AgentID: existingID, Secret: secret}, nil
+		}
+		if !errors.Is(existingErr, sql.ErrNoRows) {
+			return protocol.AgentEnrollmentResponse{}, existingErr
+		}
+	}
+
+	agentID := randomID("relay")
 	if _, err := tx.ExecContext(ctx, `INSERT INTO relay_nodes(id,name,public_ip,ecs_instance_id,region_id,cloud_account_id,architecture,os,agent_version,secret_hash,status,last_seen_at,created_at)
 		VALUES(?,?,?,?,?,`+accountExpression+`,?,?,?,?,?,?,?)`,
-		agentID, strings.TrimSpace(request.NodeName), request.PublicIP, request.ECSInstanceID, request.RegionID, accountValue, request.Architecture, request.OS, request.AgentVersion, hashSecret(secret), "online", now, now); err != nil {
+		agentID, nodeName, request.PublicIP, request.ECSInstanceID, request.RegionID, accountValue, request.Architecture, request.OS, request.AgentVersion, hashSecret(secret), "online", now, now); err != nil {
 		return protocol.AgentEnrollmentResponse{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE enrollment_tokens SET used_at=? WHERE token_hash=?`, now, hashSecret(request.Token)); err != nil {

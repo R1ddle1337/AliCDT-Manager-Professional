@@ -138,7 +138,9 @@ func (s *CloudService) runAutomationCycle(ctx context.Context, now time.Time) {
 	defer cancel()
 	_, _ = s.store.MarkStaleRelayNodes(cycleCtx, 45*time.Second)
 	s.runKeepAlive(cycleCtx)
-	s.runScheduledPower(cycleCtx, now.Format("15:04"))
+	for _, minute := range s.scheduledPowerMinutes(now) {
+		s.runScheduledPower(cycleCtx, minute)
+	}
 	if now.Day() == 1 && now.Hour() == 0 && now.Minute() == 1 {
 		s.runMonthlyReset(cycleCtx)
 	}
@@ -148,6 +150,33 @@ func (s *CloudService) runAutomationCycle(ctx context.Context, now time.Time) {
 			_ = s.SendDailyReport(cycleCtx)
 		}
 	}
+}
+
+// scheduledPowerMinutes returns the current minute and, when a previous
+// automation cycle was delayed, the small gap since that cycle. The scheduler
+// ticker has a one-element channel and may drop a tick while cloud APIs or
+// notifications are in flight; replaying a short gap prevents a configured
+// start from being silently skipped. Long gaps (for example, a controller
+// restart after several hours) intentionally run only the current minute.
+func (s *CloudService) scheduledPowerMinutes(now time.Time) []string {
+	current := now.Truncate(time.Minute)
+	previous := s.lastAutomationAt.Truncate(time.Minute)
+	s.lastAutomationAt = now
+	if previous.IsZero() || current.Before(previous) {
+		return []string{current.Format("15:04")}
+	}
+	gap := int(current.Sub(previous) / time.Minute)
+	if gap <= 0 {
+		return []string{current.Format("15:04")}
+	}
+	if gap > 5 {
+		return []string{current.Format("15:04")}
+	}
+	minutes := make([]string, 0, gap)
+	for cursor := previous.Add(time.Minute); !cursor.After(current); cursor = cursor.Add(time.Minute) {
+		minutes = append(minutes, cursor.Format("15:04"))
+	}
+	return minutes
 }
 
 func (s *CloudService) runKeepAlive(ctx context.Context) {
@@ -185,6 +214,7 @@ func (s *CloudService) runKeepAlive(ctx context.Context) {
 			_ = s.store.AddSystemLog(ctx, "warning", "keepalive", fmt.Sprintf("[%s] 保活启动失败: %s", account.Name, friendlyCloudError(err)))
 			continue
 		}
+		s.reconcilePowerState(ctx, account.ProtectedInstanceID, "Running")
 		if account.NoStockNotified {
 			_ = s.store.SetAccountNoStockNotified(ctx, account.ID, false)
 			_ = s.sendTelegram(ctx, fmt.Sprintf("[%s] 抢占实例库存已恢复，实例已重新启动", account.Name))
@@ -204,10 +234,17 @@ func (s *CloudService) runScheduledPower(ctx context.Context, hhmm string) {
 		if account.ProtectedInstanceID == "" {
 			continue
 		}
-		if account.AutoStopTime == hhmm {
+		// The local instance projection makes repeated/delayed scheduler ticks
+		// idempotent while still allowing a configured start to recover an ECS
+		// that was stopped outside the panel (manual_stopped may be false there).
+		instanceStatus, _ := s.store.CloudInstanceStatus(ctx, account.ProtectedInstanceID)
+		stoppedThisCycle := false
+		if account.AutoStopTime == hhmm && !account.ManualStopped && !strings.EqualFold(instanceStatus, "Stopped") {
 			err := s.clientFor(account).StopInstance(ctx, account.ProtectedInstanceID, account.ShutdownMode)
 			if err == nil {
+				stoppedThisCycle = true
 				_ = s.store.SetAccountManualStopped(ctx, account.ID, true)
+				s.reconcilePowerState(ctx, account.ProtectedInstanceID, "Stopped")
 				message := fmt.Sprintf("[%s] 定时关机已执行 %s", account.Name, hhmm)
 				_ = s.store.AddSystemLog(ctx, "info", "scheduler", message)
 				_ = s.sendTelegram(ctx, message)
@@ -215,10 +252,11 @@ func (s *CloudService) runScheduledPower(ctx context.Context, hhmm string) {
 				_ = s.store.AddSystemLog(ctx, "error", "scheduler", fmt.Sprintf("[%s] 定时关机失败: %s", account.Name, friendlyCloudError(err)))
 			}
 		}
-		if account.AutoStartTime == hhmm {
+		if account.AutoStartTime == hhmm && !stoppedThisCycle && (account.ManualStopped || !strings.EqualFold(instanceStatus, "Running")) {
 			err := s.clientFor(account).StartInstance(ctx, account.ProtectedInstanceID)
 			if err == nil {
 				_ = s.store.SetAccountManualStopped(ctx, account.ID, false)
+				s.reconcilePowerState(ctx, account.ProtectedInstanceID, "Running")
 				message := fmt.Sprintf("[%s] 定时开机已执行 %s", account.Name, hhmm)
 				_ = s.store.AddSystemLog(ctx, "info", "scheduler", message)
 				_ = s.sendTelegram(ctx, message)
@@ -227,6 +265,23 @@ func (s *CloudService) runScheduledPower(ctx context.Context, hhmm string) {
 			}
 		}
 	}
+}
+
+// reconcilePowerState keeps the local projection and entry-pool desired state
+// aligned with an accepted ECS power command. ECS power APIs are asynchronous,
+// so the next cloud inventory sync remains authoritative for the final status
+// and any newly assigned public IP. Marking a stopped host offline immediately
+// prevents a stale Relay address from being served during that transition;
+// the Agent heartbeat promotes it back after boot.
+func (s *CloudService) reconcilePowerState(ctx context.Context, instanceID, status string) {
+	_ = s.store.UpdateCloudInstanceStatus(ctx, instanceID, status)
+	if strings.EqualFold(status, "Stopped") {
+		_ = s.store.MarkRelayNodesForInstance(ctx, instanceID, "offline")
+	}
+	refreshCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	_ = s.store.RefreshRelayAgentDNSRecords(refreshCtx)
+	_ = s.store.RefreshAllRelayPoolDNS(refreshCtx)
 }
 
 func (s *CloudService) runMonthlyReset(ctx context.Context) {
@@ -243,6 +298,7 @@ func (s *CloudService) runMonthlyReset(ctx context.Context) {
 			if err := s.clientFor(account).StartInstance(ctx, account.ProtectedInstanceID); err != nil {
 				continue
 			}
+			s.reconcilePowerState(ctx, account.ProtectedInstanceID, "Running")
 		}
 		_ = s.store.SetAccountManualStopped(ctx, account.ID, false)
 		_ = s.store.SetAccountNoStockNotified(ctx, account.ID, false)

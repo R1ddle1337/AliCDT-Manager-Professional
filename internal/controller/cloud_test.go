@@ -266,6 +266,93 @@ func TestCloudOverviewUsesEmptyArraysInsteadOfNull(t *testing.T) {
 	}
 }
 
+func TestScheduledPowerUpdatesInstanceAndRelayProjection(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	account, err := store.CreateCloudAccount(ctx, CloudAccountRequest{
+		Name: "scheduled", AccessKeyID: "key", AccessKeySecret: "secret", RegionID: "cn-hongkong", SiteType: "china",
+		ProtectedInstanceID: "i-scheduled", AutoStopTime: "02:00", AutoStartTime: "03:00", ShutdownMode: "StopCharging",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveCloudSync(ctx, account, []CloudInstanceUpdate{{InstanceID: "i-scheduled", InstanceName: "edge", RegionID: "cn-hongkong", Status: "Running", PublicIP: "203.0.113.40"}}, true, "", 0, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateEnrollmentToken(ctx, "scheduled-agent", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	enrolled, err := store.EnrollAgent(ctx, protocol.AgentEnrollmentRequest{Token: "scheduled-agent", NodeName: "edge", ECSInstanceID: "i-scheduled", PublicIP: "203.0.113.40"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeCloudClient{}
+	service := NewCloudService(store)
+	service.clientFor = func(CloudAccount) cloudClient { return fake }
+
+	service.runScheduledPower(ctx, "02:00")
+	if fake.stopCalls != 1 {
+		t.Fatalf("scheduled stop calls=%d, want 1", fake.stopCalls)
+	}
+	overview, err := store.CloudOverview(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(overview.Instances) != 1 || overview.Instances[0].Status != "Stopped" {
+		t.Fatalf("scheduled stop did not update instance projection: %+v", overview.Instances)
+	}
+	nodes, err := store.ListRelayNodes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || nodes[0].ID != enrolled.AgentID || nodes[0].Status != "offline" {
+		t.Fatalf("scheduled stop did not remove relay from online set: %+v", nodes)
+	}
+
+	service.runScheduledPower(ctx, "03:00")
+	if fake.startCalls != 1 {
+		t.Fatalf("scheduled start calls=%d, want 1", fake.startCalls)
+	}
+	accounts, err := store.ListCloudAccounts(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accounts) != 1 || accounts[0].ManualStopped {
+		t.Fatalf("scheduled start did not clear manual stop marker: %+v", accounts)
+	}
+	overview, err = store.CloudOverview(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.Instances[0].Status != "Running" {
+		t.Fatalf("scheduled start did not update instance projection: %+v", overview.Instances)
+	}
+	// A replayed scheduler tick in the same minute must be harmless.
+	service.runScheduledPower(ctx, "03:00")
+	if fake.startCalls != 1 {
+		t.Fatalf("scheduled start was not idempotent, calls=%d", fake.startCalls)
+	}
+}
+
+func TestScheduledPowerMinutesReplaysShortTickerGap(t *testing.T) {
+	service := &CloudService{}
+	location := time.FixedZone("Asia/Shanghai", 8*60*60)
+	first := time.Date(2026, 9, 2, 2, 0, 30, 0, location)
+	if got := service.scheduledPowerMinutes(first); len(got) != 1 || got[0] != "02:00" {
+		t.Fatalf("unexpected initial scheduler minute: %v", got)
+	}
+	if got := service.scheduledPowerMinutes(first.Add(3 * time.Minute)); len(got) != 3 || got[0] != "02:01" || got[1] != "02:02" || got[2] != "02:03" {
+		t.Fatalf("short ticker gap was not replayed: %v", got)
+	}
+	if got := service.scheduledPowerMinutes(first.Add(20 * time.Minute)); len(got) != 1 || got[0] != "02:20" {
+		t.Fatalf("long scheduler gap should run only the current minute: %v", got)
+	}
+}
+
 func TestAgentEnrollmentImmediatelyAssociatesSyncedECS(t *testing.T) {
 	store, err := OpenStore(":memory:")
 	if err != nil {
@@ -874,10 +961,12 @@ func TestDisablingProtectedCloudAccountReleasesRelay(t *testing.T) {
 }
 
 type fakeCloudClient struct {
-	instances []aliyun.Instance
-	traffic   float64
-	stopErr   error
-	stopCalls int
+	instances  []aliyun.Instance
+	traffic    float64
+	stopErr    error
+	startErr   error
+	startCalls int
+	stopCalls  int
 }
 
 func (client *fakeCloudClient) GetInstances(context.Context) ([]aliyun.Instance, error) {
@@ -889,7 +978,8 @@ func (client *fakeCloudClient) GetCDTTraffic(context.Context) (float64, error) {
 }
 
 func (client *fakeCloudClient) StartInstance(context.Context, string) error {
-	return nil
+	client.startCalls++
+	return client.startErr
 }
 
 func (client *fakeCloudClient) StopInstance(context.Context, string, string) error {
