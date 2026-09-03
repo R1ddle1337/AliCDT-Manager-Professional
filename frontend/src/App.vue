@@ -9,6 +9,7 @@
     </div>
 
     <div v-else class="min-h-screen admin-shell" :class="sidebarOpen ? 'sidebar-expanded' : 'sidebar-collapsed'">
+      <div class="route-progress" aria-hidden="true"></div>
       <aside class="app-sidebar">
         <div class="sidebar-brand">
           <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
@@ -77,6 +78,7 @@
           </button>
         </div>
       </aside>
+      <button v-if="sidebarOpen" type="button" class="sidebar-backdrop" aria-label="关闭导航" @click="sidebarOpen = false"></button>
 
       <main class="app-main">
         <header class="app-topbar">
@@ -97,6 +99,9 @@
             </button>
           </div>
         </header>
+        <div v-if="offline" class="connection-banner" role="status">
+          网络连接已断开，当前页面仍可浏览；恢复连接后数据会继续更新。
+        </div>
         <header class="mobile-header">
           <span class="font-semibold">AliCDT Console</span>
         </header>
@@ -131,7 +136,7 @@ const isAdmin = computed(() => role.value !== 'user')
 const localDisplayName = computed(() => localStorage.getItem('displayName') || (isAdmin.value ? '管理员' : '用户'))
 const primaryNavItems = computed(() => isAdmin.value ? [
   { path: '/', label: '运行总览', icon: 'dashboard' },
-  { path: '/workspace', label: '中转工作区', icon: 'workspace', recommended: true },
+  { path: '/workspace', label: '中转工作区', icon: 'workspace' },
   { path: '/cloud-resources', label: '云资源工作区', icon: 'cloud' },
   { path: '/users', label: '用户管理', icon: 'users' },
 ] : [{ path: '/usage', label: '我的用量', icon: 'workspace' }])
@@ -150,9 +155,22 @@ const advancedNavItems = [
 // Keep every existing URL represented so bookmarks and older workflows remain
 // discoverable, while the default view focuses on the unified entry flow.
 const allNavItems = computed(() => [...primaryNavItems.value, ...advancedNavItems.filter(() => isAdmin.value)])
-const advancedOpen = ref(false)
-const sidebarOpen = ref(true)
-watch(() => route.path, () => { role.value = localStorage.getItem('role') || 'admin' }, { immediate: true })
+const navigationStorageKey = 'alicdt_navigation_open'
+const toolsStorageKey = 'alicdt_tools_open'
+const mobileMedia = window.matchMedia('(max-width: 1023px)')
+const isMobile = ref(mobileMedia.matches)
+const advancedOpen = ref(localStorage.getItem(toolsStorageKey) === 'true')
+const sidebarOpen = ref(isMobile.value ? false : localStorage.getItem(navigationStorageKey) !== 'false')
+const offline = ref(!navigator.onLine)
+
+watch(() => route.path, () => {
+  role.value = localStorage.getItem('role') || 'admin'
+  if (isMobile.value) sidebarOpen.value = false
+}, { immediate: true })
+watch(advancedOpen, value => localStorage.setItem(toolsStorageKey, String(value)))
+watch(sidebarOpen, value => {
+  if (!isMobile.value) localStorage.setItem(navigationStorageKey, String(value))
+})
 
 function isActive(path) {
   return path === '/' ? route.path === '/' : route.path === path || route.path.startsWith(`${path}/`)
@@ -176,8 +194,20 @@ const updateButtonLabel = computed(() => {
 const updateStatusLabel = computed(() => updateState.value.message || ({ pending: '等待宿主机执行', running: '正在构建并切换', success: '更新完成', error: '更新失败' }[updateState.value.status] || ''))
 let updateTimer
 
+function handleViewportChange(event) {
+  const wasMobile = isMobile.value
+  isMobile.value = event.matches
+  if (!wasMobile && event.matches) sidebarOpen.value = false
+  if (wasMobile && !event.matches) sidebarOpen.value = localStorage.getItem(navigationStorageKey) !== 'false'
+}
+
+function updateConnectionState() {
+  offline.value = !navigator.onLine
+}
+
 function navigate(path) {
   router.push(path)
+  if (isMobile.value) sidebarOpen.value = false
 }
 
 async function logout() {
@@ -226,8 +256,18 @@ async function requestUpdate() {
   }
 }
 
-onMounted(refreshUpdateStatus)
-onUnmounted(stopUpdatePolling)
+onMounted(() => {
+  refreshUpdateStatus()
+  mobileMedia.addEventListener('change', handleViewportChange)
+  window.addEventListener('online', updateConnectionState)
+  window.addEventListener('offline', updateConnectionState)
+})
+onUnmounted(() => {
+  stopUpdatePolling()
+  mobileMedia.removeEventListener('change', handleViewportChange)
+  window.removeEventListener('online', updateConnectionState)
+  window.removeEventListener('offline', updateConnectionState)
+})
 </script>
 
 <style scoped>
@@ -255,6 +295,8 @@ onUnmounted(stopUpdatePolling)
 .app-sidebar { transition: width .22s ease, transform .22s ease, opacity .18s ease; }
 .sidebar-collapsed .app-sidebar { width: 0; overflow: hidden; border-right: 0; opacity: 0; pointer-events: none; }
 .sidebar-collapsed .app-main { margin-left: 0; }
+.sidebar-backdrop { display: none; }
+.connection-banner { border-bottom: 1px solid #fde68a; background: #fffbeb; padding: 8px 20px; color: #92400e; font-size: 10px; text-align: center; }
 .app-topbar { display: flex; height: 64px; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid #e5e7eb; background: rgba(255,255,255,.92); padding: 0 24px; backdrop-filter: blur(14px); }
 .topbar-leading { display: flex; min-width: 0; align-items: center; gap: 11px; }
 .sidebar-toggle { display: inline-grid; width: 34px; height: 34px; place-items: center; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; color: #64748b; cursor: pointer; font-size: 15px; line-height: 1; transition: .15s ease; }
@@ -275,5 +317,10 @@ onUnmounted(stopUpdatePolling)
 .update-button { display: inline-flex; align-items: center; gap: 8px; border: 1px solid #bfdbfe; border-radius: 8px; background: #eff6ff; padding: 7px 11px; color: #1d4ed8; cursor: pointer; font-size: 11px; font-weight: 700; transition: background .15s ease, border-color .15s ease; }
 .update-button:hover { border-color: #93c5fd; background: #dbeafe; }.update-button:disabled { cursor: wait; opacity: .65; }
 .update-code { border-radius: 4px; background: #2563eb; padding: 3px 4px; color: #fff; font-size: 8px; font-weight: 800; letter-spacing: .04em; }
-@media (max-width: 639px) { .app-topbar { height: 56px; padding: 0 16px; }.topbar-context { display: none; }.topbar-actions { width: 100%; }.update-status { flex: 1 1 auto; max-width: none; }.update-button { flex: 0 0 auto; } }
+@media (max-width: 1023px) {
+  .sidebar-backdrop { position: fixed; inset: 0; z-index: 29; display: block; border: 0; background: rgba(15, 23, 42, .34); backdrop-filter: blur(2px); }
+  .sidebar-expanded .app-sidebar { width: min(82vw, 280px); opacity: 1; pointer-events: auto; transform: translateX(0); }
+  .sidebar-collapsed .app-sidebar { width: min(82vw, 280px); border-right: 1px solid #e5e7eb; opacity: 1; transform: translateX(-105%); }
+}
+@media (max-width: 639px) { .app-topbar { height: 56px; padding: 0 16px; }.topbar-context { display: none; }.topbar-actions { width: 100%; }.update-status { flex: 1 1 auto; max-width: none; }.update-button { flex: 0 0 auto; }.update-code { display: none; } }
 </style>
