@@ -176,6 +176,9 @@ func (s *Store) AdjustUserTrafficLimit(ctx context.Context, userID int64, reques
 	if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET desired_revision=desired_revision+1 WHERE id IN (SELECT relay_node_id FROM relay_services WHERE user_id=?)`, userID); err != nil {
 		return ConsoleUser{}, err
 	}
+	if err := releaseUserTrafficLeasesTx(ctx, tx, userID, now); err != nil {
+		return ConsoleUser{}, err
+	}
 	limitBytes, err := gbToLedgerBytes(newLimit)
 	if err != nil {
 		return ConsoleUser{}, err

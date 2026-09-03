@@ -2635,7 +2635,8 @@ func (s *Store) DeleteUserEntryGroup(ctx context.Context, id string) error {
 	}
 	defer tx.Rollback()
 	var nodeID string
-	if err := tx.QueryRowContext(ctx, `SELECT relay_node_id FROM user_entry_groups WHERE id=?`, id).Scan(&nodeID); err != nil {
+	var userID int64
+	if err := tx.QueryRowContext(ctx, `SELECT relay_node_id,user_id FROM user_entry_groups WHERE id=?`, id).Scan(&nodeID, &userID); err != nil {
 		return err
 	}
 	now := time.Now().UTC()
@@ -2661,6 +2662,15 @@ func (s *Store) DeleteUserEntryGroup(ctx context.Context, id string) error {
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM user_entry_groups WHERE id=?`, id); err != nil {
 		return err
+	}
+	var remaining int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM relay_services WHERE user_id=?`, userID).Scan(&remaining); err != nil {
+		return err
+	}
+	if remaining == 0 {
+		if err := releaseUserTrafficLeasesTx(ctx, tx, userID, time.Now().UTC()); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET desired_revision=desired_revision+1 WHERE id=?`, nodeID); err != nil {
 		return err

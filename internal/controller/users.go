@@ -372,6 +372,11 @@ func (s *Store) UpdateConsoleUser(ctx context.Context, userID int64, request Con
 		if _, err := tx.ExecContext(ctx, `UPDATE relay_services SET traffic_limit_gb=?,billing_mode=?,billing_epoch=?,updated_at=? WHERE user_id=?`, request.TrafficLimitGB, request.BillingMode, nextEpoch, now, userID); err != nil {
 			return ConsoleUser{}, err
 		}
+		if currentTrafficLimit != request.TrafficLimitGB {
+			if err := releaseUserTrafficLeasesTx(ctx, tx, userID, time.Now().UTC()); err != nil {
+				return ConsoleUser{}, err
+			}
+		}
 	}
 	if currentEnabled != boolInt(enabled) || currentTrafficLimit != request.TrafficLimitGB || billingChanged {
 		if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET desired_revision=desired_revision+1 WHERE id IN (SELECT relay_node_id FROM relay_services WHERE user_id=?)`, userID); err != nil {
