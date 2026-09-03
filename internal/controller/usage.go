@@ -59,6 +59,19 @@ func recordUsageHeartbeatTx(ctx context.Context, tx *sql.Tx, relayNodeID string,
 		if !userID.Valid || status.BillingEpoch != effectiveBillingEpoch(configuredEpoch) {
 			continue
 		}
+		if status.QuotaLeaseID != "" {
+			var leaseUserID int64
+			var leaseRelayID, leaseStatus string
+			var leaseEpoch, leaseSequence, leaseReserved int64
+			leaseErr := tx.QueryRowContext(ctx, `SELECT user_id,relay_node_id,billing_epoch,sequence,reserved_bytes,status FROM traffic_leases WHERE id=?`, status.QuotaLeaseID).Scan(&leaseUserID, &leaseRelayID, &leaseEpoch, &leaseSequence, &leaseReserved, &leaseStatus)
+			if leaseErr != nil || leaseStatus != "active" || leaseUserID != userID.Int64 || leaseRelayID != relayNodeID || leaseEpoch != status.BillingEpoch || status.QuotaLeaseSequence < leaseSequence {
+				continue
+			}
+			total := billedBytesFromStatus(status, configuredMode)
+			if total > uint64(maxInt64(leaseReserved, 0)) {
+				continue
+			}
+		}
 		meterKey := fmt.Sprintf("user:%d", userID.Int64)
 		total := billedBytesFromStatus(status, configuredMode)
 		key := fmt.Sprintf("%s/%d", meterKey, status.BillingEpoch)

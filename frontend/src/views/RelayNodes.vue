@@ -27,7 +27,7 @@
           <div class="info-box"><span>配置版本</span><strong>{{ node.current_revision }}/{{ node.desired_revision }}</strong></div>
           <div class="info-box"><span>Agent</span><strong>{{ node.agent_version || '—' }}</strong></div>
         </div>
-        <div class="relay-node-foot">最后心跳：{{ formatTime(node.last_seen_at) }}<span v-if="node.update_status && node.update_status !== 'idle'" class="ml-3" :class="node.update_status === 'failed' ? 'text-red-600' : 'text-blue-600'">Agent 更新：{{ updateLabel(node.update_status) }}<span v-if="node.update_error">（{{ node.update_error }}）</span></span></div>
+        <div class="relay-node-foot">最后心跳：{{ formatTime(node.last_seen_at) }}<span class="ml-3" :class="node.capabilities?.includes('quota_leases_v1') ? 'text-emerald-600' : 'text-amber-600'">{{ node.capabilities?.includes('quota_leases_v1') ? '支持共享额度租约' : 'Agent 待升级后支持多 Relay 分片' }}</span><span v-if="node.update_status && node.update_status !== 'idle'" class="ml-3" :class="node.update_status === 'failed' ? 'text-red-600' : 'text-blue-600'">Agent 更新：{{ updateLabel(node.update_status) }}<span v-if="node.update_error">（{{ node.update_error }}）</span></span></div>
       </article>
       <div v-if="!store.relayNodes.length" class="card empty-panel layout-card">尚未注册中转节点</div>
     </section>
