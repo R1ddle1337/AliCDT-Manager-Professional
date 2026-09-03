@@ -20,6 +20,7 @@ import (
 	"unicode"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -49,14 +50,11 @@ type loginFailureState struct {
 	BlockedTill time.Time
 }
 
-// clientAddress deliberately uses RemoteAddr instead of trusting arbitrary
-// X-Forwarded-For headers. The reverse proxy can pass a trusted address via
-// X-Real-IP when the deployment needs per-client throttling.
+// clientAddress uses the client IP selected by the configured proxy-aware
+// middleware and falls back to the direct peer for tests or direct installs.
 func clientAddress(r *http.Request) string {
-	if value := strings.TrimSpace(r.Header.Get("X-Real-IP")); value != "" {
-		if net.ParseIP(value) != nil {
-			return value
-		}
+	if value := middleware.GetClientIP(r.Context()); value != "" {
+		return value
 	}
 	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
 	if err == nil && host != "" {

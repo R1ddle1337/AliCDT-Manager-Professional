@@ -144,7 +144,11 @@ func (s *Server) Handler() http.Handler { return s.router }
 func (s *Server) routes() chi.Router {
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
-	router.Use(middleware.RealIP)
+	// Production binds the controller to loopback and the trusted reverse
+	// proxy overwrites X-Real-IP. Read that single dedicated header without
+	// mutating RemoteAddr; the deprecated RealIP middleware trusts arbitrary
+	// forwarding chains and can let callers evade login throttling.
+	router.Use(middleware.ClientIPFromHeader("X-Real-IP"))
 	router.Use(middleware.Recoverer)
 	router.Use(middleware.Timeout(30 * time.Second))
 	router.Use(securityHeaders)
