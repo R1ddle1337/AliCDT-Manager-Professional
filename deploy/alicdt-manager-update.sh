@@ -146,7 +146,11 @@ for suffix in -wal -shm; do
   fi
 done
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --force-recreate --no-build --wait --wait-timeout 120
+set -a
+# shellcheck disable=SC1090
+. "$ENV_FILE"
+set +a
+CDT_SMOKE_BASE_URL="http://127.0.0.1:18000" CDT_SMOKE_ADMIN_TOKEN="${CDT_ADMIN_TOKEN:-}" "$REPO_DIR/scripts/smoke-controller.sh" >/dev/null
 controller_stopped=0
-curl -fsS http://127.0.0.1:18000/healthz >/dev/null
 finished_at="$(utc_now)"
 write_status "success" "更新完成，当前版本已切换" "$request_id" "$target_commit" "$started_at" "$finished_at"
