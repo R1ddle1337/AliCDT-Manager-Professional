@@ -134,6 +134,19 @@ func (s *CloudService) Billing(ctx context.Context, accountID int64) (BillingRes
 func (s *CloudService) runAutomationCycle(ctx context.Context, now time.Time) {
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
+	s.runAutomationCycleLocked(ctx, now)
+}
+
+func (s *CloudService) tryAutomationCycle(ctx context.Context, now time.Time) bool {
+	if !s.automationMu.TryLock() {
+		return false
+	}
+	defer s.automationMu.Unlock()
+	s.runAutomationCycleLocked(ctx, now)
+	return true
+}
+
+func (s *CloudService) runAutomationCycleLocked(ctx context.Context, now time.Time) {
 	cycleCtx, cancel := context.WithTimeout(ctx, 55*time.Second)
 	defer cancel()
 	_, _ = s.store.MarkStaleRelayNodes(cycleCtx, 45*time.Second)

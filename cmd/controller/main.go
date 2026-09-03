@@ -65,6 +65,7 @@ func main() {
 	defer stop()
 	go server.RunCloudScheduler(ctx, *cloudSyncInterval)
 	go server.RunDNSScheduler(ctx, *dnsSyncInterval)
+	go server.RunMaintenanceScheduler(ctx, 6*time.Hour)
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

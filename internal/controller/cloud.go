@@ -64,6 +64,10 @@ func (s *CloudService) SetTrafficSafetyWindow(window time.Duration) {
 func (s *CloudService) SyncAll(ctx context.Context) ([]CloudSyncResult, error) {
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
+	return s.syncAll(ctx)
+}
+
+func (s *CloudService) syncAll(ctx context.Context) ([]CloudSyncResult, error) {
 	accounts, err := s.store.ListCloudAccounts(ctx, true)
 	if err != nil {
 		return nil, err
@@ -88,6 +92,15 @@ func (s *CloudService) SyncAll(ctx context.Context) ([]CloudSyncResult, error) {
 	}
 	wg.Wait()
 	return results, nil
+}
+
+func (s *CloudService) trySyncAll(ctx context.Context) bool {
+	if !s.syncMu.TryLock() {
+		return false
+	}
+	defer s.syncMu.Unlock()
+	_, _ = s.syncAll(ctx)
+	return true
 }
 
 func (s *CloudService) syncAccount(ctx context.Context, account CloudAccount) CloudSyncResult {
@@ -237,10 +250,10 @@ func (s *CloudService) RunScheduler(ctx context.Context, interval time.Duration)
 			go func() {
 				syncCtx, cancel := context.WithTimeout(ctx, time.Minute)
 				defer cancel()
-				_, _ = s.SyncAll(syncCtx)
+				s.trySyncAll(syncCtx)
 			}()
 		case tick := <-automationTicker.C:
-			go s.runAutomationCycle(ctx, tick.In(location))
+			go s.tryAutomationCycle(ctx, tick.In(location))
 		}
 	}
 }
