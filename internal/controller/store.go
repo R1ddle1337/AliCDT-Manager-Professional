@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -1452,7 +1453,8 @@ func (s *Store) AuthenticateAgent(ctx context.Context, id, secret string) error 
 	if err := s.db.QueryRowContext(ctx, `SELECT secret_hash FROM relay_nodes WHERE id=?`, id).Scan(&expected); err != nil {
 		return err
 	}
-	if expected != hashSecret(secret) {
+	actual := hashSecret(secret)
+	if subtle.ConstantTimeCompare([]byte(expected), []byte(actual)) != 1 {
 		return errors.New("invalid agent credentials")
 	}
 	return nil

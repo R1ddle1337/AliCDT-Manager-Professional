@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -909,6 +910,10 @@ func (s *Server) createEnrollmentToken(w http.ResponseWriter, r *http.Request) {
 	if request.TTLMinutes <= 0 {
 		request.TTLMinutes = 30
 	}
+	if request.TTLMinutes > 24*60 {
+		writeError(w, http.StatusBadRequest, errors.New("enrollment token lifetime cannot exceed 24 hours"))
+		return
+	}
 	raw := randomSecret(24)
 	var accountIDs []int64
 	if request.AccountID != nil && *request.AccountID > 0 {
@@ -1221,6 +1226,10 @@ func bearerToken(r *http.Request) string {
 }
 
 func decodeJSON(r *http.Request, destination interface{}) error {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		return errors.New("content type must be application/json")
+	}
 	decoder := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {

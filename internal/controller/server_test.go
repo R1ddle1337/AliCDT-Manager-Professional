@@ -19,11 +19,21 @@ import (
 
 func TestDecodeJSONRejectsTrailingValue(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"name":"first"} {"name":"second"}`))
+	request.Header.Set("Content-Type", "application/json")
 	var payload struct {
 		Name string `json:"name"`
 	}
 	if err := decodeJSON(request, &payload); err == nil {
 		t.Fatal("expected multiple JSON values to be rejected")
+	}
+}
+
+func TestDecodeJSONRequiresJSONContentType(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"name":"value"}`))
+	request.Header.Set("Content-Type", "text/plain")
+	var payload map[string]string
+	if err := decodeJSON(request, &payload); err == nil {
+		t.Fatal("expected non-JSON content type to be rejected")
 	}
 }
 

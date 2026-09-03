@@ -135,6 +135,44 @@ func TestAdminLoginRateLimit(t *testing.T) {
 	requestJSON(t, httpServer.URL+"/api/v2/auth/login", "", map[string]string{"username": "admin", "password": "wrong"}, http.StatusTooManyRequests, nil)
 }
 
+func TestAPIResponsesAreNotCacheable(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	server, err := NewServer(store, ServerOptions{AdminToken: "emergency-token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v2/auth/initialized", nil))
+	if got := recorder.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("API cache policy is %q", got)
+	}
+}
+
+func TestEnrollmentTokenLifetimeIsBounded(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	server, err := NewServer(store, ServerOptions{AdminToken: "emergency-token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := bytes.NewBufferString(`{"ttl_minutes":1441}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/v2/enrollment-tokens", body)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer emergency-token")
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("oversized token lifetime returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestLoginFailureLimiterHasHardCapacity(t *testing.T) {
 	store, err := OpenStore(":memory:")
 	if err != nil {
