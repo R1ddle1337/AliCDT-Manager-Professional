@@ -70,20 +70,28 @@ failure_message() {
   printf '%s' "宿主机兼容升级失败${output:+：$output}"
 }
 
-expected_hash="$(curl -fsSL --retry 3 --connect-timeout 8 "${CONTROLLER_URL%/}/agent/checksums.txt" | awk '$2 == "cdt-relay-agent-linux-amd64" { print tolower($1); exit }')" || expected_hash=""
-if [ -z "$expected_hash" ] || ! printf '%s' "$expected_hash" | grep -Eq '^[0-9a-f]{64}$'; then
+checksums="$(curl -fsSL --retry 3 --connect-timeout 8 "${CONTROLLER_URL%/}/agent/checksums.txt")" || checksums=""
+expected_amd64="$(printf '%s\n' "$checksums" | awk '$2 == "cdt-relay-agent-linux-amd64" { print tolower($1); exit }')"
+expected_arm64="$(printf '%s\n' "$checksums" | awk '$2 == "cdt-relay-agent-linux-arm64" { print tolower($1); exit }')"
+if ! printf '%s' "$expected_amd64" | grep -Eq '^[0-9a-f]{64}$' || ! printf '%s' "$expected_arm64" | grep -Eq '^[0-9a-f]{64}$'; then
   while IFS=$'\t' read -r agent_id _; do
     [ -n "$agent_id" ] && mark_state "$agent_id" failed "无法读取控制器 Agent 校验和"
   done < <(sqlite_query "SELECT id,name FROM relay_nodes WHERE update_status='requested' AND (COALESCE(capabilities_json,'[]') NOT LIKE '%shared_meters_v1%' OR COALESCE(capabilities_json,'[]') NOT LIKE '%quota_leases_v1%');")
   exit 1
 fi
 
-while IFS=$'\t' read -r agent_id agent_name public_ip; do
+while IFS=$'\t' read -r agent_id agent_name public_ip architecture; do
   [ -n "$agent_id" ] || continue
   if [ -z "$public_ip" ] || ! printf '%s' "$public_ip" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9.:-]*$'; then
     mark_state "$agent_id" failed "Relay 节点没有可用的公网地址"
     continue
   fi
+
+  case "${architecture,,}" in
+    amd64|x86_64) expected_hash="$expected_amd64" ;;
+    arm64|aarch64) expected_hash="$expected_arm64" ;;
+    *) mark_state "$agent_id" failed "不支持的 Agent 架构：${architecture:-未知}"; continue ;;
+  esac
 
   mark_state "$agent_id" updating ""
   output_file="$(mktemp)"
@@ -111,4 +119,4 @@ EOF
   if [ "$confirmed" -ne 1 ]; then
     mark_state "$agent_id" failed "Agent 已执行升级但在 ${WAIT_SECONDS} 秒内未回报新版本（${agent_name}）"
   fi
-done < <(sqlite_query "SELECT id,name,COALESCE(public_ip,'') FROM relay_nodes WHERE update_status='requested' AND (COALESCE(capabilities_json,'[]') NOT LIKE '%shared_meters_v1%' OR COALESCE(capabilities_json,'[]') NOT LIKE '%quota_leases_v1%') ORDER BY created_at;")
+done < <(sqlite_query "SELECT id,name,COALESCE(public_ip,''),COALESCE(architecture,'') FROM relay_nodes WHERE update_status='requested' AND (COALESCE(capabilities_json,'[]') NOT LIKE '%shared_meters_v1%' OR COALESCE(capabilities_json,'[]') NOT LIKE '%quota_leases_v1%') ORDER BY created_at;")
