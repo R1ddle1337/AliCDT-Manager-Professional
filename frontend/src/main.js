@@ -14,6 +14,7 @@ import RelayServices from './views/RelayServices.vue'
 import CloudResources from './views/CloudResources.vue'
 import Logs from './views/Logs.vue'
 import Settings from './views/Settings.vue'
+import Security from './views/Security.vue'
 import DNSProviders from './views/DNSProviders.vue'
 import RelayPools from './views/RelayPools.vue'
 import Users from './views/Users.vue'
@@ -33,6 +34,7 @@ const router = createRouter({
     { path: '/cloud-resources', component: CloudResources, meta: { auth: true, admin: true } },
     { path: '/logs', component: Logs, meta: { auth: true, admin: true } },
     { path: '/settings', component: Settings, meta: { auth: true, admin: true } },
+    { path: '/security', component: Security, meta: { auth: true, admin: true } },
     { path: '/dns', component: DNSProviders, meta: { auth: true, admin: true } },
     { path: '/relay-pools', component: RelayPools, meta: { auth: true, admin: true } },
     { path: '/users', component: Users, meta: { auth: true, admin: true } },

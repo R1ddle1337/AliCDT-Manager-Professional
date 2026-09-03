@@ -944,6 +944,15 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	for _, column := range []struct{ name, definition string }{
+		{name: "ip_address", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "user_agent", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "last_seen_at", definition: "TEXT"},
+	} {
+		if err := s.ensureColumn(ctx, "admin_sessions", column.name, column.definition); err != nil {
+			return err
+		}
+	}
+	for _, column := range []struct{ name, definition string }{
 		{name: "user_id", definition: "INTEGER REFERENCES console_users(id) ON DELETE SET NULL"},
 		{name: "billing_mode", definition: "TEXT NOT NULL DEFAULT 'both'"},
 		{name: "traffic_limit_gb", definition: "REAL NOT NULL DEFAULT 0"},

@@ -55,6 +55,8 @@ type Server struct {
 	agentReleaseErr       error
 	cloud                 *CloudService
 	dispatchToken         string
+	loginMu               sync.Mutex
+	loginFailures         map[string]loginFailureState
 	router                chi.Router
 }
 
@@ -120,7 +122,7 @@ func NewServer(store *Store, opts ServerOptions) (*Server, error) {
 	} else if opts.TrafficSafetyWindow > 0 {
 		cloud.SetTrafficSafetyWindow(opts.TrafficSafetyWindow)
 	}
-	server := &Server{store: store, adminToken: adminToken, dispatchToken: dispatchToken, frontendDir: opts.FrontendDir, agentInstallerPath: opts.AgentInstallerPath, updateRequestFile: opts.UpdateRequestFile, updateStatusFile: opts.UpdateStatusFile, agentVersion: agentVersion, agentReleaseSource: releaseSource, agentReleaseRepo: releaseRepo, agentReleaseChannel: releaseChannel, agentReleaseCacheDir: releaseCacheDir, cloud: cloud}
+	server := &Server{store: store, adminToken: adminToken, dispatchToken: dispatchToken, frontendDir: opts.FrontendDir, agentInstallerPath: opts.AgentInstallerPath, updateRequestFile: opts.UpdateRequestFile, updateStatusFile: opts.UpdateStatusFile, agentVersion: agentVersion, agentReleaseSource: releaseSource, agentReleaseRepo: releaseRepo, agentReleaseChannel: releaseChannel, agentReleaseCacheDir: releaseCacheDir, cloud: cloud, loginFailures: make(map[string]loginFailureState)}
 	if releaseSource == "github" {
 		if cachedVersion, err := os.ReadFile(filepath.Join(releaseCacheDir, "version")); err == nil {
 			server.agentReleaseVersion = strings.TrimSpace(string(cachedVersion))
@@ -141,6 +143,7 @@ func (s *Server) routes() chi.Router {
 	router.Use(middleware.RealIP)
 	router.Use(middleware.Recoverer)
 	router.Use(middleware.Timeout(30 * time.Second))
+	router.Use(securityHeaders)
 	router.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "service": "alicdt-controller"})
 	})
@@ -180,6 +183,14 @@ func (s *Server) routes() chi.Router {
 
 	router.Group(func(router chi.Router) {
 		router.Use(s.adminAuth)
+		router.Get("/api/v2/security/sessions", s.listAdminSessions)
+		router.Delete("/api/v2/security/sessions/{sessionID}", s.revokeAdminSession)
+		router.Post("/api/v2/security/sessions/revoke-others", s.revokeOtherAdminSessions)
+		router.Post("/api/v2/security/admin-password", s.changeAdminPassword)
+		router.Get("/api/v2/security/2fa", s.adminTwoFAStatus)
+		router.Post("/api/v2/security/2fa/setup", s.beginAdminTwoFA)
+		router.Post("/api/v2/security/2fa/confirm", s.confirmAdminTwoFA)
+		router.Delete("/api/v2/security/2fa", s.disableAdminTwoFA)
 		router.Get("/api/v2/users", s.listConsoleUsers)
 		router.Post("/api/v2/users", s.createConsoleUser)
 		router.Put("/api/v2/users/{userID}", s.updateConsoleUser)
@@ -670,27 +681,47 @@ func (s *Server) initAdmin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	_ = s.store.RecordAdminSessionMetadata(r.Context(), token, clientAddress(r), r.UserAgent())
 	writeJSON(w, http.StatusCreated, map[string]string{"token": token, "username": request.Username, "display_name": request.Username, "role": consoleRoleAdmin})
 }
 
 func (s *Server) loginAdmin(w http.ResponseWriter, r *http.Request) {
+	address := clientAddress(r)
+	if allowed, retryAfter := s.loginAllowed(address); !allowed {
+		seconds := int(retryAfter.Seconds())
+		if seconds < 1 {
+			seconds = 1
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(seconds))
+		writeError(w, http.StatusTooManyRequests, errors.New("too many failed login attempts; try again later"))
+		return
+	}
 	var request struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
+		Username      string `json:"username"`
+		Password      string `json:"password"`
+		TwoFactorCode string `json:"two_factor_code"`
 	}
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if token, err := s.store.LoginAdmin(r.Context(), request.Username, request.Password); err == nil {
+	if token, err := s.store.LoginAdminWithCode(r.Context(), request.Username, request.Password, request.TwoFactorCode); err == nil {
+		s.recordLoginSuccess(address)
+		_ = s.store.RecordAdminSessionMetadata(r.Context(), token, address, r.UserAgent())
 		writeJSON(w, http.StatusOK, map[string]interface{}{"token": token, "username": request.Username, "display_name": request.Username, "role": consoleRoleAdmin})
+		return
+	} else if errors.Is(err, ErrAdminTwoFactorRequired) {
+		s.recordLoginFailure(address)
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "请输入有效的双因素认证验证码", "code": "two_factor_required"})
 		return
 	}
 	token, user, err := s.store.LoginConsoleUser(r.Context(), request.Username, request.Password)
 	if err != nil {
+		s.recordLoginFailure(address)
 		writeError(w, http.StatusUnauthorized, err)
 		return
 	}
+	s.recordLoginSuccess(address)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"token": token, "username": user.Username, "display_name": user.DisplayName, "role": consoleRoleUser})
 }
 

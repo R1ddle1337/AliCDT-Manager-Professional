@@ -33,8 +33,8 @@ export const useRelayStore = defineStore('relay-platform', () => {
   const loading = ref(false)
   const updateStatus = ref({ status: 'idle', message: '暂无更新任务' })
 
-  async function login(username, password) {
-    const { data } = await api.post('/auth/login', { username, password })
+  async function login(username, password, twoFactorCode = '') {
+    const { data } = await api.post('/auth/login', { username, password, two_factor_code: twoFactorCode })
     localStorage.setItem('token', data.token)
     localStorage.setItem('role', data.role || 'admin')
     localStorage.setItem('username', data.username || username)
@@ -334,6 +334,44 @@ export const useRelayStore = defineStore('relay-platform', () => {
     return updateStatus.value
   }
 
+  async function fetchAdminSessions() {
+    const { data } = await api.get('/security/sessions')
+    return data || []
+  }
+
+  async function revokeAdminSession(id) {
+    await api.delete(`/security/sessions/${encodeURIComponent(id)}`)
+  }
+
+  async function revokeOtherAdminSessions() {
+    await api.post('/security/sessions/revoke-others')
+  }
+
+  async function changeAdminPassword(payload) {
+    const { data } = await api.post('/security/admin-password', payload)
+    return data
+  }
+
+  async function fetchAdminTwoFA() {
+    const { data } = await api.get('/security/2fa')
+    return data || { enabled: false }
+  }
+
+  async function beginAdminTwoFA() {
+    const { data } = await api.post('/security/2fa/setup')
+    return data
+  }
+
+  async function confirmAdminTwoFA(code) {
+    const { data } = await api.post('/security/2fa/confirm', { code })
+    return data
+  }
+
+  async function disableAdminTwoFA(code) {
+    const { data } = await api.delete('/security/2fa', { data: { code } })
+    return data
+  }
+
   async function requestUpdate() {
     const { data } = await api.post('/system/update')
     updateStatus.value = data || { status: 'pending', message: '更新请求已提交' }
@@ -351,6 +389,7 @@ export const useRelayStore = defineStore('relay-platform', () => {
     fetchDNSProviders, fetchDNSRecords, createDNSProvider, updateDNSProvider, deleteDNSProvider,
     testDNSProvider, syncDNSProvider, syncAllDNS, createDNSRecord, updateDNSRecord, deleteDNSRecord,
     syncCloud, createCloudAccount, updateCloudAccount, deleteCloudAccount, controlCloudInstance,
-    fetchUpdateStatus, requestUpdate,
+    fetchUpdateStatus, requestUpdate, fetchAdminSessions, revokeAdminSession, revokeOtherAdminSessions, changeAdminPassword,
+    fetchAdminTwoFA, beginAdminTwoFA, confirmAdminTwoFA, disableAdminTwoFA,
   }
 })

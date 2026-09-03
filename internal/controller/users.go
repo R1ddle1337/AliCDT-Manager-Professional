@@ -526,6 +526,7 @@ func (s *Store) AdminSessionUsername(ctx context.Context, token string) (string,
 		_, _ = s.db.ExecContext(ctx, `DELETE FROM admin_sessions WHERE token_hash=?`, hashSecret(token))
 		return "", errors.New("session expired")
 	}
+	_, _ = s.db.ExecContext(ctx, `UPDATE admin_sessions SET last_seen_at=? WHERE token_hash=?`, time.Now().UTC().Format(time.RFC3339Nano), hashSecret(token))
 	return username, nil
 }
 

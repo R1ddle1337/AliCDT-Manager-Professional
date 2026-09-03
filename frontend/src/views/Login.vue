@@ -31,6 +31,11 @@
             <label class="field-label" for="password">密码</label>
             <input id="password" v-model="form.password" type="password" class="input" autocomplete="current-password" :placeholder="isInit ? '至少 8 位字符' : '请输入密码'" />
           </div>
+          <div v-if="requiresTwoFactor">
+            <label class="field-label" for="two-factor-code">双因素认证验证码</label>
+            <input id="two-factor-code" v-model.trim="form.two_factor_code" class="input" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="输入身份验证器中的 6 位验证码" />
+            <p class="field-hint">管理员已启用双因素认证，请打开 Google Authenticator、Microsoft Authenticator 或 1Password 获取验证码。</p>
+          </div>
           <div v-if="isInit">
             <label class="field-label" for="confirm">确认密码</label>
             <input id="confirm" v-model="form.confirm" type="password" class="input" autocomplete="new-password" placeholder="再次输入密码" />
@@ -59,7 +64,8 @@ const store = useRelayStore()
 const isInit = ref(false)
 const loading = ref(false)
 const error = ref('')
-const form = ref({ username: '', password: '', confirm: '' })
+const requiresTwoFactor = ref(false)
+const form = ref({ username: '', password: '', confirm: '', two_factor_code: '' })
 
 onMounted(async () => {
   try {
@@ -72,6 +78,10 @@ onMounted(async () => {
 
 async function submit() {
   error.value = ''
+  if (!isInit.value && requiresTwoFactor.value && !/^\d{6}$/.test(form.value.two_factor_code)) {
+    error.value = '请输入 6 位双因素认证验证码'
+    return
+  }
   if (!form.value.username || !form.value.password) {
     error.value = '请填写用户名和密码'
     return
@@ -96,10 +106,11 @@ async function submit() {
       localStorage.setItem('displayName', data.display_name || data.username || form.value.username)
       router.push('/')
     } else {
-      const data = await store.login(form.value.username, form.value.password)
+      const data = await store.login(form.value.username, form.value.password, form.value.two_factor_code)
       router.push(data.role === 'user' ? '/usage' : '/')
     }
   } catch (e) {
+    if (e.response?.data?.code === 'two_factor_required') requiresTwoFactor.value = true
     error.value = e.response?.data?.error || e.response?.data?.detail || '操作失败，请稍后重试'
   } finally {
     loading.value = false

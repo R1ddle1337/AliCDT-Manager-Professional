@@ -82,7 +82,7 @@ func (s *Store) ClearSystemLogs(ctx context.Context, category string) error {
 }
 
 func (s *Store) GetPublicSettings(ctx context.Context) (map[string]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT key,COALESCE(value,'') FROM settings WHERE key NOT LIKE '%password_hash%' ORDER BY key`)
+	rows, err := s.db.QueryContext(ctx, `SELECT key,COALESCE(value,'') FROM settings WHERE key NOT LIKE '%password_hash%' AND key NOT LIKE '%totp%' ORDER BY key`)
 	if err != nil {
 		return nil, err
 	}

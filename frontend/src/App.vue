@@ -143,6 +143,7 @@ const advancedNavItems = [
   { path: '/landing-nodes', label: '落地目标（高级）', icon: 'landing' },
   { path: '/dns', label: 'DNS 托管', icon: 'dns' },
   { path: '/logs', label: '系统日志', icon: 'logs' },
+  { path: '/security', label: '安全中心', icon: 'settings' },
   { path: '/settings', label: '系统设置', icon: 'settings' },
 ]
 
