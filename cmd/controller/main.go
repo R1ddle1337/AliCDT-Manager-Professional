@@ -14,14 +14,17 @@ import (
 	"github.com/R1ddle1337/AliCDT-Manager-Professional/internal/controller"
 )
 
+var version = "dev"
+
 func main() {
+	showVersion := flag.Bool("version", false, "print version and exit")
 	listen := flag.String("listen", env("CDT_CONTROLLER_LISTEN", ":8080"), "HTTP listen address")
 	database := flag.String("database", env("CDT_DATABASE", "/app/data/guard.db"), "SQLite database path")
 	adminToken := flag.String("admin-token", env("CDT_ADMIN_TOKEN", ""), "admin API bearer token")
 	bootstrapToken := flag.String("enroll-token", env("CDT_BOOTSTRAP_ENROLL_TOKEN", ""), "optional initial one-time agent token")
 	frontendDir := flag.String("frontend-dir", env("CDT_FRONTEND_DIR", ""), "optional built frontend directory")
 	agentInstaller := flag.String("agent-installer", env("CDT_AGENT_INSTALLER", ""), "optional agent installer script")
-	agentVersion := flag.String("agent-version", env("CDT_AGENT_VERSION", "dev"), "Agent release label exposed to enrolled agents")
+	agentVersion := flag.String("agent-version", env("CDT_AGENT_VERSION", version), "Agent release label exposed to enrolled agents")
 	agentReleaseSource := flag.String("agent-release-source", env("CDT_AGENT_RELEASE_SOURCE", "github"), "Agent update source: github or embedded")
 	agentReleaseRepo := flag.String("agent-release-repo", env("CDT_AGENT_RELEASE_REPO", "R1ddle1337/AliCDT-Manager-Professional"), "GitHub repository containing Agent releases")
 	agentReleaseChannel := flag.String("agent-release-channel", env("CDT_AGENT_RELEASE_CHANNEL", "latest"), "GitHub release tag or latest")
@@ -34,6 +37,10 @@ func main() {
 	trafficSafetyWindow := flag.Duration("traffic-safety-window", durationEnv("CDT_TRAFFIC_SAFETY_WINDOW", 4*time.Minute), "forecast window reserved before the CDT protection threshold")
 	dispatchToken := flag.String("dispatch-token", env("CDT_DISPATCH_TOKEN", ""), "read-only token for front-door L4 dispatchers")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println(version)
+		return
+	}
 
 	store, err := controller.OpenStore(*database)
 	if err != nil {

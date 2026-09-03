@@ -251,7 +251,7 @@ func (s *Server) legacyChangePassword(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) legacyVersionCheck(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"current": "0.2.0", "latest": "0.2.0", "has_update": false,
+		"current": s.agentVersion, "latest": s.agentVersion, "has_update": false,
 		"url": "https://github.com/R1ddle1337/AliCDT-Manager-Professional/releases",
 	})
 }

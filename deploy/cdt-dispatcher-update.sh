@@ -45,7 +45,7 @@ fi
 if docker image inspect alicdt-dispatcher:production >/dev/null 2>&1; then
   docker tag alicdt-dispatcher:production "$ROLLBACK_IMAGE"
 fi
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build --pull dispatcher
+CDT_BUILD_VERSION="$(git -C "$REPO_DIR" rev-parse --short=12 HEAD)" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build --pull dispatcher
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --force-recreate --no-build --wait --wait-timeout 120
 health_port="${CDT_DISPATCH_HEALTH_PORT:-9091}"
 curl -fsS "http://127.0.0.1:$health_port/readyz" >/dev/null

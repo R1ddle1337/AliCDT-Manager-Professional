@@ -5,6 +5,8 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile.controller
+      args:
+        BUILD_VERSION: ${CDT_BUILD_VERSION:-dev}
     image: alicdt-controller:staging
     container_name: alicdt-controller-staging
     restart: unless-stopped

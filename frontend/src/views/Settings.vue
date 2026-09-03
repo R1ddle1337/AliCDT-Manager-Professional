@@ -19,7 +19,7 @@
     </div>
 
     <div v-if="msg.text" class="notice" :class="`notice-${msg.type}`">{{ msg.text }}</div>
-    <div class="text-center text-xs text-slate-400">AliCDT Manager v1.2 <a v-if="versionInfo.has_update" :href="versionInfo.url" target="_blank" class="ml-2 text-accent hover:underline">发现新版本 v{{ versionInfo.latest }}</a></div>
+    <div class="text-center text-xs text-slate-400">AliCDT Manager {{ versionInfo.current || 'dev' }} <a v-if="versionInfo.has_update" :href="versionInfo.url" target="_blank" rel="noopener noreferrer" class="ml-2 text-accent hover:underline">发现新版本 {{ versionInfo.latest }}</a></div>
   </div>
 </template>
 
@@ -29,7 +29,7 @@ import { useStore } from '../stores'
 import { apiErrorMessage } from '../utils/session'
 
 const store = useStore(); const saving = ref(false); const testing = ref(false); const reportTesting = ref(false); const msg = ref({ type: 'success', text: '' })
-const form = ref({ tg_bot_token: '', tg_chat_id: '', tg_daily_report: '0' }); const versionInfo = ref({ has_update: false, latest: '', url: '' })
+const form = ref({ tg_bot_token: '', tg_chat_id: '', tg_daily_report: '0' }); const versionInfo = ref({ current: '', has_update: false, latest: '', url: '' })
 onMounted(async () => { await store.fetchSettings(); form.value.tg_bot_token = store.settings.tg_bot_token || ''; form.value.tg_chat_id = store.settings.tg_chat_id || ''; form.value.tg_daily_report = store.settings.tg_daily_report || '0'; checkVersion() })
 function showMessage(type, text, timeout = 4000) { msg.value = { type, text }; window.setTimeout(() => { msg.value = { type: 'success', text: '' } }, timeout) }
 async function checkVersion() { try { versionInfo.value = await store.fetchVersionInfo() } catch (_) { /* version discovery is optional */ } }

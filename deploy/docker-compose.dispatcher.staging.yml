@@ -7,6 +7,8 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile.dispatcher
+      args:
+        BUILD_VERSION: ${CDT_BUILD_VERSION:-dev}
     image: alicdt-dispatcher:staging
     container_name: alicdt-dispatcher-staging
     restart: unless-stopped

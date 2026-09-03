@@ -84,6 +84,8 @@ jobs:
           push: true
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
+          build-args: |
+            BUILD_VERSION=${{ github.ref_name }}
 
   dispatcher-image:
     runs-on: ubuntu-latest
@@ -111,3 +113,5 @@ jobs:
           push: true
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
+          build-args: |
+            BUILD_VERSION=${{ github.ref_name }}

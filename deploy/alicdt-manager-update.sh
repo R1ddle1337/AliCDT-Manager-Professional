@@ -130,7 +130,7 @@ write_status "running" "正在构建 Go 控制器和 Agent 镜像" "$request_id"
 if docker image inspect alicdt-controller:production >/dev/null 2>&1; then
   docker tag alicdt-controller:production "$rollback_image"
 fi
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build --pull controller
+CDT_BUILD_VERSION="$(git -C "$REPO_DIR" rev-parse --short=12 HEAD)" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build --pull controller
 
 write_status "running" "正在备份数据库并切换服务" "$request_id" "$target_commit" "$started_at" ""
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" stop controller >/dev/null

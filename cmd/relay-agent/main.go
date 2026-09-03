@@ -16,6 +16,7 @@ import (
 var version = "dev"
 
 func main() {
+	showVersion := flag.Bool("version", false, "print version and exit")
 	controller := flag.String("controller", env("CDT_CONTROLLER_URL", ""), "controller base URL")
 	token := flag.String("enroll-token", env("CDT_ENROLL_TOKEN", ""), "one-time enrollment token")
 	nodeName := flag.String("node-name", env("CDT_NODE_NAME", ""), "relay node name")
@@ -29,6 +30,10 @@ func main() {
 	updateTime := flag.String("update-time", env("CDT_AGENT_UPDATE_TIME", "04:00"), "Daily Agent update time")
 	updateLocation := flag.String("update-location", env("CDT_AGENT_UPDATE_LOCATION", "Asia/Shanghai"), "Timezone used for the daily Agent update")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println(version)
+		return
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
