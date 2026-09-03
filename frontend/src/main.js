@@ -11,8 +11,6 @@ import RelayNodes from './views/RelayNodes.vue'
 import LandingNodes from './views/LandingNodes.vue'
 import RelayServices from './views/RelayServices.vue'
 import CloudResources from './views/CloudResources.vue'
-import Dashboard from './views/Dashboard.vue'
-import Accounts from './views/Accounts.vue'
 import Logs from './views/Logs.vue'
 import Settings from './views/Settings.vue'
 import DNSProviders from './views/DNSProviders.vue'
@@ -25,8 +23,8 @@ const router = createRouter({
   routes: [
     { path: '/login', component: Login },
     { path: '/', component: RelayOverview, meta: { auth: true, admin: true } },
-    { path: '/instances', component: Dashboard, meta: { auth: true, admin: true } },
-    { path: '/accounts', component: Accounts, meta: { auth: true, admin: true } },
+    { path: '/instances', redirect: '/cloud-resources' },
+    { path: '/accounts', redirect: '/cloud-resources' },
     { path: '/relay-nodes', component: RelayNodes, meta: { auth: true, admin: true } },
     { path: '/landing-nodes', component: LandingNodes, meta: { auth: true, admin: true } },
     { path: '/relay-services', component: RelayServices, meta: { auth: true, admin: true } },

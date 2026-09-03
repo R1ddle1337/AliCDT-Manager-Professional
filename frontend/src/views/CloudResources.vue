@@ -14,9 +14,20 @@
       </div>
     </header>
 
+    <nav class="workspace-tabs" aria-label="云资源工作区视图">
+      <button v-for="tab in workspaceTabs" :key="tab.id" type="button" :class="activeSection === tab.id ? 'workspace-tab-active' : ''" @click="activeSection = tab.id"><span>{{ tab.label }}</span><strong>{{ tab.count }}</strong></button>
+    </nav>
+
     <div v-if="message" class="notice" :class="messageType === 'error' ? 'notice-error' : 'notice-success'">
       {{ message }}
     </div>
+
+    <section v-if="activeSection === 'overview'" class="monitor-grid">
+      <article class="card monitor-panel"><div class="panel-header"><div><h2>保护状态</h2><p>账户级 CDT 阈值和自动化动作</p></div><span class="panel-code">{{ activeProtectionCount ? 'ATTENTION' : 'HEALTHY' }}</span></div><div v-if="protectedAccounts.length" class="monitor-list"><div v-for="account in protectedAccounts" :key="account.id" class="monitor-line"><span class="status-dot status-dot-warning"></span><div><strong>{{ account.name }}</strong><small>{{ protectionModeLabel(account.protection_mode) }} · {{ trafficSummary(account) }}</small></div><span class="monitor-state">处理中</span></div></div><div v-else class="monitor-empty"><span class="status-dot status-dot-success"></span>暂无账户触发流量保护</div></article>
+      <article class="card monitor-panel"><div class="panel-header"><div><h2>实例状态</h2><p>所有地域的 ECS 运行概况</p></div><span class="panel-code">{{ runningInstanceCount }}/{{ store.cloud.instances.length }}</span></div><div class="monitor-list"><div v-for="instance in store.cloud.instances.slice(0, 6)" :key="instance.instance_id" class="monitor-line"><span class="status-dot" :class="instance.status === 'Running' ? 'status-dot-success' : 'status-dot-muted'"></span><div><strong>{{ instance.instance_name || instance.instance_id }}</strong><small>{{ instance.region_id }} · {{ instance.instance_type || '规格未知' }}</small></div><span class="monitor-state">{{ instance.status === 'Running' ? '运行中' : '已停机' }}</span></div><div v-if="!store.cloud.instances.length" class="monitor-empty">暂无实例数据</div></div></article>
+    </section>
+
+    <div v-if="activeSection !== 'overview'" class="toolbar-row"><label class="search-box"><span>⌕</span><input v-model.trim="search" class="input" placeholder="搜索账户、实例 ID 或地域" /></label><span class="toolbar-hint">数据每 2 分钟自动同步，也可点击立即同步</span></div>
 
     <section class="summary-grid summary-fixed" aria-label="云资源摘要">
       <article class="card summary-card">
@@ -36,8 +47,8 @@
       </article>
     </section>
 
-    <section class="account-grid layout-collection layout-collection--row">
-      <article v-for="account in store.cloud.accounts" :key="account.id" class="card account-card layout-card" :class="account.protection_triggered ? 'account-protected' : ''">
+    <section v-if="activeSection === 'accounts'" class="account-grid layout-collection layout-collection--row">
+      <article v-for="account in filteredAccounts" :key="account.id" class="card account-card layout-card" :class="account.protection_triggered ? 'account-protected' : ''">
         <div class="account-row-head account-head">
           <div class="min-w-0">
             <h2>{{ account.name }}</h2>
@@ -96,10 +107,10 @@
           <button class="btn-danger" type="button" @click="removeAccount(account)">删除</button>
         </div>
       </article>
-      <div v-if="!store.cloud.accounts.length" class="card empty-panel account-empty layout-card">还没有阿里云账户</div>
+      <div v-if="!filteredAccounts.length" class="card empty-panel account-empty layout-card">没有匹配的云账户</div>
     </section>
 
-    <section class="card instance-panel">
+    <section v-if="activeSection === 'instances'" class="card instance-panel">
       <div class="panel-header">
         <div>
           <h2>CDT 中转候选实例</h2>
@@ -112,7 +123,7 @@
         <div class="instance-head" aria-hidden="true">
           <span>实例</span><span>公网入口</span><span>规格</span><span>带宽</span><span>状态</span><span>操作</span>
         </div>
-        <article v-for="instance in store.cloud.instances" :key="instance.instance_id" class="instance-row">
+        <article v-for="instance in filteredInstances" :key="instance.instance_id" class="instance-row">
           <div class="instance-identity">
             <strong>{{ instance.instance_name || instance.instance_id }}</strong>
             <small>{{ instance.instance_id }}</small>
@@ -197,12 +208,31 @@ const saving = ref(false)
 const formError = ref('')
 const message = ref('')
 const messageType = ref('success')
+const activeSection = ref('overview')
+const search = ref('')
 let messageTimer
 
 const enabledAccountCount = computed(() => store.cloud.accounts.filter(account => account.enabled).length)
 const runningInstanceCount = computed(() => store.cloud.instances.filter(instance => instance.status === 'Running').length)
 const totalTraffic = computed(() => store.cloud.traffic.reduce((sum, snapshot) => sum + snapshot.used_gb, 0))
 const activeProtectionCount = computed(() => store.cloud.accounts.filter(account => account.protection_triggered).length)
+const protectedAccounts = computed(() => store.cloud.accounts.filter(account => account.protection_triggered))
+const normalizedSearch = computed(() => search.value.toLowerCase())
+const filteredAccounts = computed(() => {
+  const term = normalizedSearch.value
+  if (!term) return store.cloud.accounts
+  return store.cloud.accounts.filter(account => [account.name, account.region_id, account.access_key_id, account.user_name].some(value => String(value || '').toLowerCase().includes(term)))
+})
+const filteredInstances = computed(() => {
+  const term = normalizedSearch.value
+  if (!term) return store.cloud.instances
+  return store.cloud.instances.filter(instance => [instance.instance_id, instance.instance_name, instance.region_id, instance.public_ip, instance.instance_type].some(value => String(value || '').toLowerCase().includes(term)))
+})
+const workspaceTabs = computed(() => [
+  { id: 'overview', label: '总览', count: activeProtectionCount.value ? `${activeProtectionCount.value} 个告警` : '正常' },
+  { id: 'accounts', label: '云账户', count: store.cloud.accounts.length },
+  { id: 'instances', label: 'ECS 实例', count: store.cloud.instances.length },
+])
 const blank = () => ({
   name: '', access_key_id: '', access_key_secret: '', region_id: 'cn-hongkong', site_type: 'china',
   instance_id: '', user_id: 0, traffic_limit_gb: 200, threshold_percent: 95, outstanding_threshold: 0,
@@ -343,6 +373,27 @@ onMounted(() => Promise.all([store.fetchCloud(), store.fetchUsers()]))
 .page-title { margin-top: 5px; color: #172033; font-size: clamp(24px, 3vw, 30px); font-weight: 750; letter-spacing: -.035em; }
 .page-subtitle { margin-top: 5px; color: #64748b; font-size: 12px; line-height: 1.6; }
 .header-actions { display: flex; flex: 0 0 auto; gap: 8px; }
+.workspace-tabs { display: flex; gap: 6px; overflow-x: auto; border-bottom: 1px solid #e5eaf1; padding-bottom: 1px; }
+.workspace-tabs button { display: inline-flex; align-items: center; gap: 8px; border-bottom: 2px solid transparent; padding: 9px 12px; color: #64748b; font-size: 11px; font-weight: 650; white-space: nowrap; }
+.workspace-tabs button strong { border-radius: 999px; background: #f1f5f9; padding: 3px 7px; color: #94a3b8; font-size: 9px; }
+.workspace-tab-active { border-bottom-color: #2563eb !important; color: #1d4ed8 !important; }
+.workspace-tab-active strong { background: #dbeafe !important; color: #2563eb !important; }
+.toolbar-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.search-box { display: flex; min-width: min(360px, 100%); align-items: center; gap: 8px; border: 1px solid #dbe3ee; border-radius: 9px; background: #fff; padding: 0 10px; }
+.search-box span { color: #94a3b8; font-size: 17px; }
+.search-box .input { border: 0; padding-left: 0; box-shadow: none; }
+.toolbar-hint { color: #94a3b8; font-size: 10px; }
+.monitor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.monitor-panel { min-width: 0; overflow: hidden; }
+.monitor-list { padding: 5px 18px 10px; }
+.monitor-line { display: flex; align-items: center; gap: 9px; border-bottom: 1px solid #f1f5f9; padding: 11px 0; }
+.monitor-line:last-child { border-bottom: 0; }
+.monitor-line > div { min-width: 0; flex: 1; }
+.monitor-line strong, .monitor-line small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.monitor-line strong { color: #334155; font-size: 11px; }
+.monitor-line small { margin-top: 3px; color: #94a3b8; font-size: 9px; }
+.monitor-state { color: #64748b; font-size: 9px; white-space: nowrap; }
+.monitor-empty { display: flex; align-items: center; gap: 8px; padding: 22px 0; color: #94a3b8; font-size: 10px; }
 .summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
 .summary-card { min-width: 0; border: 1px solid #e5eaf1; border-radius: 13px; background: #fff; padding: 17px 19px; box-shadow: 0 5px 20px rgba(15, 23, 42, .035); }
 .summary-card > span { display: block; color: #64748b; font-size: 10px; font-weight: 700; }
@@ -402,6 +453,7 @@ onMounted(() => Promise.all([store.fetchCloud(), store.fetchUsers()]))
   .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .summary-card:last-child { grid-column: 1 / -1; }
   .account-grid { grid-template-columns: minmax(0, 1fr); }
+  .monitor-grid { grid-template-columns: minmax(0, 1fr); }
   .instance-head { display: none; }
   .instance-table { display: grid; gap: 10px; padding: 11px; background: #f8fafc; }
   .instance-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px 18px; border: 1px solid #e5eaf1; border-radius: 10px; background: #fff; padding: 14px; }
@@ -415,6 +467,8 @@ onMounted(() => Promise.all([store.fetchCloud(), store.fetchUsers()]))
   .cloud-page { gap: 16px; }
   .page-header { align-items: stretch; flex-direction: column; gap: 14px; }
   .header-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+  .toolbar-row { align-items: stretch; flex-direction: column; }
+  .search-box { min-width: 0; }
   .summary-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
   .summary-card:last-child { grid-column: auto; }
   .account-card { padding: 16px; }

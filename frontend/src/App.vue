@@ -127,15 +127,13 @@ const primaryNavItems = computed(() => isAdmin.value ? [
   { path: '/relay-pools', label: '统一入口', recommended: true },
   { path: '/relay-nodes', label: '中转节点' },
   { path: '/landing-nodes', label: '落地节点' },
-  { path: '/cloud-resources', label: '资源概览' },
+  { path: '/cloud-resources', label: '云资源工作区' },
   { path: '/users', label: '用户管理' },
 ] : [{ path: '/usage', label: '我的用量' }])
 
 const advancedNavItems = [
   { path: '/dns', label: 'DNS 托管' },
   { path: '/relay-services', label: '单机转发' },
-  { path: '/accounts', label: '云账户（兼容）' },
-  { path: '/instances', label: '实例工作区（兼容）' },
   { path: '/logs', label: '系统日志' },
   { path: '/settings', label: '系统设置' },
 ]
