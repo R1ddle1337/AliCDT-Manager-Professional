@@ -1,5 +1,6 @@
 const IPV4_PATTERN = /^(?:\d{1,3}\.){3}\d{1,3}$/
-const IPV6_PATTERN = /^[0-9a-fA-F:]+(?:%[0-9a-zA-Z_.-]+)?$/
+const IPV6_GROUP_PATTERN = /^[0-9a-fA-F]{1,4}$/
+const IPV6_SCOPE_PATTERN = /^[0-9a-zA-Z_.-]+$/
 
 function clean(value) {
   return String(value ?? '').trim().replace(/^\[|\]$/g, '')
@@ -13,7 +14,29 @@ export function isIPv4(value) {
 
 export function isIPv6(value) {
   const raw = clean(value)
-  return raw.includes(':') && IPV6_PATTERN.test(raw)
+  if (!raw.includes(':')) return false
+  const scopeParts = raw.split('%')
+  if (scopeParts.length > 2 || (scopeParts.length === 2 && !IPV6_SCOPE_PATTERN.test(scopeParts[1]))) return false
+  const address = scopeParts[0]
+  const compressed = address.includes('::')
+  if (compressed && address.indexOf('::') !== address.lastIndexOf('::')) return false
+  const sides = compressed ? address.split('::') : [address]
+  let groupCount = 0
+  for (const side of sides) {
+    if (!side) continue
+    const groups = side.split(':')
+    for (let index = 0; index < groups.length; index++) {
+      const group = groups[index]
+      if (group.includes('.')) {
+        if (index !== groups.length - 1 || !isIPv4(group)) return false
+        groupCount += 2
+      } else {
+        if (!IPV6_GROUP_PATTERN.test(group)) return false
+        groupCount++
+      }
+    }
+  }
+  return compressed ? groupCount < 8 : groupCount === 8
 }
 
 export function isIPAddress(value) {

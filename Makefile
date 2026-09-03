@@ -3,6 +3,7 @@
 test:
 	go test -race ./...
 	go vet ./...
+	cd frontend && npm test
 	cd frontend && npm run build
 
 .PHONY: audit

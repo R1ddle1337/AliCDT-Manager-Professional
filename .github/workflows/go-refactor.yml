@@ -28,6 +28,7 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npm audit --audit-level=high
+          npm test
           npm run build
       - name: Build controller and agent
         run: |
