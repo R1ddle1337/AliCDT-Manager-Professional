@@ -122,6 +122,12 @@ export const useRelayStore = defineStore('relay-platform', () => {
     return data
   }
 
+  async function requestAgentUpgradeAll() {
+    const { data } = await api.post('/relay-nodes/upgrade-all')
+    await fetchRelayNodes()
+    return data
+  }
+
   async function fetchLandingNodes() {
     const { data } = await api.get('/landing-nodes')
     landingNodes.value = data || []
@@ -382,7 +388,7 @@ export const useRelayStore = defineStore('relay-platform', () => {
     relayNodes, landingNodes, services, pools, events, dnsProviders, dnsRecords, cloud, users, currentUser, loading, updateStatus,
     login, logout, fetchUsers, createUser, updateUser, deleteUser, fetchUserUsageLedger, adjustUserQuota, fetchMyUsage, fetchMyUsageLedger,
     createEntryGroup, updateEntryGroup, deleteEntryGroup,
-    fetchRelayNodes, requestAgentUpgrade, fetchLandingNodes, fetchServices, fetchEvents, fetchCloud, fetchAll,
+    fetchRelayNodes, requestAgentUpgrade, requestAgentUpgradeAll, fetchLandingNodes, fetchServices, fetchEvents, fetchCloud, fetchAll,
     createEnrollmentToken, createLandingNode, updateLandingNode, deleteLandingNode, fetchLandingRelayLinks,
     createService, updateService, deleteService, resetServiceTraffic,
     fetchPools, createPool, updatePool, deletePool, fetchPoolRelayLinks,

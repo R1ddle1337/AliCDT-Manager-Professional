@@ -117,6 +117,15 @@ if git -C "$REPO_DIR" rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1 && [ "
 fi
 target_commit="$(git -C "$REPO_DIR" rev-parse HEAD)"
 
+# Keep the legacy-Agent compatibility bridge installed on the host. New
+# Agents use force_update directly; old Agents are upgraded by this isolated
+# oneshot unit through the host's pre-approved SSH trust chain.
+install -m 0755 "$REPO_DIR/deploy/alicdt-agent-upgrade.sh" /usr/local/sbin/alicdt-agent-upgrade
+install -m 0644 "$REPO_DIR/deploy/alicdt-agent-upgrade.service" /etc/systemd/system/alicdt-agent-upgrade.service
+install -m 0644 "$REPO_DIR/deploy/alicdt-agent-upgrade.path" /etc/systemd/system/alicdt-agent-upgrade.path
+systemctl daemon-reload
+systemctl enable --now alicdt-agent-upgrade.path
+
 write_status "running" "正在构建 Go 控制器和 Agent 镜像" "$request_id" "$target_commit" "$started_at" ""
 if docker image inspect alicdt-controller:production >/dev/null 2>&1; then
   docker tag alicdt-controller:production "$rollback_image"

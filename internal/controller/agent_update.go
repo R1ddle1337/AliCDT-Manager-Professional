@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"time"
@@ -17,4 +18,78 @@ func (s *Store) SetAgentUpdateState(ctx context.Context, id, status, updateErr s
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE relay_nodes SET update_status=?,update_error=?,update_at=? WHERE id=?`, status, strings.TrimSpace(updateErr), time.Now().UTC().Format(time.RFC3339Nano), id)
 	return err
+}
+
+// RequestLegacyAgentUpgrades queues only Agents that do not advertise the
+// capabilities required by the current controller. New Agents can update
+// themselves through force_update; old Agents need the host-side SSH bridge.
+func (s *Store) RequestLegacyAgentUpgrades(ctx context.Context) ([]RelayNode, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM relay_nodes WHERE COALESCE(capabilities_json,'[]') NOT LIKE '%shared_meters_v1%' OR COALESCE(capabilities_json,'[]') NOT LIKE '%quota_leases_v1%'`)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, id := range ids {
+		if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET update_status='requested',update_error='',update_at=?,desired_revision=desired_revision+1 WHERE id=?`, now, id); err != nil {
+			return nil, err
+		}
+		if err := insertEvent(ctx, tx, id, "info", "agent_update", "管理员已请求宿主机兼容通道升级 Agent", time.Now().UTC()); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return []RelayNode{}, nil
+	}
+	all, err := s.ListRelayNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]RelayNode, 0, len(ids))
+	for _, node := range all {
+		for _, id := range ids {
+			if node.ID == id {
+				result = append(result, node)
+				break
+			}
+		}
+	}
+	return result, nil
+}
+
+func (s *Store) MarkAgentUpgradeFailed(ctx context.Context, id, message string) error {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		message = "宿主机 Agent 升级失败"
+	}
+	if len(message) > 500 {
+		message = message[:500]
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE relay_nodes SET update_status='failed',update_error=?,update_at=? WHERE id=?`, message, time.Now().UTC().Format(time.RFC3339Nano), id)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }

@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for AliCDT Relay Agent upgrade requests
+
+[Path]
+PathChanged=/app/alicdt-manager/data/agent-upgrade.request
+Unit=alicdt-agent-upgrade.service
+
+[Install]
+WantedBy=multi-user.target

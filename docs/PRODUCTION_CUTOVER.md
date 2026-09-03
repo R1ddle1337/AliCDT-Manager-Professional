@@ -24,6 +24,12 @@ Compose default is the image's embedded Agent; set
 should be authoritative. Keep the admin and dispatch tokens out of Git and
 restrict the environment file to mode `0600`.
 
+Set `CDT_AGENT_UPGRADE_CONTROLLER_URL` in the same environment file to the
+public controller URL. The update unit installs and enables
+`alicdt-agent-upgrade.path`; this host-side compatibility bridge upgrades
+Agents that predate the `force_update` protocol through the host's strict SSH
+known-hosts policy, then waits for the new checksum and capabilities heartbeat.
+
 ## Updates and rollback
 
 The panel's update action writes a request marker for the host-side systemd

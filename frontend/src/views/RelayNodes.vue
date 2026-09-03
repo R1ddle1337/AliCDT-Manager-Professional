@@ -84,11 +84,13 @@ async function requestUpgradeAll() {
   upgradeBusy.value = true
   upgradeMessage.value = ''
   upgradeMessageType.value = 'success'
-  const results = await Promise.allSettled(legacyNodes.value.map(node => store.requestAgentUpgrade(node.id)))
-  const failed = results.filter(result => result.status === 'rejected').length
-  upgradeMessageType.value = failed ? 'error' : 'success'
-  upgradeMessage.value = failed ? `${results.length - failed} 台已下发，${failed} 台请求失败，请稍后重试。` : `已向 ${results.length} 台 Agent 下发远程升级请求。`
-  upgradeBusy.value = false
+  try {
+    const result = await store.requestAgentUpgradeAll()
+    upgradeMessage.value = result.requested ? `已提交 ${result.requested} 台 Agent 的宿主机兼容升级任务，页面会自动跟踪状态。` : '所有 Agent 已具备最新能力。'
+  } catch (error) {
+    upgradeMessageType.value = 'error'
+    upgradeMessage.value = error.response?.data?.error || '升级任务提交失败，请检查宿主机升级服务'
+  } finally { upgradeBusy.value = false }
 }
 
 function formatTime(value) {

@@ -1,0 +1,12 @@
+[Unit]
+Description=Upgrade legacy AliCDT Relay Agents
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/alicdt-agent-upgrade
+EnvironmentFile=-/root/.config/alicdt-manager/production.env
+TimeoutStartSec=15min
+NoNewPrivileges=false
+

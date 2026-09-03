@@ -28,6 +28,7 @@ func main() {
 	agentReleaseCacheDir := flag.String("agent-release-cache-dir", env("CDT_AGENT_RELEASE_CACHE_DIR", "/app/data/agent-releases"), "Agent release cache directory")
 	updateRequestFile := flag.String("update-request-file", env("CDT_UPDATE_REQUEST_FILE", "/app/data/update.request"), "host update request marker")
 	updateStatusFile := flag.String("update-status-file", env("CDT_UPDATE_STATUS_FILE", "/app/data/update.status.json"), "host update status file")
+	agentUpgradeRequestFile := flag.String("agent-upgrade-request-file", env("CDT_AGENT_UPGRADE_REQUEST_FILE", "/app/data/agent-upgrade.request"), "host Agent upgrade request marker")
 	cloudSyncInterval := flag.Duration("cloud-sync-interval", 2*time.Minute, "Aliyun ECS/CDT synchronization interval")
 	dnsSyncInterval := flag.Duration("dns-sync-interval", time.Minute, "managed DNS synchronization interval")
 	trafficSafetyWindow := flag.Duration("traffic-safety-window", durationEnv("CDT_TRAFFIC_SAFETY_WINDOW", 4*time.Minute), "forecast window reserved before the CDT protection threshold")
@@ -44,7 +45,7 @@ func main() {
 			fatal(err)
 		}
 	}
-	server, err := controller.NewServer(store, controller.ServerOptions{AdminToken: *adminToken, FrontendDir: *frontendDir, AgentInstallerPath: *agentInstaller, AgentVersion: *agentVersion, AgentReleaseSource: *agentReleaseSource, AgentReleaseRepo: *agentReleaseRepo, AgentReleaseChannel: *agentReleaseChannel, AgentReleaseCacheDir: *agentReleaseCacheDir, UpdateRequestFile: *updateRequestFile, UpdateStatusFile: *updateStatusFile, TrafficSafetyWindow: *trafficSafetyWindow, TrafficSafetyWindowSet: true, DispatchToken: *dispatchToken})
+	server, err := controller.NewServer(store, controller.ServerOptions{AdminToken: *adminToken, FrontendDir: *frontendDir, AgentInstallerPath: *agentInstaller, AgentVersion: *agentVersion, AgentReleaseSource: *agentReleaseSource, AgentReleaseRepo: *agentReleaseRepo, AgentReleaseChannel: *agentReleaseChannel, AgentReleaseCacheDir: *agentReleaseCacheDir, UpdateRequestFile: *updateRequestFile, UpdateStatusFile: *updateStatusFile, AgentUpgradeRequestFile: *agentUpgradeRequestFile, TrafficSafetyWindow: *trafficSafetyWindow, TrafficSafetyWindowSet: true, DispatchToken: *dispatchToken})
 	if err != nil {
 		fatal(err)
 	}

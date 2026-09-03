@@ -21,43 +21,45 @@ import (
 )
 
 type ServerOptions struct {
-	AdminToken             string
-	FrontendDir            string
-	AgentInstallerPath     string
-	AgentVersion           string
-	AgentReleaseSource     string
-	AgentReleaseRepo       string
-	AgentReleaseChannel    string
-	AgentReleaseCacheDir   string
-	UpdateRequestFile      string
-	UpdateStatusFile       string
-	TrafficSafetyWindow    time.Duration
-	TrafficSafetyWindowSet bool
-	DispatchToken          string
+	AdminToken              string
+	FrontendDir             string
+	AgentInstallerPath      string
+	AgentVersion            string
+	AgentReleaseSource      string
+	AgentReleaseRepo        string
+	AgentReleaseChannel     string
+	AgentReleaseCacheDir    string
+	UpdateRequestFile       string
+	UpdateStatusFile        string
+	AgentUpgradeRequestFile string
+	TrafficSafetyWindow     time.Duration
+	TrafficSafetyWindowSet  bool
+	DispatchToken           string
 }
 
 type Server struct {
-	store                 *Store
-	adminToken            string
-	frontendDir           string
-	agentInstallerPath    string
-	agentAssetsDir        string
-	updateRequestFile     string
-	updateStatusFile      string
-	agentVersion          string
-	agentReleaseSource    string
-	agentReleaseRepo      string
-	agentReleaseChannel   string
-	agentReleaseCacheDir  string
-	agentReleaseMu        sync.Mutex
-	agentReleaseCheckedAt time.Time
-	agentReleaseVersion   string
-	agentReleaseErr       error
-	cloud                 *CloudService
-	dispatchToken         string
-	loginMu               sync.Mutex
-	loginFailures         map[string]loginFailureState
-	router                chi.Router
+	store                   *Store
+	adminToken              string
+	frontendDir             string
+	agentInstallerPath      string
+	agentAssetsDir          string
+	updateRequestFile       string
+	updateStatusFile        string
+	agentUpgradeRequestFile string
+	agentVersion            string
+	agentReleaseSource      string
+	agentReleaseRepo        string
+	agentReleaseChannel     string
+	agentReleaseCacheDir    string
+	agentReleaseMu          sync.Mutex
+	agentReleaseCheckedAt   time.Time
+	agentReleaseVersion     string
+	agentReleaseErr         error
+	cloud                   *CloudService
+	dispatchToken           string
+	loginMu                 sync.Mutex
+	loginFailures           map[string]loginFailureState
+	router                  chi.Router
 }
 
 const (
@@ -122,7 +124,7 @@ func NewServer(store *Store, opts ServerOptions) (*Server, error) {
 	} else if opts.TrafficSafetyWindow > 0 {
 		cloud.SetTrafficSafetyWindow(opts.TrafficSafetyWindow)
 	}
-	server := &Server{store: store, adminToken: adminToken, dispatchToken: dispatchToken, frontendDir: opts.FrontendDir, agentInstallerPath: opts.AgentInstallerPath, updateRequestFile: opts.UpdateRequestFile, updateStatusFile: opts.UpdateStatusFile, agentVersion: agentVersion, agentReleaseSource: releaseSource, agentReleaseRepo: releaseRepo, agentReleaseChannel: releaseChannel, agentReleaseCacheDir: releaseCacheDir, cloud: cloud, loginFailures: make(map[string]loginFailureState)}
+	server := &Server{store: store, adminToken: adminToken, dispatchToken: dispatchToken, frontendDir: opts.FrontendDir, agentInstallerPath: opts.AgentInstallerPath, updateRequestFile: opts.UpdateRequestFile, updateStatusFile: opts.UpdateStatusFile, agentUpgradeRequestFile: opts.AgentUpgradeRequestFile, agentVersion: agentVersion, agentReleaseSource: releaseSource, agentReleaseRepo: releaseRepo, agentReleaseChannel: releaseChannel, agentReleaseCacheDir: releaseCacheDir, cloud: cloud, loginFailures: make(map[string]loginFailureState)}
 	if releaseSource == "github" {
 		if cachedVersion, err := os.ReadFile(filepath.Join(releaseCacheDir, "version")); err == nil {
 			server.agentReleaseVersion = strings.TrimSpace(string(cachedVersion))
@@ -203,6 +205,7 @@ func (s *Server) routes() chi.Router {
 		router.Delete("/api/v2/entry-groups/{groupID}", s.deleteEntryGroup)
 		router.Post("/api/v2/enrollment-tokens", s.createEnrollmentToken)
 		router.Get("/api/v2/relay-nodes", s.listRelayNodes)
+		router.Post("/api/v2/relay-nodes/upgrade-all", s.requestAllAgentUpgrades)
 		router.Post("/api/v2/relay-nodes/{agentID}/upgrade", s.requestAgentUpgrade)
 		router.Get("/api/v2/landing-nodes", s.listLandingNodes)
 		router.Get("/api/v2/landing-nodes/{landingID}/relay-links", s.landingRelayLinks)
@@ -755,7 +758,45 @@ func (s *Server) requestAgentUpgrade(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
+	if err := s.signalAgentUpgrade(r.Context()); err != nil && agentCapabilitiesMissing(node) {
+		_ = s.store.MarkAgentUpgradeFailed(r.Context(), node.ID, err.Error())
+		writeError(w, http.StatusServiceUnavailable, err)
+		return
+	}
 	writeJSON(w, http.StatusAccepted, node)
+}
+
+func (s *Server) requestAllAgentUpgrades(w http.ResponseWriter, r *http.Request) {
+	nodes, err := s.store.RequestLegacyAgentUpgrades(r.Context())
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if len(nodes) == 0 {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"requested": 0, "nodes": nodes, "message": "所有 Agent 已具备最新能力"})
+		return
+	}
+	if err := s.signalAgentUpgrade(r.Context()); err != nil {
+		for _, node := range nodes {
+			_ = s.store.MarkAgentUpgradeFailed(r.Context(), node.ID, err.Error())
+		}
+		writeError(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]interface{}{"requested": len(nodes), "nodes": nodes, "message": "已提交宿主机兼容升级任务"})
+}
+
+func agentCapabilitiesMissing(node RelayNode) bool {
+	hasMeters, hasLeases := false, false
+	for _, capability := range node.Capabilities {
+		switch capability {
+		case "shared_meters_v1":
+			hasMeters = true
+		case "quota_leases_v1":
+			hasLeases = true
+		}
+	}
+	return !hasMeters || !hasLeases
 }
 
 func (s *Server) agentConfig(w http.ResponseWriter, r *http.Request) {
