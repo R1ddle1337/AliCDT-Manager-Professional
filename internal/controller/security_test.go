@@ -3,6 +3,7 @@ package controller
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -132,6 +133,24 @@ func TestAdminLoginRateLimit(t *testing.T) {
 		requestJSON(t, httpServer.URL+"/api/v2/auth/login", "", map[string]string{"username": "admin", "password": "wrong"}, http.StatusUnauthorized, nil)
 	}
 	requestJSON(t, httpServer.URL+"/api/v2/auth/login", "", map[string]string{"username": "admin", "password": "wrong"}, http.StatusTooManyRequests, nil)
+}
+
+func TestLoginFailureLimiterHasHardCapacity(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	server, err := NewServer(store, ServerOptions{AdminToken: "emergency-token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < loginFailureMaxEntries+100; index++ {
+		server.recordLoginFailure(fmt.Sprintf("2001:db8::%x", index))
+	}
+	if size := len(server.loginFailures); size > loginFailureMaxEntries {
+		t.Fatalf("login limiter grew to %d entries, cap is %d", size, loginFailureMaxEntries)
+	}
 }
 
 func deleteJSON(t *testing.T, url, token string, expected int) {

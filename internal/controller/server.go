@@ -61,6 +61,7 @@ type Server struct {
 	dispatchToken           string
 	loginMu                 sync.Mutex
 	loginFailures           map[string]loginFailureState
+	loginFailuresPrunedAt   time.Time
 	router                  chi.Router
 }
 

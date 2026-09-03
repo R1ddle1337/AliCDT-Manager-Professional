@@ -38,8 +38,10 @@ type AdminSession struct {
 }
 
 const (
-	loginFailureWindow = 15 * time.Minute
-	loginFailureLimit  = 8
+	loginFailureWindow     = 15 * time.Minute
+	loginFailureLimit      = 8
+	loginFailureMaxEntries = 4096
+	loginFailurePruneEvery = time.Minute
 )
 
 var ErrAdminTwoFactorRequired = errors.New("two-factor authentication code is required")
@@ -67,11 +69,7 @@ func (s *Server) loginAllowed(address string) (bool, time.Duration) {
 	s.loginMu.Lock()
 	defer s.loginMu.Unlock()
 	now := time.Now()
-	for staleAddress, staleState := range s.loginFailures {
-		if now.Sub(staleState.WindowStart) >= loginFailureWindow && (staleState.BlockedTill.IsZero() || now.After(staleState.BlockedTill)) {
-			delete(s.loginFailures, staleAddress)
-		}
-	}
+	s.pruneLoginFailuresLocked(now, false)
 	state, ok := s.loginFailures[address]
 	if !ok {
 		return true, 0
@@ -90,6 +88,12 @@ func (s *Server) recordLoginFailure(address string) {
 	s.loginMu.Lock()
 	defer s.loginMu.Unlock()
 	now := time.Now()
+	if _, exists := s.loginFailures[address]; !exists && len(s.loginFailures) >= loginFailureMaxEntries {
+		s.pruneLoginFailuresLocked(now, true)
+		if len(s.loginFailures) >= loginFailureMaxEntries {
+			return
+		}
+	}
 	state := s.loginFailures[address]
 	if state.WindowStart.IsZero() || now.Sub(state.WindowStart) >= loginFailureWindow {
 		state = loginFailureState{WindowStart: now}
@@ -517,16 +521,23 @@ func (s *Server) disableAdminTwoFA(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": "双因素认证已关闭，全部会话已撤销，请重新登录"})
 }
 
-// Keep the login limiter independent of request handling locks. A map is small
-// and bounded by naturally expiring entries; the periodic cleanup avoids stale
-// addresses growing forever on public installations.
+// Keep the login limiter independent of request handling locks. Cleanup is
+// rate-limited on the request path and the hard entry cap prevents a flood of
+// unique source addresses from causing unbounded memory use.
 func (s *Server) cleanupLoginFailures() {
 	s.loginMu.Lock()
 	defer s.loginMu.Unlock()
-	now := time.Now()
+	s.pruneLoginFailuresLocked(time.Now(), true)
+}
+
+func (s *Server) pruneLoginFailuresLocked(now time.Time, force bool) {
+	if !force && !s.loginFailuresPrunedAt.IsZero() && now.Sub(s.loginFailuresPrunedAt) < loginFailurePruneEvery {
+		return
+	}
 	for address, state := range s.loginFailures {
 		if now.Sub(state.WindowStart) >= loginFailureWindow && (state.BlockedTill.IsZero() || now.After(state.BlockedTill)) {
 			delete(s.loginFailures, address)
 		}
 	}
+	s.loginFailuresPrunedAt = now
 }
