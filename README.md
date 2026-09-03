@@ -85,6 +85,8 @@ AliyunBSSFullAccess
 
 ## Go 控制器部署
 
+本地构建需要 Go 1.23 或更高版本与 Node.js 24；生产镜像固定使用带安全修复的 Go 1.25.13。提交前运行 `make test`，依赖安全审计运行 `make audit`。
+
 仓库现在只保留 Go 控制器、Relay Agent 和 Dispatcher 运行栈。旧的
 FastAPI/Python 镜像、根目录旧 Compose 文件和旧安装脚本已移除。
 

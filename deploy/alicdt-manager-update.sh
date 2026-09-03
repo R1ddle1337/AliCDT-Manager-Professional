@@ -147,6 +147,6 @@ for suffix in -wal -shm; do
 done
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --force-recreate --no-build --wait --wait-timeout 120
 controller_stopped=0
-curl -fsS http://127.0.0.1:18000/api/v2/auth/initialized >/dev/null
+curl -fsS http://127.0.0.1:18000/healthz >/dev/null
 finished_at="$(utc_now)"
 write_status "success" "更新完成，当前版本已切换" "$request_id" "$target_commit" "$started_at" "$finished_at"

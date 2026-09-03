@@ -2,7 +2,13 @@
 
 test:
 	go test -race ./...
+	go vet ./...
 	cd frontend && npm run build
+
+.PHONY: audit
+audit:
+	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+	cd frontend && npm audit --audit-level=high
 
 build: controller agent dispatcher frontend
 
