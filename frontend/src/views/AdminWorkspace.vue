@@ -76,7 +76,7 @@
           <div class="panel-heading"><div><h2>常用操作</h2><p>把复杂配置留到需要时再展开</p></div><span class="panel-code">QUICK</span></div>
           <div class="quick-grid">
             <button class="quick-action" @click="go('/relay-services')"><span class="quick-mark">+</span><span><strong>创建转发入口</strong><small>配置 TCP / UDP 和目标</small></span><b>→</b></button>
-            <button class="quick-action" @click="go('/relay-services')"><span class="quick-mark quick-mark-mc">MC</span><span><strong>Minecraft 快速转发</strong><small>填写 IP + 端口即可创建</small></span><b>→</b></button>
+            <button class="quick-action" @click="go('/relay-services?quick=minecraft')"><span class="quick-mark quick-mark-mc">MC</span><span><strong>Minecraft 快速转发</strong><small>填写 IP + 端口即可创建</small></span><b>→</b></button>
             <button class="quick-action" @click="go('/relay-nodes')"><span class="quick-mark">AG</span><span><strong>添加 Relay Agent</strong><small>生成一次性安装注册码</small></span><b>→</b></button>
             <button class="quick-action" @click="go('/users')"><span class="quick-mark">US</span><span><strong>管理用户与额度</strong><small>端口组和流量流水</small></span><b>→</b></button>
           </div>

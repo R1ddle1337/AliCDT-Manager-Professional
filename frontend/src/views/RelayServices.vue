@@ -83,12 +83,14 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { useRelayStore } from '../stores/relay'
 import Modal from '../components/Modal.vue'
 import MaskedIP from '../components/MaskedIP.vue'
 import { maskIP } from '../utils/ip'
 
 const store = useRelayStore()
+const route = useRoute()
 const showForm = ref(false)
 const showMinecraft = ref(false)
 const editTarget = ref(null)
@@ -147,7 +149,11 @@ function maskedIP(value, fallback = '未设置 IP') { return maskIP(value) || fa
 function modeLabel(mode) { return { failover: '主备', ip_hash: 'IP Hash', weighted: '加权', round_robin: '轮询' }[mode] || mode }
 function billingModeLabel(mode) { return { download: '仅下载', upload: '仅上传', both: '双向' }[mode] || '双向' }
 function showMessage(text, type = 'success') { message.value = text; messageType.value = type; window.setTimeout(() => { message.value = '' }, 5000) }
-onMounted(async () => { await Promise.all([store.fetchAll(), store.fetchUsers()]); ensureOptions() })
+onMounted(async () => {
+  await Promise.all([store.fetchAll(), store.fetchUsers()])
+  ensureOptions()
+  if (route.query.quick === 'minecraft') openMinecraft()
+})
 </script>
 
 <style scoped>
