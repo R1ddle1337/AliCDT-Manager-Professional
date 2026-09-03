@@ -58,6 +58,9 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useRelayStore } from '../stores/relay'
 import axios from 'axios'
+import { apiErrorMessage, saveSession } from '../utils/session'
+
+const publicApi = axios.create({ baseURL: '/api/v2', timeout: 20000 })
 
 const router = useRouter()
 const store = useRelayStore()
@@ -69,7 +72,7 @@ const form = ref({ username: '', password: '', confirm: '', two_factor_code: '' 
 
 onMounted(async () => {
   try {
-    const { data } = await axios.get('/api/v2/auth/initialized')
+    const { data } = await publicApi.get('/auth/initialized')
     isInit.value = !data.initialized
   } catch (e) {
     error.value = '无法连接服务，请稍后重试'
@@ -99,11 +102,8 @@ async function submit() {
   loading.value = true
   try {
     if (isInit.value) {
-      const { data } = await axios.post('/api/v2/auth/init', { username: form.value.username, password: form.value.password })
-      localStorage.setItem('token', data.token)
-      localStorage.setItem('role', 'admin')
-      localStorage.setItem('username', data.username || form.value.username)
-      localStorage.setItem('displayName', data.display_name || data.username || form.value.username)
+      const { data } = await publicApi.post('/auth/init', { username: form.value.username, password: form.value.password })
+      saveSession(data, form.value.username)
       router.push('/')
     } else {
       const data = await store.login(form.value.username, form.value.password, form.value.two_factor_code)
@@ -111,7 +111,7 @@ async function submit() {
     }
   } catch (e) {
     if (e.response?.data?.code === 'two_factor_required') requiresTwoFactor.value = true
-    error.value = e.response?.data?.error || e.response?.data?.detail || '操作失败，请稍后重试'
+    error.value = apiErrorMessage(e, '操作失败，请稍后重试')
   } finally {
     loading.value = false
   }

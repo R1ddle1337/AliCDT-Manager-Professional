@@ -6,6 +6,8 @@ import App from './App.vue'
 import './style.css'
 import { clearSession } from './utils/session'
 
+const identityApi = axios.create({ timeout: 20000 })
+
 const Login = () => import('./views/Login.vue')
 const AdminWorkspace = () => import('./views/AdminWorkspace.vue')
 const RelayNodes = () => import('./views/RelayNodes.vue')
@@ -57,7 +59,7 @@ router.beforeEach(async (to, from, next) => {
   let role = localStorage.getItem('role')
   if (token && !role) {
     try {
-      const { data } = await axios.get('/api/v2/auth/me', { headers: { Authorization: `Bearer ${token}` } })
+      const { data } = await identityApi.get('/api/v2/auth/me', { headers: { Authorization: `Bearer ${token}` } })
       role = data.role
       localStorage.setItem('role', role)
       localStorage.setItem('username', data.username || '')

@@ -26,19 +26,17 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useStore } from '../stores'
-import axios from 'axios'
+import { apiErrorMessage } from '../utils/session'
 
 const store = useStore(); const saving = ref(false); const testing = ref(false); const reportTesting = ref(false); const msg = ref({ type: 'success', text: '' })
 const form = ref({ tg_bot_token: '', tg_chat_id: '', tg_daily_report: '0' }); const versionInfo = ref({ has_update: false, latest: '', url: '' })
 onMounted(async () => { await store.fetchSettings(); form.value.tg_bot_token = store.settings.tg_bot_token || ''; form.value.tg_chat_id = store.settings.tg_chat_id || ''; form.value.tg_daily_report = store.settings.tg_daily_report || '0'; checkVersion() })
-function authHeader() { return { Authorization: `Bearer ${localStorage.getItem('token')}` } }
 function showMessage(type, text, timeout = 4000) { msg.value = { type, text }; window.setTimeout(() => { msg.value = { type: 'success', text: '' } }, timeout) }
-async function checkVersion() { try { const { data } = await axios.get('/api/version/check', { headers: authHeader() }); versionInfo.value = data } catch (e) {} }
+async function checkVersion() { try { versionInfo.value = await store.fetchVersionInfo() } catch (_) { /* version discovery is optional */ } }
 function settingItems() { return Object.entries(form.value).map(([key, value]) => ({ key, value })) }
-function apiError(e) { return e.response?.data?.error || e.response?.data?.detail || e.message }
-async function save() { saving.value = true; try { await axios.post('/api/settings', settingItems(), { headers: authHeader() }); await store.fetchSettings(); showMessage('success', '设置已保存') } catch (e) { showMessage('error', '保存失败：' + apiError(e)) } finally { saving.value = false } }
-async function testTg() { testing.value = true; try { await axios.post('/api/settings', settingItems(), { headers: authHeader() }); await axios.post('/api/settings/test-tg', {}, { headers: authHeader() }); showMessage('success', '测试消息已发送，请检查 Telegram') } catch (e) { showMessage('error', '发送失败：' + apiError(e)) } finally { testing.value = false } }
-async function testDailyReport() { reportTesting.value = true; try { await axios.post('/api/settings/test-daily-report', {}, { headers: authHeader() }); showMessage('success', '测试汇报已发送，请检查 Telegram') } catch (e) { showMessage('error', '发送失败：' + apiError(e)) } finally { reportTesting.value = false } }
+async function save() { saving.value = true; try { await store.saveSettings(settingItems()); showMessage('success', '设置已保存') } catch (e) { showMessage('error', '保存失败：' + apiErrorMessage(e)) } finally { saving.value = false } }
+async function testTg() { testing.value = true; try { await store.saveSettings(settingItems()); await store.testTelegram(); showMessage('success', '测试消息已发送，请检查 Telegram') } catch (e) { showMessage('error', '发送失败：' + apiErrorMessage(e)) } finally { testing.value = false } }
+async function testDailyReport() { reportTesting.value = true; try { await store.testDailyReport(); showMessage('success', '测试汇报已发送，请检查 Telegram') } catch (e) { showMessage('error', '发送失败：' + apiErrorMessage(e)) } finally { reportTesting.value = false } }
 </script>
 
 <style scoped>

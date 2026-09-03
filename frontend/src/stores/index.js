@@ -117,6 +117,21 @@ export const useStore = defineStore('main', () => {
     await fetchSettings()
   }
 
+  async function testTelegram() {
+    const { data } = await api.post('/settings/test-tg', {})
+    return data
+  }
+
+  async function testDailyReport() {
+    const { data } = await api.post('/settings/test-daily-report', {})
+    return data
+  }
+
+  async function fetchVersionInfo() {
+    const { data } = await api.get('/version/check')
+    return data
+  }
+
   async function clearLogs(category = null) {
     await api.delete('/logs', { params: category ? { category } : {} })
     await fetchLogs()
@@ -131,7 +146,7 @@ export const useStore = defineStore('main', () => {
     instances, accounts, logs, settings, loading,
     login, fetchInstances, fetchAccounts, fetchLogs, fetchSettings,
     syncAll, syncSingleInstance, controlInstance, releaseInstance, getBilling,
-    createAccount, updateAccount, deleteAccount, saveSettings, clearLogs,
+    createAccount, updateAccount, deleteAccount, saveSettings, testTelegram, testDailyReport, fetchVersionInfo, clearLogs,
     renameInstance,
   }
 })
