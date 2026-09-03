@@ -250,6 +250,12 @@ export const useRelayStore = defineStore('relay-platform', () => {
     await Promise.all([fetchServices(), fetchRelayNodes()])
   }
 
+  async function resetServiceTraffic(id) {
+    const { data } = await api.post(`/relay-services/${id}/traffic/reset`)
+    await Promise.all([fetchServices(), fetchRelayNodes(), fetchUsers()])
+    return data
+  }
+
   async function syncCloud() {
     const { data } = await api.post('/cloud/sync')
     await fetchCloud()
@@ -300,7 +306,7 @@ export const useRelayStore = defineStore('relay-platform', () => {
     login, logout, fetchUsers, createUser, updateUser, deleteUser, fetchMyUsage,
     fetchRelayNodes, fetchLandingNodes, fetchServices, fetchEvents, fetchCloud, fetchAll,
     createEnrollmentToken, createLandingNode, updateLandingNode, deleteLandingNode, fetchLandingRelayLinks,
-    createService, updateService, deleteService,
+    createService, updateService, deleteService, resetServiceTraffic,
     fetchPools, createPool, updatePool, deletePool, fetchPoolRelayLinks,
     fetchDNSProviders, fetchDNSRecords, createDNSProvider, updateDNSProvider, deleteDNSProvider,
     testDNSProvider, syncDNSProvider, syncAllDNS, createDNSRecord, updateDNSRecord, deleteDNSRecord,

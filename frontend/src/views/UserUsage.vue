@@ -12,7 +12,7 @@
     <div v-if="error" class="notice notice-error">{{ error }}</div>
     <template v-if="user">
       <section class="usage-summary">
-        <article class="card highlight-card"><span>本月已用</span><strong>{{ user.traffic_known ? formatGB(user.traffic_used_gb) : '待同步' }}</strong><small>{{ user.traffic_known ? '来自账户级 CDT 快照' : '等待管理员同步全部云账户' }}</small></article>
+        <article class="card highlight-card"><span>本月已用</span><strong>{{ user.traffic_known ? formatGB(user.traffic_used_gb) : '待同步' }}</strong><small>{{ usageSourceLabel }}</small></article>
         <article class="card summary-card"><span>我的额度</span><strong>{{ formatGB(user.traffic_limit_gb) }}</strong><small>按控制台用户设置</small></article>
         <article class="card summary-card"><span>剩余额度</span><strong>{{ formatGB(user.traffic_remaining_gb) }}</strong><small>{{ formatPercent(user.traffic_percent) }} 已使用</small></article>
       </section>
@@ -22,6 +22,7 @@
         <div class="panel-body">
           <div class="large-track"><div class="traffic-fill" :class="user.traffic_percent >= 100 ? 'traffic-danger' : ''" :style="{ width: Math.min(100, user.traffic_percent || 0) + '%' }"></div></div>
           <div class="traffic-meta"><span>{{ formatPercent(user.traffic_percent) }} 已使用</span><span>{{ formatGB(user.traffic_remaining_gb) }} 剩余</span></div>
+          <div v-if="user.traffic_source === 'agent'" class="direction-grid"><div><span>上传</span><strong>{{ formatBytes(user.bytes_up) }}</strong></div><div><span>下载</span><strong>{{ formatBytes(user.bytes_down) }}</strong></div><div><span>计费口径</span><strong>{{ billingModeLabel(user.relay_service?.billing_mode) }}</strong></div></div>
           <div v-if="user.traffic_percent >= 100" class="notice notice-error mt-4">已达到用户流量额度，请联系管理员调整额度或账户分配。</div>
         </div>
       </section>
@@ -41,7 +42,7 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRelayStore } from '../stores/relay'
 import { formatDateTime } from '../utils/time'
 
@@ -49,9 +50,12 @@ const store = useRelayStore()
 const user = ref(null)
 const loading = ref(false)
 const error = ref('')
+const usageSourceLabel = computed(() => user.value?.traffic_source === 'agent' ? '由 Relay Agent 按所选方向精确计量' : (user.value?.traffic_known ? '来自账户级 CDT 快照' : '等待管理员同步全部云账户'))
 
 function formatGB(value) { return `${Number(value || 0).toFixed(2)} GB` }
 function formatPercent(value) { return `${Number(value || 0).toFixed(1)}%` }
+function formatBytes(value) { return `${(Number(value || 0) / 1073741824).toFixed(3)} GB` }
+function billingModeLabel(value) { return { download: '仅下载', upload: '仅上传', both: '双向合计' }[value] || '双向合计' }
 function formatDate(value) { return formatDateTime(value) }
 
 async function refresh() {
@@ -87,6 +91,11 @@ onMounted(refresh)
 .traffic-fill { height: 100%; border-radius: inherit; background: #2563eb; transition: width .25s ease; }
 .traffic-danger { background: #dc2626; }
 .traffic-meta { display: flex; justify-content: space-between; margin-top: 8px; color: #94a3b8; font-size: 10px; }
+.direction-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 16px; }
+.direction-grid div { border-radius: 9px; background: #f8fafc; padding: 10px; }
+.direction-grid span, .direction-grid strong { display: block; }
+.direction-grid span { color: #94a3b8; font-size: 9px; }
+.direction-grid strong { margin-top: 4px; color: #475569; font-size: 11px; }
 .account-table { padding: 4px 20px 10px; }
 .account-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid #f1f5f9; padding: 13px 0; color: #475569; font-size: 11px; }
 .account-row:last-child { border-bottom: 0; }
@@ -94,5 +103,5 @@ onMounted(refresh)
 .account-row strong { color: #334155; font-size: 12px; }
 .account-row small { margin-top: 4px; color: #94a3b8; font-size: 9px; }
 .empty-panel { padding: 48px 20px; color: #94a3b8; font-size: 12px; text-align: center; }
-@media (max-width: 700px) { .page-header { align-items: stretch; flex-direction: column; } .usage-summary { grid-template-columns: 1fr; gap: 10px; } }
+@media (max-width: 700px) { .page-header { align-items: stretch; flex-direction: column; } .usage-summary, .direction-grid { grid-template-columns: 1fr; gap: 10px; } }
 </style>

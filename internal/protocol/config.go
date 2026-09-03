@@ -2,6 +2,16 @@ package protocol
 
 import "time"
 
+const (
+	BillingModeUpload   = "upload"
+	BillingModeDownload = "download"
+	BillingModeBoth     = "both"
+	// Legacy aliases are accepted by Agent/controller normalization so cached
+	// configs written by an early preview continue to work.
+	BillingModeIngress = "ingress"
+	BillingModeEgress  = "egress"
+)
+
 // AgentConfig is the complete desired state for one CDT relay node. Configs
 // are versioned and applied atomically by the agent.
 type AgentConfig struct {
@@ -10,12 +20,20 @@ type AgentConfig struct {
 }
 
 type ServiceConfig struct {
-	ID                    string         `json:"id"`
-	Name                  string         `json:"name"`
-	Listen                string         `json:"listen"`
-	Network               string         `json:"network"` // tcp, udp, tcp+udp
-	Mode                  string         `json:"mode"`    // failover, round_robin, ip_hash, weighted
-	Enabled               bool           `json:"enabled"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Listen  string `json:"listen"`
+	Network string `json:"network"` // tcp, udp, tcp+udp
+	Mode    string `json:"mode"`    // failover, round_robin, ip_hash, weighted
+	Enabled bool   `json:"enabled"`
+	// BillingMode controls which side of the transparent relay is charged:
+	// upload is client-to-target, download is target-to-client, and both counts
+	// both directions. It defaults to both to match bytes leaving a relay on
+	// either side of a transparent proxy.
+	BillingMode           string         `json:"billing_mode,omitempty"`
+	TrafficLimitGB        float64        `json:"traffic_limit_gb,omitempty"`
+	BillingEpoch          int64          `json:"billing_epoch,omitempty"`
+	AccessBlocked         bool           `json:"access_blocked,omitempty"`
 	DialTimeoutMillis     int            `json:"dial_timeout_ms"`
 	UDPIdleTimeoutSeconds int            `json:"udp_idle_timeout_seconds"`
 	Health                HealthConfig   `json:"health"`
@@ -83,6 +101,12 @@ type ServiceStatus struct {
 	TotalConnections  uint64         `json:"total_connections"`
 	BytesUp           uint64         `json:"bytes_up"`
 	BytesDown         uint64         `json:"bytes_down"`
+	BilledBytes       uint64         `json:"billed_bytes"`
+	BillingMode       string         `json:"billing_mode"`
+	TrafficLimitGB    float64        `json:"traffic_limit_gb,omitempty"`
+	BillingEpoch      int64          `json:"billing_epoch,omitempty"`
+	QuotaExceeded     bool           `json:"quota_exceeded"`
+	AccessBlocked     bool           `json:"access_blocked"`
 	Targets           []TargetStatus `json:"targets"`
 	LastError         string         `json:"last_error,omitempty"`
 }

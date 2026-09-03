@@ -67,12 +67,18 @@ type RelayService struct {
 	ID                    string          `json:"id"`
 	RelayNodeID           string          `json:"relay_node_id"`
 	PoolID                string          `json:"pool_id,omitempty"`
+	UserID                *int64          `json:"user_id,omitempty"`
+	UserName              string          `json:"user_name,omitempty"`
+	UserEnabled           bool            `json:"user_enabled"`
 	Name                  string          `json:"name"`
 	ListenHost            string          `json:"listen_host"`
 	ListenPort            int             `json:"listen_port"`
 	Network               string          `json:"network"`
 	Mode                  string          `json:"mode"`
 	Enabled               bool            `json:"enabled"`
+	BillingMode           string          `json:"billing_mode"`
+	TrafficLimitGB        float64         `json:"traffic_limit_gb"`
+	BillingEpoch          int64           `json:"billing_epoch"`
 	DialTimeoutMillis     int             `json:"dial_timeout_ms"`
 	UDPIdleTimeoutSeconds int             `json:"udp_idle_timeout_seconds"`
 	Health                HealthSettings  `json:"health"`
@@ -245,12 +251,15 @@ type CreateLandingNodeRequest struct {
 
 type CreateRelayServiceRequest struct {
 	RelayNodeID           string                `json:"relay_node_id"`
+	UserID                *int64                `json:"user_id,omitempty"`
 	Name                  string                `json:"name"`
 	ListenHost            string                `json:"listen_host"`
 	ListenPort            int                   `json:"listen_port"`
 	Network               string                `json:"network"`
 	Mode                  string                `json:"mode"`
 	Enabled               *bool                 `json:"enabled,omitempty"`
+	BillingMode           string                `json:"billing_mode"`
+	TrafficLimitGB        float64               `json:"traffic_limit_gb"`
 	DialTimeoutMillis     int                   `json:"dial_timeout_ms"`
 	UDPIdleTimeoutSeconds int                   `json:"udp_idle_timeout_seconds"`
 	Health                HealthSettings        `json:"health"`
@@ -596,12 +605,16 @@ func (s *Store) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS relay_services (
 			id TEXT PRIMARY KEY,
 			relay_node_id TEXT NOT NULL REFERENCES relay_nodes(id) ON DELETE CASCADE,
+			user_id INTEGER REFERENCES console_users(id) ON DELETE SET NULL,
 			name TEXT NOT NULL,
 			listen_host TEXT NOT NULL DEFAULT '0.0.0.0',
 			listen_port INTEGER NOT NULL,
 			network TEXT NOT NULL,
 			mode TEXT NOT NULL,
 			enabled INTEGER NOT NULL DEFAULT 1,
+			billing_mode TEXT NOT NULL DEFAULT 'both',
+			traffic_limit_gb REAL NOT NULL DEFAULT 0,
+			billing_epoch INTEGER NOT NULL DEFAULT 1,
 			dial_timeout_ms INTEGER NOT NULL DEFAULT 2500,
 			udp_idle_timeout_seconds INTEGER NOT NULL DEFAULT 60,
 			health_enabled INTEGER NOT NULL DEFAULT 1,
@@ -743,6 +756,19 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	if err := s.ensureColumn(ctx, "relay_services", "pool_id", "TEXT"); err != nil {
+		return err
+	}
+	for _, column := range []struct{ name, definition string }{
+		{name: "user_id", definition: "INTEGER REFERENCES console_users(id) ON DELETE SET NULL"},
+		{name: "billing_mode", definition: "TEXT NOT NULL DEFAULT 'both'"},
+		{name: "traffic_limit_gb", definition: "REAL NOT NULL DEFAULT 0"},
+		{name: "billing_epoch", definition: "INTEGER NOT NULL DEFAULT 1"},
+	} {
+		if err := s.ensureColumn(ctx, "relay_services", column.name, column.definition); err != nil {
+			return err
+		}
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_relay_services_user ON relay_services(user_id) WHERE user_id IS NOT NULL`); err != nil {
 		return err
 	}
 	if err := s.ensureColumn(ctx, "relay_pools", "auto_drain", "INTEGER NOT NULL DEFAULT 1"); err != nil {
@@ -1191,7 +1217,20 @@ func (s *Store) UpdateHeartbeat(ctx context.Context, id string, heartbeat protoc
 		}
 	}
 	oldHealth := flattenTargetHealth(oldJSON)
+	oldQuotas := flattenServiceQuotas(oldJSON)
 	for _, service := range heartbeat.Services {
+		if service.BillingMode != "" {
+			previous, existed := oldQuotas[service.ID]
+			if service.QuotaExceeded && (!existed || !previous) {
+				if err := insertEvent(ctx, tx, id, "warning", "traffic_quota", fmt.Sprintf("Service %s reached its Agent traffic quota", service.Name), now); err != nil {
+					return err
+				}
+			} else if existed && previous && !service.QuotaExceeded {
+				if err := insertEvent(ctx, tx, id, "info", "traffic_quota", fmt.Sprintf("Service %s traffic quota was reset or increased", service.Name), now); err != nil {
+					return err
+				}
+			}
+		}
 		for _, target := range service.Targets {
 			key := service.ID + "/" + target.ID
 			previous, existed := oldHealth[key]
@@ -1207,6 +1246,18 @@ func (s *Store) UpdateHeartbeat(ctx context.Context, id string, heartbeat protoc
 		}
 	}
 	return tx.Commit()
+}
+
+func flattenServiceQuotas(raw string) map[string]bool {
+	var services []protocol.ServiceStatus
+	_ = json.Unmarshal([]byte(raw), &services)
+	result := make(map[string]bool, len(services))
+	for _, service := range services {
+		if service.ID != "" && service.BillingMode != "" {
+			result[service.ID] = service.QuotaExceeded
+		}
+	}
+	return result
 }
 
 func (s *Store) ListEvents(ctx context.Context, limit int) ([]RelayEvent, error) {
@@ -1274,6 +1325,10 @@ func (s *Store) AgentConfig(ctx context.Context, id string) (protocol.AgentConfi
 			Network:               service.Network,
 			Mode:                  service.Mode,
 			Enabled:               service.Enabled && protectionSuspended == 0,
+			BillingMode:           service.BillingMode,
+			TrafficLimitGB:        service.TrafficLimitGB,
+			BillingEpoch:          service.BillingEpoch,
+			AccessBlocked:         service.UserID != nil && !service.UserEnabled,
 			DialTimeoutMillis:     service.DialTimeoutMillis,
 			UDPIdleTimeoutSeconds: service.UDPIdleTimeoutSeconds,
 			Health: protocol.HealthConfig{
@@ -1622,6 +1677,14 @@ func (s *Store) CreateRelayService(ctx context.Context, request CreateRelayServi
 	}
 	request.Network = strings.ToLower(request.Network)
 	request.Mode = strings.ToLower(request.Mode)
+	var err error
+	request.BillingMode, err = normalizeBillingMode(request.BillingMode)
+	if err != nil {
+		return RelayService{}, err
+	}
+	if request.TrafficLimitGB < 0 {
+		return RelayService{}, errors.New("traffic limit must not be negative")
+	}
 	if !oneOf(request.Network, "tcp", "udp", "tcp+udp") || !oneOf(request.Mode, "failover", "round_robin", "ip_hash", "weighted") {
 		return RelayService{}, errors.New("invalid network or mode")
 	}
@@ -1649,8 +1712,15 @@ func (s *Store) CreateRelayService(ctx context.Context, request CreateRelayServi
 	if err := validateListenConflictTx(ctx, tx, request.RelayNodeID, request.ListenHost, request.ListenPort, request.Network, ""); err != nil {
 		return RelayService{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO relay_services(id,relay_node_id,name,listen_host,listen_port,network,mode,enabled,dial_timeout_ms,udp_idle_timeout_seconds,health_enabled,health_interval_seconds,health_timeout_ms,failure_threshold,success_threshold,recovery_cooldown_seconds,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		serviceID, request.RelayNodeID, strings.TrimSpace(request.Name), request.ListenHost, request.ListenPort, request.Network, request.Mode, boolInt(enabled), request.DialTimeoutMillis, request.UDPIdleTimeoutSeconds,
+	if err := validateRelayServiceUserTx(ctx, tx, request.UserID, ""); err != nil {
+		return RelayService{}, err
+	}
+	request.TrafficLimitGB, err = assignedRelayServiceLimitTx(ctx, tx, request.UserID, request.TrafficLimitGB)
+	if err != nil {
+		return RelayService{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO relay_services(id,relay_node_id,user_id,name,listen_host,listen_port,network,mode,enabled,billing_mode,traffic_limit_gb,billing_epoch,dial_timeout_ms,udp_idle_timeout_seconds,health_enabled,health_interval_seconds,health_timeout_ms,failure_threshold,success_threshold,recovery_cooldown_seconds,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		serviceID, request.RelayNodeID, nullablePositiveID(request.UserID), strings.TrimSpace(request.Name), request.ListenHost, request.ListenPort, request.Network, request.Mode, boolInt(enabled), request.BillingMode, request.TrafficLimitGB, billingEpochNow(), request.DialTimeoutMillis, request.UDPIdleTimeoutSeconds,
 		boolInt(request.Health.Enabled), request.Health.IntervalSeconds, request.Health.TimeoutMillis, request.Health.FailureThreshold, request.Health.SuccessThreshold, request.Health.RecoveryCooldownSecs, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return RelayService{}, err
 	}
@@ -1727,8 +1797,11 @@ func networksOverlap(left, right string) bool {
 }
 
 func (s *Store) UpdateRelayService(ctx context.Context, id string, request CreateRelayServiceRequest) (RelayService, error) {
-	var existingNodeID, poolID string
-	if err := s.db.QueryRowContext(ctx, `SELECT relay_node_id,COALESCE(pool_id,'') FROM relay_services WHERE id=?`, id).Scan(&existingNodeID, &poolID); err != nil {
+	var err error
+	var existingNodeID, poolID, existingBillingMode string
+	var existingBillingEpoch int64
+	var existingUserID sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, `SELECT relay_node_id,COALESCE(pool_id,''),user_id,COALESCE(billing_mode,'both'),COALESCE(billing_epoch,1) FROM relay_services WHERE id=?`, id).Scan(&existingNodeID, &poolID, &existingUserID, &existingBillingMode, &existingBillingEpoch); err != nil {
 		return RelayService{}, err
 	}
 	if poolID != "" {
@@ -1748,6 +1821,20 @@ func (s *Store) UpdateRelayService(ctx context.Context, id string, request Creat
 	}
 	request.Network = strings.ToLower(request.Network)
 	request.Mode = strings.ToLower(request.Mode)
+	if request.UserID == nil && existingUserID.Valid {
+		value := existingUserID.Int64
+		request.UserID = &value
+	}
+	if strings.TrimSpace(request.BillingMode) == "" {
+		request.BillingMode = existingBillingMode
+	}
+	request.BillingMode, err = normalizeBillingMode(request.BillingMode)
+	if err != nil {
+		return RelayService{}, err
+	}
+	if request.TrafficLimitGB < 0 {
+		return RelayService{}, errors.New("traffic limit must not be negative")
+	}
 	if !oneOf(request.Network, "tcp", "udp", "tcp+udp") || !oneOf(request.Mode, "failover", "round_robin", "ip_hash", "weighted") {
 		return RelayService{}, errors.New("invalid network or mode")
 	}
@@ -1774,8 +1861,20 @@ func (s *Store) UpdateRelayService(ctx context.Context, id string, request Creat
 	if err := validateListenConflictTx(ctx, tx, existingNodeID, request.ListenHost, request.ListenPort, request.Network, id); err != nil {
 		return RelayService{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE relay_services SET name=?,listen_host=?,listen_port=?,network=?,mode=?,enabled=?,dial_timeout_ms=?,udp_idle_timeout_seconds=?,health_enabled=?,health_interval_seconds=?,health_timeout_ms=?,failure_threshold=?,success_threshold=?,recovery_cooldown_seconds=?,updated_at=? WHERE id=?`,
-		strings.TrimSpace(request.Name), request.ListenHost, request.ListenPort, request.Network, request.Mode, boolInt(enabled), request.DialTimeoutMillis, request.UDPIdleTimeoutSeconds,
+	if err := validateRelayServiceUserTx(ctx, tx, request.UserID, id); err != nil {
+		return RelayService{}, err
+	}
+	request.TrafficLimitGB, err = assignedRelayServiceLimitTx(ctx, tx, request.UserID, request.TrafficLimitGB)
+	if err != nil {
+		return RelayService{}, err
+	}
+	resetMeter := !nullableIDEqual(existingUserID, request.UserID) || existingBillingMode != request.BillingMode
+	nextEpoch := existingBillingEpoch
+	if resetMeter {
+		nextEpoch = nextBillingEpoch(existingBillingEpoch)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE relay_services SET user_id=?,name=?,listen_host=?,listen_port=?,network=?,mode=?,enabled=?,billing_mode=?,traffic_limit_gb=?,billing_epoch=?,dial_timeout_ms=?,udp_idle_timeout_seconds=?,health_enabled=?,health_interval_seconds=?,health_timeout_ms=?,failure_threshold=?,success_threshold=?,recovery_cooldown_seconds=?,updated_at=? WHERE id=?`,
+		nullablePositiveID(request.UserID), strings.TrimSpace(request.Name), request.ListenHost, request.ListenPort, request.Network, request.Mode, boolInt(enabled), request.BillingMode, request.TrafficLimitGB, nextEpoch, request.DialTimeoutMillis, request.UDPIdleTimeoutSeconds,
 		boolInt(request.Health.Enabled), request.Health.IntervalSeconds, request.Health.TimeoutMillis, request.Health.FailureThreshold, request.Health.SuccessThreshold, request.Health.RecoveryCooldownSecs, now, id); err != nil {
 		return RelayService{}, err
 	}
@@ -1813,13 +1912,16 @@ func (s *Store) UpdateRelayService(ctx context.Context, id string, request Creat
 }
 
 func (s *Store) ListRelayServices(ctx context.Context, relayNodeID string) ([]RelayService, error) {
-	query := `SELECT id,relay_node_id,COALESCE(pool_id,''),name,listen_host,listen_port,network,mode,enabled,dial_timeout_ms,udp_idle_timeout_seconds,health_enabled,health_interval_seconds,health_timeout_ms,failure_threshold,success_threshold,recovery_cooldown_seconds,created_at,updated_at FROM relay_services`
+	query := `SELECT rs.id,rs.relay_node_id,COALESCE(rs.pool_id,''),rs.user_id,COALESCE(u.display_name,''),CASE WHEN u.id IS NULL OR u.enabled=1 THEN 1 ELSE 0 END,
+		rs.name,rs.listen_host,rs.listen_port,rs.network,rs.mode,rs.enabled,COALESCE(rs.billing_mode,'both'),COALESCE(rs.traffic_limit_gb,0),COALESCE(rs.billing_epoch,1),
+		rs.dial_timeout_ms,rs.udp_idle_timeout_seconds,rs.health_enabled,rs.health_interval_seconds,rs.health_timeout_ms,rs.failure_threshold,rs.success_threshold,rs.recovery_cooldown_seconds,rs.created_at,rs.updated_at
+		FROM relay_services rs LEFT JOIN console_users u ON u.id=rs.user_id`
 	var args []interface{}
 	if relayNodeID != "" {
-		query += ` WHERE relay_node_id=?`
+		query += ` WHERE rs.relay_node_id=?`
 		args = append(args, relayNodeID)
 	}
-	query += ` ORDER BY listen_port, created_at`
+	query += ` ORDER BY rs.listen_port, rs.created_at`
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -1828,14 +1930,21 @@ func (s *Store) ListRelayServices(ctx context.Context, relayNodeID string) ([]Re
 	var services []RelayService
 	for rows.Next() {
 		var service RelayService
-		var enabled, healthEnabled int
+		var enabled, healthEnabled, userEnabled int
+		var userID sql.NullInt64
 		var created, updated string
-		if err := rows.Scan(&service.ID, &service.RelayNodeID, &service.PoolID, &service.Name, &service.ListenHost, &service.ListenPort, &service.Network, &service.Mode, &enabled,
-			&service.DialTimeoutMillis, &service.UDPIdleTimeoutSeconds, &healthEnabled, &service.Health.IntervalSeconds, &service.Health.TimeoutMillis,
+		if err := rows.Scan(&service.ID, &service.RelayNodeID, &service.PoolID, &userID, &service.UserName, &userEnabled, &service.Name, &service.ListenHost, &service.ListenPort, &service.Network, &service.Mode, &enabled,
+			&service.BillingMode, &service.TrafficLimitGB, &service.BillingEpoch, &service.DialTimeoutMillis, &service.UDPIdleTimeoutSeconds, &healthEnabled, &service.Health.IntervalSeconds, &service.Health.TimeoutMillis,
 			&service.Health.FailureThreshold, &service.Health.SuccessThreshold, &service.Health.RecoveryCooldownSecs, &created, &updated); err != nil {
 			return nil, err
 		}
 		service.Enabled = enabled != 0
+		service.UserEnabled = userEnabled != 0
+		service.BillingEpoch = effectiveBillingEpoch(service.BillingEpoch)
+		if userID.Valid {
+			value := userID.Int64
+			service.UserID = &value
+		}
 		service.Health.Enabled = healthEnabled != 0
 		service.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 		service.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
@@ -1895,6 +2004,41 @@ func (s *Store) DeleteRelayService(ctx context.Context, id string) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func (s *Store) ResetRelayServiceTraffic(ctx context.Context, id string) (RelayService, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return RelayService{}, err
+	}
+	defer tx.Rollback()
+	var relayNodeID, poolID string
+	var currentEpoch int64
+	if err := tx.QueryRowContext(ctx, `SELECT relay_node_id,COALESCE(pool_id,''),COALESCE(billing_epoch,1) FROM relay_services WHERE id=?`, id).Scan(&relayNodeID, &poolID, &currentEpoch); err != nil {
+		return RelayService{}, err
+	}
+	if poolID != "" {
+		return RelayService{}, errors.New("pool-managed service traffic cannot be reset independently")
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE relay_services SET billing_epoch=?,updated_at=? WHERE id=?`, nextBillingEpoch(currentEpoch), time.Now().UTC().Format(time.RFC3339Nano), id); err != nil {
+		return RelayService{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET desired_revision=desired_revision+1 WHERE id=?`, relayNodeID); err != nil {
+		return RelayService{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return RelayService{}, err
+	}
+	services, err := s.ListRelayServices(ctx, relayNodeID)
+	if err != nil {
+		return RelayService{}, err
+	}
+	for _, service := range services {
+		if service.ID == id {
+			return service, nil
+		}
+	}
+	return RelayService{}, sql.ErrNoRows
 }
 
 func (s *Store) ListCloudAccounts(ctx context.Context, enabledOnly bool) ([]CloudAccount, error) {

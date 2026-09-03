@@ -3,16 +3,19 @@ package controller
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/R1ddle1337/AliCDT-Manager-Professional/internal/protocol"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// ConsoleUser is a restricted control-panel account. Its usage is the sum of
-// the account-level CDT snapshots explicitly assigned by an administrator.
+// ConsoleUser is a restricted control-panel account. Its usage comes from the
+// assigned standalone Agent service when present, otherwise from the
+// account-level CDT snapshots explicitly assigned by an administrator.
 type ConsoleUser struct {
 	ID                   int64                     `json:"id"`
 	Username             string                    `json:"username"`
@@ -23,11 +26,29 @@ type ConsoleUser struct {
 	TrafficRemainingGB   float64                   `json:"traffic_remaining_gb"`
 	TrafficPercent       float64                   `json:"traffic_percent"`
 	TrafficKnown         bool                      `json:"traffic_known"`
+	TrafficSource        string                    `json:"traffic_source"`
+	BytesUp              uint64                    `json:"bytes_up"`
+	BytesDown            uint64                    `json:"bytes_down"`
+	BilledBytes          uint64                    `json:"billed_bytes"`
+	CDTTrafficUsedGB     float64                   `json:"cdt_traffic_used_gb"`
+	CDTTrafficKnown      bool                      `json:"cdt_traffic_known"`
 	AssignedAccountCount int                       `json:"assigned_account_count"`
 	Accounts             []ConsoleUserCloudAccount `json:"accounts"`
+	RelayService         *ConsoleUserRelayService  `json:"relay_service,omitempty"`
 	LastLoginAt          *time.Time                `json:"last_login_at,omitempty"`
 	CreatedAt            *time.Time                `json:"created_at,omitempty"`
 	UpdatedAt            *time.Time                `json:"updated_at,omitempty"`
+}
+
+type ConsoleUserRelayService struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	RelayNodeName string `json:"relay_node_name"`
+	BillingMode   string `json:"billing_mode"`
+	BillingEpoch  int64  `json:"billing_epoch"`
+	Reported      bool   `json:"reported"`
+	Listening     bool   `json:"listening"`
+	QuotaExceeded bool   `json:"quota_exceeded"`
 }
 
 type ConsoleUserCloudAccount struct {
@@ -113,6 +134,9 @@ func (s *Store) ListConsoleUsers(ctx context.Context) ([]ConsoleUser, error) {
 		user := &users[index]
 		user.AssignedAccountCount = len(user.Accounts)
 		user.TrafficKnown = user.AssignedAccountCount > 0 && knownCounts[user.ID] == user.AssignedAccountCount
+		user.CDTTrafficUsedGB = user.TrafficUsedGB
+		user.CDTTrafficKnown = user.TrafficKnown
+		user.TrafficSource = "cloud_account"
 		user.TrafficRemainingGB = user.TrafficLimitGB - user.TrafficUsedGB
 		if user.TrafficRemainingGB < 0 {
 			user.TrafficRemainingGB = 0
@@ -121,7 +145,81 @@ func (s *Store) ListConsoleUsers(ctx context.Context) ([]ConsoleUser, error) {
 			user.TrafficPercent = user.TrafficUsedGB / user.TrafficLimitGB * 100
 		}
 	}
+	serviceRows, err := s.db.QueryContext(ctx, `SELECT rs.user_id,rs.id,rs.name,rn.name,COALESCE(rs.billing_mode,'both'),COALESCE(rs.billing_epoch,1),COALESCE(rn.service_status_json,'[]')
+		FROM relay_services rs JOIN relay_nodes rn ON rn.id=rs.relay_node_id WHERE rs.user_id IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	for serviceRows.Next() {
+		var userID int64
+		var service ConsoleUserRelayService
+		var rawStatus string
+		if err := serviceRows.Scan(&userID, &service.ID, &service.Name, &service.RelayNodeName, &service.BillingMode, &service.BillingEpoch, &rawStatus); err != nil {
+			serviceRows.Close()
+			return nil, err
+		}
+		service.BillingEpoch = effectiveBillingEpoch(service.BillingEpoch)
+		index, exists := byID[userID]
+		if !exists {
+			continue
+		}
+		users[index].TrafficSource = "agent"
+		users[index].TrafficKnown = false
+		users[index].TrafficUsedGB = 0
+		users[index].BytesUp = 0
+		users[index].BytesDown = 0
+		users[index].BilledBytes = 0
+		var statuses []protocol.ServiceStatus
+		_ = json.Unmarshal([]byte(rawStatus), &statuses)
+		for _, status := range statuses {
+			if status.ID != service.ID {
+				continue
+			}
+			service.Listening = status.Listening
+			service.QuotaExceeded = status.QuotaExceeded
+			if status.BillingMode != "" && status.BillingEpoch == service.BillingEpoch {
+				service.Reported = true
+				users[index].BytesUp = status.BytesUp
+				users[index].BytesDown = status.BytesDown
+				users[index].BilledBytes = billedBytesFromStatus(status, service.BillingMode)
+				users[index].TrafficUsedGB = float64(users[index].BilledBytes) / (1024 * 1024 * 1024)
+				users[index].TrafficKnown = true
+				users[index].TrafficSource = "agent"
+			}
+			break
+		}
+		users[index].RelayService = &service
+	}
+	if err := serviceRows.Close(); err != nil {
+		return nil, err
+	}
+	for index := range users {
+		user := &users[index]
+		if user.RelayService != nil {
+			user.TrafficRemainingGB = user.TrafficLimitGB - user.TrafficUsedGB
+			if user.TrafficRemainingGB < 0 {
+				user.TrafficRemainingGB = 0
+			}
+			if user.TrafficLimitGB > 0 {
+				user.TrafficPercent = user.TrafficUsedGB / user.TrafficLimitGB * 100
+			}
+		}
+	}
 	return users, nil
+}
+
+func billedBytesFromStatus(status protocol.ServiceStatus, mode string) uint64 {
+	if status.BilledBytes > 0 {
+		return status.BilledBytes
+	}
+	switch mode {
+	case protocol.BillingModeUpload, protocol.BillingModeIngress:
+		return status.BytesUp
+	case protocol.BillingModeDownload, protocol.BillingModeEgress:
+		return status.BytesDown
+	default:
+		return status.BytesUp + status.BytesDown
+	}
 }
 
 func (s *Store) ConsoleUserOverview(ctx context.Context, userID int64) (ConsoleUser, error) {
@@ -184,7 +282,8 @@ func (s *Store) UpdateConsoleUser(ctx context.Context, userID int64, request Con
 	}
 	defer tx.Rollback()
 	var currentEnabled int
-	if err := tx.QueryRowContext(ctx, `SELECT enabled FROM console_users WHERE id=?`, userID).Scan(&currentEnabled); err != nil {
+	var currentTrafficLimit float64
+	if err := tx.QueryRowContext(ctx, `SELECT enabled,traffic_limit_gb FROM console_users WHERE id=?`, userID).Scan(&currentEnabled, &currentTrafficLimit); err != nil {
 		return ConsoleUser{}, err
 	}
 	if err := consoleUsernameAvailable(ctx, tx, request.Username, userID); err != nil {
@@ -218,6 +317,16 @@ func (s *Store) UpdateConsoleUser(ctx context.Context, userID int64, request Con
 			return ConsoleUser{}, err
 		}
 	}
+	if currentTrafficLimit != request.TrafficLimitGB {
+		if _, err := tx.ExecContext(ctx, `UPDATE relay_services SET traffic_limit_gb=?,updated_at=? WHERE user_id=?`, request.TrafficLimitGB, now, userID); err != nil {
+			return ConsoleUser{}, err
+		}
+	}
+	if currentEnabled != boolInt(enabled) || currentTrafficLimit != request.TrafficLimitGB {
+		if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET desired_revision=desired_revision+1 WHERE id IN (SELECT relay_node_id FROM relay_services WHERE user_id=?)`, userID); err != nil {
+			return ConsoleUser{}, err
+		}
+	}
 	if passwordChanged || !enabled {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM user_sessions WHERE user_id=?`, userID); err != nil {
 			return ConsoleUser{}, err
@@ -230,14 +339,25 @@ func (s *Store) UpdateConsoleUser(ctx context.Context, userID int64, request Con
 }
 
 func (s *Store) DeleteConsoleUser(ctx context.Context, userID int64) error {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM console_users WHERE id=?`, userID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET desired_revision=desired_revision+1 WHERE id IN (SELECT relay_node_id FROM relay_services WHERE user_id=?)`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE relay_services SET enabled=0,user_id=NULL,updated_at=? WHERE user_id=?`, time.Now().UTC().Format(time.RFC3339Nano), userID); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM console_users WHERE id=?`, userID)
 	if err != nil {
 		return err
 	}
 	if affected, _ := result.RowsAffected(); affected == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (s *Store) LoginConsoleUser(ctx context.Context, username, password string) (string, ConsoleUser, error) {
@@ -438,4 +558,89 @@ func nullableDatabaseTime(value sql.NullString) *time.Time {
 		return nil
 	}
 	return &parsed
+}
+
+func normalizeBillingMode(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "", protocol.BillingModeBoth:
+		return protocol.BillingModeBoth, nil
+	case protocol.BillingModeUpload, protocol.BillingModeIngress:
+		return protocol.BillingModeUpload, nil
+	case protocol.BillingModeDownload, protocol.BillingModeEgress:
+		return protocol.BillingModeDownload, nil
+	default:
+		return "", errors.New("billing mode must be upload, download or both")
+	}
+}
+
+func billingEpochNow() int64 {
+	return time.Now().UTC().Unix()
+}
+
+func effectiveBillingEpoch(value int64) int64 {
+	location := time.FixedZone("Asia/Shanghai", 8*60*60)
+	now := time.Now().In(location)
+	if value > 1 {
+		at := time.Unix(value, 0).In(location)
+		if at.Year() == now.Year() && at.Month() == now.Month() {
+			return value
+		}
+	}
+	return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, location).Unix()
+}
+
+func nextBillingEpoch(current int64) int64 {
+	next := billingEpochNow()
+	if next <= current {
+		next = current + 1
+	}
+	return next
+}
+
+func nullablePositiveID(value *int64) interface{} {
+	if value == nil || *value <= 0 {
+		return nil
+	}
+	return *value
+}
+
+func nullableIDEqual(current sql.NullInt64, requested *int64) bool {
+	if requested == nil || *requested <= 0 {
+		return !current.Valid
+	}
+	return current.Valid && current.Int64 == *requested
+}
+
+func validateRelayServiceUserTx(ctx context.Context, tx *sql.Tx, userID *int64, excludeServiceID string) error {
+	if userID == nil || *userID <= 0 {
+		return nil
+	}
+	var enabled int
+	if err := tx.QueryRowContext(ctx, `SELECT enabled FROM console_users WHERE id=?`, *userID).Scan(&enabled); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errors.New("assigned user does not exist")
+		}
+		return err
+	}
+	var serviceID string
+	err := tx.QueryRowContext(ctx, `SELECT id FROM relay_services WHERE user_id=? AND id<>?`, *userID, excludeServiceID).Scan(&serviceID)
+	if err == nil {
+		return errors.New("user is already assigned to another relay service")
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	return nil
+}
+
+func assignedRelayServiceLimitTx(ctx context.Context, tx *sql.Tx, userID *int64, configured float64) (float64, error) {
+	if userID == nil || *userID <= 0 {
+		return configured, nil
+	}
+	var limit float64
+	if err := tx.QueryRowContext(ctx, `SELECT traffic_limit_gb FROM console_users WHERE id=?`, *userID).Scan(&limit); err != nil {
+		return 0, err
+	}
+	return limit, nil
 }

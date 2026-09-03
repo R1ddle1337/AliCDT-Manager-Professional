@@ -127,6 +127,10 @@ func (c *Client) Run(ctx context.Context) error {
 	if err := c.loadOrEnroll(ctx); err != nil {
 		return err
 	}
+	if err := c.loadTrafficUsage(); err != nil {
+		fmt.Fprintf(os.Stderr, "traffic usage checkpoint could not be restored: %v\n", err)
+	}
+	defer func() { _ = c.saveTrafficUsage(c.engine.UsageSnapshot()) }()
 	if err := c.loadCachedConfig(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "cached config could not be restored: %v\n", err)
 	}
@@ -242,6 +246,34 @@ func (c *Client) credentialPath() string {
 
 func (c *Client) configPath() string {
 	return filepath.Join(c.opts.DataDir, "last-valid-config.json")
+}
+
+func (c *Client) trafficUsagePath() string {
+	return filepath.Join(c.opts.DataDir, "traffic-usage.json")
+}
+
+func (c *Client) loadTrafficUsage() error {
+	data, err := os.ReadFile(c.trafficUsagePath())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var statuses []protocol.ServiceStatus
+	if err := json.Unmarshal(data, &statuses); err != nil {
+		return err
+	}
+	c.engine.RestoreUsage(statuses)
+	return nil
+}
+
+func (c *Client) saveTrafficUsage(statuses []protocol.ServiceStatus) error {
+	encoded, err := json.Marshal(statuses)
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(c.trafficUsagePath(), encoded, 0600)
 }
 
 func (c *Client) loadCachedConfig(ctx context.Context) error {
@@ -493,6 +525,10 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) (err error) {
 func (c *Client) sendHeartbeat(ctx context.Context) error {
 	binaryHash, _ := fileSHA256(c.opts.BinaryPath)
 	status, updateErr := c.currentUpdateState()
+	services := c.engine.Snapshot()
+	if err := c.saveTrafficUsage(c.engine.UsageSnapshot()); err != nil {
+		return fmt.Errorf("save traffic usage: %w", err)
+	}
 	heartbeat := protocol.AgentHeartbeat{
 		AgentVersion:    c.opts.AgentVersion,
 		BinarySHA256:    binaryHash,
@@ -500,7 +536,7 @@ func (c *Client) sendHeartbeat(ctx context.Context) error {
 		UpdateError:     updateErr,
 		CurrentRevision: c.engine.Revision(),
 		StartedAt:       c.startedAt,
-		Services:        c.engine.Snapshot(),
+		Services:        services,
 	}
 	path := fmt.Sprintf("/api/v2/agents/%s/heartbeat", c.creds.AgentID)
 	return c.requestJSON(ctx, http.MethodPost, path, c.creds.Secret, heartbeat, nil)

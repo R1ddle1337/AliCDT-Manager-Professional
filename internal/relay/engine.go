@@ -19,11 +19,25 @@ import (
 type Engine struct {
 	mu       sync.Mutex
 	services map[string]*serviceRunner
+	restored map[string]protocol.ServiceStatus
 	revision int64
 }
 
 func NewEngine() *Engine {
-	return &Engine{services: make(map[string]*serviceRunner)}
+	return &Engine{services: make(map[string]*serviceRunner), restored: make(map[string]protocol.ServiceStatus)}
+}
+
+// RestoreUsage supplies the last durable Agent checkpoint before cached
+// listeners are recreated. Configuration epochs prevent an old month's
+// billed counter from being restored into a newly reset quota period.
+func (e *Engine) RestoreUsage(statuses []protocol.ServiceStatus) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, status := range statuses {
+		if status.ID != "" {
+			e.restored[status.ID] = status
+		}
+	}
 }
 
 // Apply reconciles listeners without restarting the agent. Services whose
@@ -51,6 +65,7 @@ func (e *Engine) Apply(ctx context.Context, desired protocol.AgentConfig) error 
 		current := e.services[cfg.ID]
 		if !cfg.Enabled {
 			if current != nil {
+				e.restored[cfg.ID] = current.snapshot()
 				current.stop()
 				delete(e.services, cfg.ID)
 			}
@@ -63,18 +78,21 @@ func (e *Engine) Apply(ctx context.Context, desired protocol.AgentConfig) error 
 		}
 
 		if current != nil {
+			e.restored[cfg.ID] = current.snapshot()
 			current.stop()
 			delete(e.services, cfg.ID)
 		}
-		runner := newServiceRunner(ctx, cfg)
+		runner := newServiceRunner(ctx, cfg, e.restored[cfg.ID])
 		if err := runner.start(); err != nil {
 			return fmt.Errorf("start service %q: %w", cfg.Name, err)
 		}
 		e.services[cfg.ID] = runner
+		delete(e.restored, cfg.ID)
 	}
 
 	for id, runner := range e.services {
 		if _, ok := seen[id]; !ok {
+			e.restored[id] = runner.snapshot()
 			runner.stop()
 			delete(e.services, id)
 		}
@@ -112,6 +130,33 @@ func (e *Engine) Snapshot() []protocol.ServiceStatus {
 	}
 	sort.Slice(statuses, func(i, j int) bool { return statuses[i].Name < statuses[j].Name })
 	return statuses
+}
+
+// UsageSnapshot includes stopped services retained for a later re-enable. It
+// is written only to the Agent's private checkpoint; heartbeats continue to
+// report active configured services through Snapshot.
+func (e *Engine) UsageSnapshot() []protocol.ServiceStatus {
+	e.mu.Lock()
+	statuses := make(map[string]protocol.ServiceStatus, len(e.restored)+len(e.services))
+	for id, status := range e.restored {
+		status.Listening = false
+		statuses[id] = status
+	}
+	runners := make([]*serviceRunner, 0, len(e.services))
+	for _, runner := range e.services {
+		runners = append(runners, runner)
+	}
+	e.mu.Unlock()
+	for _, runner := range runners {
+		status := runner.snapshot()
+		statuses[status.ID] = status
+	}
+	result := make([]protocol.ServiceStatus, 0, len(statuses))
+	for _, status := range statuses {
+		result = append(result, status)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	return result
 }
 
 type targetHealth struct {
@@ -154,11 +199,25 @@ type serviceRunner struct {
 	totalConnections  uint64
 	bytesUp           uint64
 	bytesDown         uint64
+	billedBytes       uint64
+	quotaExceeded     int32
+	billingEpoch      int64
+	periodMu          sync.RWMutex
 	lastErrorMu       sync.RWMutex
 	lastError         string
 }
 
-func newServiceRunner(parent context.Context, cfg protocol.ServiceConfig) *serviceRunner {
+var errTrafficQuotaExceeded = errors.New("traffic quota exceeded")
+var billingLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
+
+type trafficDirection uint8
+
+const (
+	trafficIngress trafficDirection = iota // client -> target
+	trafficEgress                          // target -> client
+)
+
+func newServiceRunner(parent context.Context, cfg protocol.ServiceConfig, restored protocol.ServiceStatus) *serviceRunner {
 	ctx, cancel := context.WithCancel(parent)
 	r := &serviceRunner{
 		ctx:      ctx,
@@ -167,9 +226,16 @@ func newServiceRunner(parent context.Context, cfg protocol.ServiceConfig) *servi
 		health:   make(map[string]*targetHealth),
 		sessions: make(map[string]*udpSession),
 	}
+	r.billingEpoch = cfg.BillingEpoch
 	for _, target := range cfg.Targets {
 		r.health[target.ID] = &targetHealth{Healthy: true}
 	}
+	if restored.ID == cfg.ID && restored.BillingEpoch == r.billingEpoch {
+		r.bytesUp = restored.BytesUp
+		r.bytesDown = restored.BytesDown
+		r.billedBytes = restored.BilledBytes
+	}
+	r.refreshQuotaState(cfg)
 	return r
 }
 
@@ -191,6 +257,25 @@ func normalizeService(cfg protocol.ServiceConfig) (protocol.ServiceConfig, error
 	case "failover", "round_robin", "ip_hash", "weighted":
 	default:
 		return cfg, fmt.Errorf("unsupported mode %q", cfg.Mode)
+	}
+	cfg.BillingMode = strings.ToLower(strings.TrimSpace(cfg.BillingMode))
+	if cfg.BillingMode == "" {
+		cfg.BillingMode = protocol.BillingModeBoth
+	}
+	if cfg.BillingMode == protocol.BillingModeIngress {
+		cfg.BillingMode = protocol.BillingModeUpload
+	}
+	if cfg.BillingMode == protocol.BillingModeEgress {
+		cfg.BillingMode = protocol.BillingModeDownload
+	}
+	if cfg.BillingMode != protocol.BillingModeUpload && cfg.BillingMode != protocol.BillingModeDownload && cfg.BillingMode != protocol.BillingModeBoth {
+		return cfg, fmt.Errorf("unsupported billing mode %q", cfg.BillingMode)
+	}
+	if cfg.TrafficLimitGB < 0 {
+		return cfg, errors.New("traffic limit must not be negative")
+	}
+	if cfg.BillingEpoch <= 0 {
+		cfg.BillingEpoch = 1
 	}
 	if cfg.DialTimeoutMillis <= 0 {
 		cfg.DialTimeoutMillis = 2500
@@ -247,9 +332,21 @@ func (r *serviceRunner) sameListener(cfg protocol.ServiceConfig) bool {
 }
 
 func (r *serviceRunner) update(cfg protocol.ServiceConfig) {
+	resetBilling := atomic.LoadInt64(&r.billingEpoch) != cfg.BillingEpoch
+	if resetBilling {
+		r.periodMu.Lock()
+	}
 	r.cfgMu.Lock()
 	r.cfg = cfg
 	r.cfgMu.Unlock()
+	if resetBilling {
+		atomic.StoreInt64(&r.billingEpoch, cfg.BillingEpoch)
+		atomic.StoreUint64(&r.bytesUp, 0)
+		atomic.StoreUint64(&r.bytesDown, 0)
+		atomic.StoreUint64(&r.billedBytes, 0)
+		r.periodMu.Unlock()
+	}
+	r.refreshQuotaState(cfg)
 
 	r.healthMu.Lock()
 	valid := make(map[string]struct{}, len(cfg.Targets))
@@ -282,6 +379,162 @@ func (r *serviceRunner) config() protocol.ServiceConfig {
 	r.cfgMu.RLock()
 	defer r.cfgMu.RUnlock()
 	return r.cfg
+}
+
+func (r *serviceRunner) refreshQuotaState(cfg protocol.ServiceConfig) {
+	limit := quotaBytes(cfg.TrafficLimitGB)
+	if limit > 0 && atomic.LoadUint64(&r.billedBytes) >= limit {
+		atomic.StoreInt32(&r.quotaExceeded, 1)
+		return
+	}
+	atomic.StoreInt32(&r.quotaExceeded, 0)
+}
+
+func currentBillingEpoch(now time.Time) int64 {
+	local := now.In(billingLocation)
+	return time.Date(local.Year(), local.Month(), 1, 0, 0, 0, 0, billingLocation).Unix()
+}
+
+func sameBillingMonth(epoch int64, now time.Time) bool {
+	if epoch <= 1 {
+		return false
+	}
+	value := time.Unix(epoch, 0).In(billingLocation)
+	local := now.In(billingLocation)
+	return value.Year() == local.Year() && value.Month() == local.Month()
+}
+
+func (r *serviceRunner) ensureCurrentBillingPeriod() {
+	current := atomic.LoadInt64(&r.billingEpoch)
+	if sameBillingMonth(current, time.Now()) {
+		return
+	}
+	r.periodMu.Lock()
+	defer r.periodMu.Unlock()
+	current = atomic.LoadInt64(&r.billingEpoch)
+	if sameBillingMonth(current, time.Now()) {
+		return
+	}
+	atomic.StoreInt64(&r.billingEpoch, currentBillingEpoch(time.Now()))
+	atomic.StoreUint64(&r.bytesUp, 0)
+	atomic.StoreUint64(&r.bytesDown, 0)
+	atomic.StoreUint64(&r.billedBytes, 0)
+	atomic.StoreInt32(&r.quotaExceeded, 0)
+}
+
+func quotaBytes(limitGB float64) uint64 {
+	if limitGB <= 0 {
+		return 0
+	}
+	const gib = float64(1024 * 1024 * 1024)
+	if limitGB >= float64(^uint64(0))/gib {
+		return ^uint64(0)
+	}
+	return uint64(limitGB * gib)
+}
+
+func (r *serviceRunner) bills(direction trafficDirection) bool {
+	switch r.config().BillingMode {
+	case protocol.BillingModeUpload:
+		return direction == trafficIngress
+	case protocol.BillingModeDownload:
+		return direction == trafficEgress
+	default:
+		return true
+	}
+}
+
+func (r *serviceRunner) reserveBilledBytes(requested int) (int, error) {
+	if requested <= 0 {
+		return 0, nil
+	}
+	limit := quotaBytes(r.config().TrafficLimitGB)
+	if limit == 0 {
+		atomic.AddUint64(&r.billedBytes, uint64(requested))
+		return requested, nil
+	}
+	for {
+		current := atomic.LoadUint64(&r.billedBytes)
+		if current >= limit {
+			atomic.StoreInt32(&r.quotaExceeded, 1)
+			return 0, errTrafficQuotaExceeded
+		}
+		remaining := limit - current
+		allowed := uint64(requested)
+		if allowed > remaining {
+			allowed = remaining
+		}
+		if atomic.CompareAndSwapUint64(&r.billedBytes, current, current+allowed) {
+			if current+allowed >= limit {
+				atomic.StoreInt32(&r.quotaExceeded, 1)
+			}
+			return int(allowed), nil
+		}
+	}
+}
+
+func (r *serviceRunner) refundBilledBytes(reserved, written int) {
+	if reserved <= written {
+		return
+	}
+	difference := uint64(reserved - written)
+	atomic.AddUint64(&r.billedBytes, ^(difference - 1))
+	if quotaBytes(r.config().TrafficLimitGB) > atomic.LoadUint64(&r.billedBytes) {
+		atomic.StoreInt32(&r.quotaExceeded, 0)
+	}
+}
+
+func (r *serviceRunner) writeCounted(w io.Writer, payload []byte, direction trafficDirection, allowPartial bool) (int, error) {
+	if len(payload) == 0 {
+		return 0, nil
+	}
+	if r.config().AccessBlocked {
+		return 0, errTrafficQuotaExceeded
+	}
+	r.ensureCurrentBillingPeriod()
+	r.periodMu.RLock()
+	defer r.periodMu.RUnlock()
+	originalLength := len(payload)
+	billed := r.bills(direction)
+	reserved := len(payload)
+	if billed {
+		var err error
+		reserved, err = r.reserveBilledBytes(len(payload))
+		if err != nil {
+			return 0, err
+		}
+		if !allowPartial && reserved < originalLength {
+			r.refundBilledBytes(reserved, 0)
+			return 0, errTrafficQuotaExceeded
+		}
+		payload = payload[:reserved]
+	} else if quotaBytes(r.config().TrafficLimitGB) > 0 && atomic.LoadInt32(&r.quotaExceeded) != 0 {
+		return 0, errTrafficQuotaExceeded
+	}
+	written, err := w.Write(payload)
+	if billed {
+		r.refundBilledBytes(reserved, written)
+	}
+	if direction == trafficIngress {
+		atomic.AddUint64(&r.bytesUp, uint64(written))
+	} else {
+		atomic.AddUint64(&r.bytesDown, uint64(written))
+	}
+	if err == nil && written < len(payload) {
+		err = io.ErrShortWrite
+	}
+	if err == nil && billed && quotaBytes(r.config().TrafficLimitGB) > 0 && atomic.LoadInt32(&r.quotaExceeded) != 0 {
+		err = errTrafficQuotaExceeded
+	}
+	return written, err
+}
+
+type writerFunc struct {
+	write func([]byte) (int, error)
+}
+
+func (w writerFunc) Write(payload []byte) (int, error) {
+	return w.write(payload)
 }
 
 func (r *serviceRunner) start() error {
@@ -364,6 +617,14 @@ func (r *serviceRunner) handleTCP(client net.Conn) {
 	defer atomic.AddInt64(&r.activeConnections, -1)
 
 	cfg := r.config()
+	if cfg.AccessBlocked {
+		r.setLastError(errors.New("service access is blocked"))
+		return
+	}
+	if quotaBytes(cfg.TrafficLimitGB) > 0 && atomic.LoadInt32(&r.quotaExceeded) != 0 {
+		r.setLastError(errTrafficQuotaExceeded)
+		return
+	}
 	candidates := r.candidates(client.RemoteAddr().String())
 	var backend net.Conn
 	var selected protocol.TargetConfig
@@ -386,34 +647,31 @@ func (r *serviceRunner) handleTCP(client net.Conn) {
 	r.copyTCP(client, backend)
 }
 
-type countWriter struct {
-	w     io.Writer
-	count *uint64
-}
-
-func (w countWriter) Write(p []byte) (int, error) {
-	n, err := w.w.Write(p)
-	atomic.AddUint64(w.count, uint64(n))
-	return n, err
-}
-
 func (r *serviceRunner) copyTCP(client, backend net.Conn) {
-	done := make(chan struct{}, 2)
+	done := make(chan error, 2)
 	go func() {
-		_, _ = io.Copy(countWriter{w: backend, count: &r.bytesUp}, client)
+		_, err := io.Copy(writerFunc{write: func(payload []byte) (int, error) {
+			return r.writeCounted(backend, payload, trafficIngress, true)
+		}}, client)
 		if tcp, ok := backend.(*net.TCPConn); ok {
 			_ = tcp.CloseWrite()
 		}
-		done <- struct{}{}
+		done <- err
 	}()
 	go func() {
-		_, _ = io.Copy(countWriter{w: client, count: &r.bytesDown}, backend)
+		_, err := io.Copy(writerFunc{write: func(payload []byte) (int, error) {
+			return r.writeCounted(client, payload, trafficEgress, true)
+		}}, backend)
 		if tcp, ok := client.(*net.TCPConn); ok {
 			_ = tcp.CloseWrite()
 		}
-		done <- struct{}{}
+		done <- err
 	}()
-	<-done
+	firstErr := <-done
+	if errors.Is(firstErr, errTrafficQuotaExceeded) || atomic.LoadInt32(&r.quotaExceeded) != 0 {
+		_ = client.Close()
+		_ = backend.Close()
+	}
 	<-done
 }
 
@@ -437,11 +695,12 @@ func (r *serviceRunner) serveUDP() {
 		r.sessionsMu.Lock()
 		session.lastSeen = time.Now()
 		r.sessionsMu.Unlock()
-		written, err := session.backend.Write(payload)
-		atomic.AddUint64(&r.bytesUp, uint64(written))
+		_, err = r.writeCounted(session.backend, payload, trafficIngress, false)
 		if err != nil {
 			r.dropUDPSession(client.String(), session)
-			r.setLastError(err)
+			if !errors.Is(err, errTrafficQuotaExceeded) {
+				r.setLastError(err)
+			}
 		}
 	}
 }
@@ -494,8 +753,9 @@ func (r *serviceRunner) readUDPResponses(key string, session *udpSession) {
 			r.dropUDPSession(key, session)
 			return
 		}
-		written, err := r.udpListener.WriteToUDP(buffer[:n], session.client)
-		atomic.AddUint64(&r.bytesDown, uint64(written))
+		_, err = r.writeCounted(writerFunc{write: func(payload []byte) (int, error) {
+			return r.udpListener.WriteToUDP(payload, session.client)
+		}}, buffer[:n], trafficEgress, false)
 		if err != nil {
 			r.dropUDPSession(key, session)
 			return
@@ -684,6 +944,9 @@ func (r *serviceRunner) setLastError(err error) {
 }
 
 func (r *serviceRunner) snapshot() protocol.ServiceStatus {
+	r.ensureCurrentBillingPeriod()
+	r.periodMu.RLock()
+	defer r.periodMu.RUnlock()
 	cfg := r.config()
 	status := protocol.ServiceStatus{
 		ID:                cfg.ID,
@@ -693,6 +956,12 @@ func (r *serviceRunner) snapshot() protocol.ServiceStatus {
 		TotalConnections:  atomic.LoadUint64(&r.totalConnections),
 		BytesUp:           atomic.LoadUint64(&r.bytesUp),
 		BytesDown:         atomic.LoadUint64(&r.bytesDown),
+		BilledBytes:       atomic.LoadUint64(&r.billedBytes),
+		BillingMode:       cfg.BillingMode,
+		TrafficLimitGB:    cfg.TrafficLimitGB,
+		BillingEpoch:      atomic.LoadInt64(&r.billingEpoch),
+		QuotaExceeded:     quotaBytes(cfg.TrafficLimitGB) > 0 && atomic.LoadInt32(&r.quotaExceeded) != 0,
+		AccessBlocked:     cfg.AccessBlocked,
 	}
 	r.healthMu.RLock()
 	for _, target := range cfg.Targets {

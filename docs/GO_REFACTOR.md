@@ -389,4 +389,18 @@ returned during one-time enrollment. Administrators can create console users
 through `/api/v2/users`; user sessions may only access `/api/v2/auth/me` and
 `/api/v2/user/overview`. A user's usage is the sum of the account-level CDT
 snapshots for the cloud accounts assigned to that user, because Alibaba Cloud
-does not expose a per-ECS or per-terminal CDT counter.
+does not expose a per-ECS or per-terminal CDT counter. If the user is bound to
+a standalone metered Relay service, the user overview prefers that Agent
+counter and keeps the cloud snapshot as a separate reference field.
+
+An administrator can also bind one console user to one standalone Relay
+service. The controller then sends the user's quota, a billing epoch, and one
+of `upload`, `download`, or `both` to that Agent. The Relay counts bytes at the
+successful socket-write boundary for TCP and UDP and stops the service's data
+path once the selected counter reaches the quota. Counters are checkpointed in
+the Agent's private data directory and reset automatically at the beginning of
+each Asia/Shanghai calendar month; changing the owner/direction or calling the
+traffic-reset endpoint starts a new epoch. Pool services deliberately remain
+on account-level CDT protection until distributed quota reservation is
+implemented, because applying one full user allowance to every Relay would
+permit aggregate overrun.

@@ -30,11 +30,16 @@
         </div>
 
         <div class="usage-line">
-          <div><small>本月已用</small><strong>{{ user.traffic_known ? formatGB(user.traffic_used_gb) : '待同步' }}</strong></div>
+          <div><small>{{ user.traffic_source === 'agent' ? 'Agent 精确用量' : '账户 CDT 用量' }}</small><strong>{{ user.traffic_known ? formatGB(user.traffic_used_gb) : '待同步' }}</strong></div>
           <div class="usage-limit"><small>用户额度</small><strong>{{ formatGB(user.traffic_limit_gb) }}</strong></div>
         </div>
         <div class="traffic-track"><div class="traffic-fill" :class="user.traffic_percent >= 100 ? 'traffic-danger' : ''" :style="{ width: Math.min(100, user.traffic_percent || 0) + '%' }"></div></div>
         <div class="traffic-meta"><span>{{ user.traffic_known ? formatPercent(user.traffic_percent) + ' 已使用' : '存在未知用量' }}</span><span>剩余 {{ formatGB(user.traffic_remaining_gb) }}</span></div>
+
+        <div v-if="user.relay_service" class="relay-binding">
+          <div><span>独立入口</span><strong>{{ user.relay_service.name }}</strong><small>{{ user.relay_service.relay_node_name }} · {{ billingModeLabel(user.relay_service.billing_mode) }}</small></div>
+          <span class="state-tag" :class="user.relay_service.quota_exceeded ? 'state-disabled' : 'state-enabled'">{{ user.relay_service.quota_exceeded ? '额度耗尽' : (user.relay_service.reported ? 'Agent 已上报' : '等待 Agent') }}</span>
+        </div>
 
         <div class="account-list">
           <div class="account-list-title">归属云账户 <span>{{ user.accounts.length }}</span></div>
@@ -128,6 +133,10 @@ function formatGB(value) {
 
 function formatPercent(value) {
   return `${Number(value || 0).toFixed(1)}%`
+}
+
+function billingModeLabel(value) {
+  return { download: '仅下载计费', upload: '仅上传计费', both: '双向计费' }[value] || '双向计费'
 }
 
 function formatDate(value) {
@@ -248,6 +257,11 @@ onMounted(() => Promise.all([store.fetchUsers(), store.fetchCloud()]))
 .traffic-danger { background: #dc2626; }
 .traffic-meta { display: flex; justify-content: space-between; margin-top: 7px; color: #94a3b8; font-size: 9px; }
 .account-list { margin-top: 16px; border: 1px solid #eef2f7; border-radius: 10px; }
+.relay-binding { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; border: 1px solid #dbeafe; border-radius: 10px; background: #f8fbff; padding: 10px 11px; }
+.relay-binding span, .relay-binding strong, .relay-binding small { display: block; }
+.relay-binding > div > span, .relay-binding small { color: #94a3b8; font-size: 9px; }
+.relay-binding strong { margin-top: 3px; color: #334155; font-size: 11px; }
+.relay-binding small { margin-top: 3px; }
 .account-list-title, .account-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 11px; }
 .account-list-title { background: #f8fafc; color: #64748b; font-size: 9px; font-weight: 700; }
 .account-list-title span { color: #2563eb; }

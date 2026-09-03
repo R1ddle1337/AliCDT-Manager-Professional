@@ -246,6 +246,40 @@ func TestDiscoverAliyunMetadataUsesIMDSv2AndConcurrentFields(t *testing.T) {
 	}
 }
 
+func TestTrafficUsageCheckpointRestoresMeteredCounters(t *testing.T) {
+	directory := t.TempDir()
+	first, err := New(Options{ControllerURL: "https://controller.invalid", DataDir: directory}, relay.NewEngine())
+	if err != nil {
+		t.Fatal(err)
+	}
+	epoch := time.Now().UTC().Unix()
+	status := protocol.ServiceStatus{ID: "metered", BytesUp: 10, BytesDown: 20, BilledBytes: 30, BillingMode: protocol.BillingModeBoth, BillingEpoch: epoch}
+	if err := first.saveTrafficUsage([]protocol.ServiceStatus{status}); err != nil {
+		t.Fatal(err)
+	}
+	engine := relay.NewEngine()
+	defer engine.Close()
+	second, err := New(Options{ControllerURL: "https://controller.invalid", DataDir: directory}, engine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := second.loadTrafficUsage(); err != nil {
+		t.Fatal(err)
+	}
+	config := protocol.AgentConfig{Revision: 1, Services: []protocol.ServiceConfig{{
+		ID: "metered", Name: "metered", Listen: "127.0.0.1:0", Network: "tcp", Mode: "failover", Enabled: true,
+		BillingMode: protocol.BillingModeBoth, BillingEpoch: epoch,
+		Targets: []protocol.TargetConfig{{ID: "target", Address: "127.0.0.1:1", Enabled: true}},
+	}}}
+	if err := engine.Apply(context.Background(), config); err != nil {
+		t.Fatal(err)
+	}
+	got := engine.Snapshot()[0]
+	if got.BilledBytes != status.BilledBytes || got.BytesUp != status.BytesUp || got.BytesDown != status.BytesDown {
+		t.Fatalf("checkpoint was not restored: %+v", got)
+	}
+}
+
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (function roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {

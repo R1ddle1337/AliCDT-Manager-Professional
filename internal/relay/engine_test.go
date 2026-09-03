@@ -1,15 +1,129 @@
 package relay
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/R1ddle1337/AliCDT-Manager-Professional/internal/protocol"
 )
+
+func TestServiceBillingModesAndExactQuota(t *testing.T) {
+	bytesToGB := func(value uint64) float64 { return float64(value) / (1024 * 1024 * 1024) }
+	tests := []struct {
+		name            string
+		mode            string
+		wantAfterUp     uint64
+		wantAfterDown   uint64
+		wantDownWritten int
+	}{
+		{name: "upload", mode: protocol.BillingModeUpload, wantAfterUp: 3, wantAfterDown: 3, wantDownWritten: 4},
+		{name: "download", mode: protocol.BillingModeDownload, wantAfterUp: 0, wantAfterDown: 4, wantDownWritten: 4},
+		{name: "both", mode: protocol.BillingModeBoth, wantAfterUp: 3, wantAfterDown: 5, wantDownWritten: 2},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := protocol.ServiceConfig{ID: "meter", BillingMode: test.mode, TrafficLimitGB: bytesToGB(5), BillingEpoch: 7}
+			runner := newServiceRunner(context.Background(), cfg, protocol.ServiceStatus{})
+			var destination bytes.Buffer
+			if written, err := runner.writeCounted(&destination, []byte("abc"), trafficIngress, true); written != 3 || err != nil {
+				t.Fatalf("upload write = %d, %v", written, err)
+			}
+			if got := atomic.LoadUint64(&runner.billedBytes); got != test.wantAfterUp {
+				t.Fatalf("billed after upload = %d, want %d", got, test.wantAfterUp)
+			}
+			written, err := runner.writeCounted(&destination, []byte("WXYZ"), trafficEgress, true)
+			if written != test.wantDownWritten {
+				t.Fatalf("download write = %d, want %d", written, test.wantDownWritten)
+			}
+			if test.mode == protocol.BillingModeBoth && !errors.Is(err, errTrafficQuotaExceeded) {
+				t.Fatalf("both-direction quota error = %v", err)
+			}
+			if got := atomic.LoadUint64(&runner.billedBytes); got != test.wantAfterDown {
+				t.Fatalf("billed after download = %d, want %d", got, test.wantAfterDown)
+			}
+		})
+	}
+}
+
+func TestBillingEpochResetsAndRestoresUsage(t *testing.T) {
+	engine := NewEngine()
+	defer engine.Close()
+	epoch := currentBillingEpoch(time.Now())
+	restored := protocol.ServiceStatus{ID: "meter", BytesUp: 11, BytesDown: 13, BilledBytes: 24, BillingMode: protocol.BillingModeBoth, BillingEpoch: epoch}
+	engine.RestoreUsage([]protocol.ServiceStatus{restored})
+	config := protocol.AgentConfig{Revision: 1, Services: []protocol.ServiceConfig{{
+		ID: "meter", Name: "meter", Listen: "127.0.0.1:0", Network: "tcp", Mode: "failover", Enabled: true,
+		BillingMode: protocol.BillingModeBoth, BillingEpoch: epoch,
+		Targets: []protocol.TargetConfig{{ID: "target", Address: "127.0.0.1:1", Enabled: true}},
+	}}}
+	if err := engine.Apply(context.Background(), config); err != nil {
+		t.Fatal(err)
+	}
+	status := engine.Snapshot()[0]
+	if status.BilledBytes != 24 || status.BytesUp != 11 || status.BytesDown != 13 {
+		t.Fatalf("usage was not restored: %+v", status)
+	}
+	config.Revision++
+	config.Services[0].BillingEpoch++
+	if err := engine.Apply(context.Background(), config); err != nil {
+		t.Fatal(err)
+	}
+	status = engine.Snapshot()[0]
+	if status.BilledBytes != 0 || status.BytesUp != 0 || status.BytesDown != 0 {
+		t.Fatalf("new billing epoch did not reset counters: %+v", status)
+	}
+}
+
+func TestConcurrentBidirectionalWritesCannotExceedQuota(t *testing.T) {
+	const limitBytes = uint64(100)
+	runner := newServiceRunner(context.Background(), protocol.ServiceConfig{
+		ID: "concurrent", BillingMode: protocol.BillingModeBoth,
+		TrafficLimitGB: float64(limitBytes) / (1024 * 1024 * 1024), BillingEpoch: currentBillingEpoch(time.Now()),
+	}, protocol.ServiceStatus{})
+	var wait sync.WaitGroup
+	for index := 0; index < 100; index++ {
+		wait.Add(1)
+		go func(direction trafficDirection) {
+			defer wait.Done()
+			_, _ = runner.writeCounted(io.Discard, []byte{1, 2}, direction, true)
+		}(trafficDirection(index % 2))
+	}
+	wait.Wait()
+	status := runner.snapshot()
+	if status.BilledBytes != limitBytes || !status.QuotaExceeded {
+		t.Fatalf("concurrent quota was not exact: %+v", status)
+	}
+	if status.BytesUp+status.BytesDown != limitBytes {
+		t.Fatalf("forwarded bytes = %d, want %d", status.BytesUp+status.BytesDown, limitBytes)
+	}
+}
+
+func TestUDPDatagramIsNeverPartiallyForwardedAtQuotaBoundary(t *testing.T) {
+	const limitBytes = uint64(5)
+	runner := newServiceRunner(context.Background(), protocol.ServiceConfig{
+		ID: "udp-quota", BillingMode: protocol.BillingModeUpload,
+		TrafficLimitGB: float64(limitBytes) / (1024 * 1024 * 1024), BillingEpoch: currentBillingEpoch(time.Now()),
+	}, protocol.ServiceStatus{})
+	var destination bytes.Buffer
+	if written, err := runner.writeCounted(&destination, []byte("123"), trafficIngress, false); written != 3 || err != nil {
+		t.Fatalf("first datagram = %d, %v", written, err)
+	}
+	written, err := runner.writeCounted(&destination, []byte("456"), trafficIngress, false)
+	if written != 0 || !errors.Is(err, errTrafficQuotaExceeded) {
+		t.Fatalf("boundary datagram = %d, %v", written, err)
+	}
+	if destination.String() != "123" || runner.snapshot().BilledBytes != 3 {
+		t.Fatalf("partial datagram was forwarded: payload=%q status=%+v", destination.String(), runner.snapshot())
+	}
+}
 
 func TestTCPFailoverWithoutAgentRestart(t *testing.T) {
 	primary, stopPrimary := startTCPEcho(t, "primary:")

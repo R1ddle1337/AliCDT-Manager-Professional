@@ -193,6 +193,7 @@ func (s *Server) routes() chi.Router {
 		router.Get("/api/v2/relay-services", s.listRelayServices)
 		router.Post("/api/v2/relay-services", s.createRelayService)
 		router.Put("/api/v2/relay-services/{serviceID}", s.updateRelayService)
+		router.Post("/api/v2/relay-services/{serviceID}/traffic/reset", s.resetRelayServiceTraffic)
 		router.Delete("/api/v2/relay-services/{serviceID}", s.deleteRelayService)
 		router.Get("/api/v2/relay-pools", s.listRelayPools)
 		router.Post("/api/v2/relay-pools", s.createRelayPool)
@@ -776,6 +777,20 @@ func (s *Server) updateRelayService(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	writeJSON(w, http.StatusOK, service)
+}
+
+func (s *Server) resetRelayServiceTraffic(w http.ResponseWriter, r *http.Request) {
+	service, err := s.store.ResetRelayServiceTraffic(r.Context(), chi.URLParam(r, "serviceID"))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeStoreError(w, err)
+		} else {
+			writeError(w, http.StatusBadRequest, err)
+		}
+		return
+	}
+	_ = s.store.AddSystemLog(r.Context(), "info", "traffic_metering", fmt.Sprintf("重置转发服务流量：%s", service.Name))
 	writeJSON(w, http.StatusOK, service)
 }
 
