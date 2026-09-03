@@ -49,7 +49,7 @@ fi
 trap 'rm -f "$marker_copy"' EXIT
 
 sqlite_query() {
-  sqlite3 -cmd 'PRAGMA busy_timeout=5000;' -noheader -separator $'\t' "$DB_FILE" "$1"
+  sqlite3 -cmd '.timeout 5000' -noheader -separator $'\t' "$DB_FILE" "$1"
 }
 
 sql_escape() {
