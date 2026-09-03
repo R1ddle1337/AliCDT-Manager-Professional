@@ -47,7 +47,7 @@
               aria-controls="advanced-navigation"
               @click="advancedOpen = !advancedOpen"
             >
-              <span>高级管理</span>
+              <span>管理工具</span>
               <span class="nav-group-chevron" :class="advancedOpen ? 'nav-group-chevron-open' : ''" aria-hidden="true">›</span>
             </button>
             <div v-show="advancedOpen" id="advanced-navigation" class="nav-list nav-list-advanced">
@@ -137,10 +137,10 @@ const primaryNavItems = computed(() => isAdmin.value ? [
 ] : [{ path: '/usage', label: '我的用量', icon: 'workspace' }])
 
 const advancedNavItems = [
-  { path: '/relay-pools', label: '入口池（高级）', icon: 'pool' },
-  { path: '/relay-services', label: '独立转发（高级）', icon: 'service' },
-  { path: '/relay-nodes', label: '中转节点（高级）', icon: 'relay' },
-  { path: '/landing-nodes', label: '落地目标（高级）', icon: 'landing' },
+  { path: '/relay-pools', label: '入口池', icon: 'pool' },
+  { path: '/relay-services', label: '独立转发', icon: 'service' },
+  { path: '/relay-nodes', label: '中转节点', icon: 'relay' },
+  { path: '/landing-nodes', label: '落地目标', icon: 'landing' },
   { path: '/dns', label: 'DNS 托管', icon: 'dns' },
   { path: '/logs', label: '系统日志', icon: 'logs' },
   { path: '/security', label: '安全中心', icon: 'settings' },
