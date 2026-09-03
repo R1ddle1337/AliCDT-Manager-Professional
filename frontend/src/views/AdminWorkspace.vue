@@ -104,11 +104,12 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useRelayStore } from '../stores/relay'
 import MaskedIP from '../components/MaskedIP.vue'
 import MaskedText from '../components/MaskedText.vue'
+import { usePolling } from '../utils/polling'
 
 const router = useRouter()
 const store = useRelayStore()
@@ -118,7 +119,7 @@ const upgradeBusyIDs = ref(new Set())
 const upgradeAllBusy = ref(false)
 const message = ref('')
 const messageType = ref('success')
-let refreshTimer
+usePolling(() => store.fetchRelayNodes(), 5000)
 
 const entries = computed(() => [
   ...store.pools.map(pool => {
@@ -185,9 +186,7 @@ async function upgradeAll() {
 function showMessage(text, type = 'success') { message.value = text; messageType.value = type; window.setTimeout(() => { message.value = '' }, 5000) }
 onMounted(async () => {
   await Promise.all([store.fetchAll(), store.fetchUsers()])
-  refreshTimer = window.setInterval(() => store.fetchRelayNodes(), 5000)
 })
-onUnmounted(() => { if (refreshTimer) window.clearInterval(refreshTimer) })
 </script>
 
 <style scoped>

@@ -37,10 +37,11 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRelayStore } from '../stores/relay'
 import MaskedIP from '../components/MaskedIP.vue'
 import MaskedText from '../components/MaskedText.vue'
+import { usePolling } from '../utils/polling'
 const store = useRelayStore()
 const token = ref('')
 const tokenTTL = 30
@@ -51,7 +52,7 @@ const legacyNodes = computed(() => store.relayNodes.filter(isLegacy))
 const upgradeBusy = ref(false)
 const upgradeMessage = ref('')
 const upgradeMessageType = ref('success')
-let refreshTimer
+usePolling(() => store.fetchRelayNodes(), 5000)
 
 const installCommand = computed(() => token.value
   ? `curl -fsSL https://${window.location.host}/agent/install.sh | sh -s -- --server https://${window.location.host} --token ${token.value}`
@@ -103,12 +104,7 @@ function updateLabel(value) {
 
 onMounted(async () => {
   await Promise.all([store.fetchRelayNodes(), store.fetchCloud()])
-  // Upgrade state is reported by the Agent heartbeat. Poll only this light
-  // endpoint so operators can watch requested → draining → updating without
-  // manually refreshing the page.
-  refreshTimer = window.setInterval(() => store.fetchRelayNodes(), 5000)
 })
-onUnmounted(() => { if (refreshTimer) window.clearInterval(refreshTimer) })
 </script>
 
 <style scoped>

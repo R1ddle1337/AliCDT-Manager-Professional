@@ -193,6 +193,7 @@ const updateButtonLabel = computed(() => {
 })
 const updateStatusLabel = computed(() => updateState.value.message || ({ pending: '等待宿主机执行', running: '正在构建并切换', success: '更新完成', error: '更新失败' }[updateState.value.status] || ''))
 let updateTimer
+let updatePolling = false
 
 function handleViewportChange(event) {
   const wasMobile = isMobile.value
@@ -226,23 +227,33 @@ async function refreshUpdateStatus() {
 }
 
 function stopUpdatePolling() {
-  if (updateTimer) {
-    window.clearInterval(updateTimer)
-    updateTimer = undefined
+  updatePolling = false
+  if (updateTimer) window.clearTimeout(updateTimer)
+  updateTimer = undefined
+}
+
+async function pollUpdateStatus() {
+  updateTimer = undefined
+  if (!updatePolling) return
+  if (document.hidden || !navigator.onLine) {
+    updateTimer = window.setTimeout(pollUpdateStatus, 2000)
+    return
   }
+  await refreshUpdateStatus()
+  if (['success', 'error'].includes(updateState.value.status)) {
+    stopUpdatePolling()
+    if (updateState.value.status === 'success') {
+      window.setTimeout(() => window.location.reload(), 1200)
+    }
+    return
+  }
+  if (updatePolling) updateTimer = window.setTimeout(pollUpdateStatus, 2000)
 }
 
 function startUpdatePolling() {
   stopUpdatePolling()
-  updateTimer = window.setInterval(async () => {
-    await refreshUpdateStatus()
-    if (['success', 'error'].includes(updateState.value.status)) {
-      stopUpdatePolling()
-      if (updateState.value.status === 'success') {
-        window.setTimeout(() => window.location.reload(), 1200)
-      }
-    }
-  }, 2000)
+  updatePolling = true
+  updateTimer = window.setTimeout(pollUpdateStatus, 0)
 }
 
 async function requestUpdate() {

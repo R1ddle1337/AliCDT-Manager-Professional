@@ -73,18 +73,12 @@ export const useStore = defineStore('main', () => {
     await api.post(`/instances/${instanceId}/${action}`)
     await fetchInstances()
     const targetStatus = action === 'start' ? 'Running' : 'Stopped'
-    let count = 0
-    return new Promise((resolve) => {
-      const poll = setInterval(async () => {
-        await fetchInstances()
-        count++
-        const inst = instances.value.find(i => i.instance_id === instanceId)
-        if ((inst && inst.status === targetStatus) || count >= 15) {
-          clearInterval(poll)
-          resolve()
-        }
-      }, 2000)
-    })
+    if (instances.value.find(item => item.instance_id === instanceId)?.status === targetStatus) return
+    for (let count = 0; count < 15; count++) {
+      await new Promise(resolve => window.setTimeout(resolve, 2000))
+      await fetchInstances()
+      if (instances.value.find(item => item.instance_id === instanceId)?.status === targetStatus) return
+    }
   }
 
   async function releaseInstance(instanceId) {
