@@ -1,7 +1,7 @@
 <template>
-  <div class="modal-layer" role="dialog" aria-modal="true" tabindex="-1" @keydown.esc="$emit('close')">
+  <div class="modal-layer" @keydown="handleKeydown">
     <div class="modal-backdrop" @click="$emit('close')"></div>
-    <section ref="modalDialog" class="modal-dialog fade-in" :class="`modal-dialog-${props.size}`" tabindex="-1" @click.stop>
+    <section ref="modalDialog" class="modal-dialog fade-in" :class="`modal-dialog-${props.size}`" role="dialog" aria-modal="true" tabindex="-1" @click.stop>
       <button v-if="props.showClose" type="button" class="modal-close" aria-label="关闭" title="关闭" @click="$emit('close')">×</button>
       <div class="modal-scroll"><slot /></div>
     </section>
@@ -15,16 +15,55 @@ const props = defineProps({
   size: { type: String, default: 'wide' },
   showClose: { type: Boolean, default: true },
 })
-defineEmits(['close'])
+const emit = defineEmits(['close'])
 
 const modalDialog = ref(null)
 let previousOverflow = ''
+let previousActiveElement = null
+
+function focusableElements() {
+  if (!modalDialog.value) return []
+  return [...modalDialog.value.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+    .filter(element => !element.hidden && element.getAttribute('aria-hidden') !== 'true')
+}
+
+function handleKeydown(event) {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    emit('close')
+    return
+  }
+  if (event.key !== 'Tab') return
+  const elements = focusableElements()
+  if (!elements.length) {
+    event.preventDefault()
+    modalDialog.value?.focus()
+    return
+  }
+  const first = elements[0]
+  const last = elements[elements.length - 1]
+  if (event.shiftKey && (document.activeElement === first || document.activeElement === modalDialog.value)) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
 onMounted(() => {
+  previousActiveElement = document.activeElement
   previousOverflow = document.body.style.overflow
   document.body.style.overflow = 'hidden'
-  window.requestAnimationFrame(() => modalDialog.value?.focus())
+  window.requestAnimationFrame(() => {
+    const preferred = modalDialog.value?.querySelector('[autofocus], input:not([disabled]), select:not([disabled]), textarea:not([disabled])')
+    ;(preferred || modalDialog.value)?.focus()
+  })
 })
-onUnmounted(() => { document.body.style.overflow = previousOverflow })
+onUnmounted(() => {
+  document.body.style.overflow = previousOverflow
+  if (previousActiveElement?.isConnected) previousActiveElement.focus()
+})
 </script>
 
 <style scoped>

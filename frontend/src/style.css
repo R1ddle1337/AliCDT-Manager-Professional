@@ -38,6 +38,9 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   outline-offset: 1px;
 }
 
+.skip-link { position: fixed; top: 8px; left: 8px; z-index: 120; border-radius: 8px; background: #172033; padding: 9px 12px; color: #fff; font-size: 12px; font-weight: 700; transform: translateY(-150%); transition: transform .15s ease; }
+.skip-link:focus { transform: translateY(0); }
+
 ::-webkit-scrollbar { width: 7px; height: 7px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 99px; }
@@ -198,6 +201,10 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   .brand-caption { display: none; }
   .page-container { padding: 20px 16px 32px; }
   .nav-item { padding: 9px 11px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
 
 /* Modal forms share one readable rhythm. The scroll container keeps the

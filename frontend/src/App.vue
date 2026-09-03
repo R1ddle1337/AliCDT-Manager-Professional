@@ -1,5 +1,6 @@
 <template>
   <div class="app-shell min-h-screen bg-background text-text font-sans antialiased" :data-card-layout="ui.cardLayout">
+    <a v-if="!isLogin" href="#main-content" class="skip-link">跳转到主内容</a>
     <NotificationCenter />
     <div v-if="isLogin">
       <router-view v-slot="{ Component }">
@@ -80,7 +81,7 @@
       </aside>
       <button v-if="sidebarOpen" type="button" class="sidebar-backdrop" aria-label="关闭导航" @click="sidebarOpen = false"></button>
 
-      <main class="app-main">
+      <main id="main-content" class="app-main" tabindex="-1">
         <header class="app-topbar">
           <div class="topbar-leading">
             <button type="button" class="sidebar-toggle" :aria-expanded="sidebarOpen" aria-label="展开或收起侧栏" @click="sidebarOpen = !sidebarOpen"><span aria-hidden="true">☰</span></button>
