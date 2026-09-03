@@ -35,7 +35,6 @@
               >
                 <span class="nav-item-icon"><NavIcon :name="item.icon" /></span>
                 <span>{{ item.label }}</span>
-                <span v-if="item.recommended" class="nav-item-badge">推荐</span>
               </button>
             </div>
           </section>
@@ -137,9 +136,8 @@ const role = ref(localStorage.getItem('role') || 'admin')
 const isAdmin = computed(() => role.value !== 'user')
 const localDisplayName = computed(() => localStorage.getItem('displayName') || (isAdmin.value ? '管理员' : '用户'))
 const primaryNavItems = computed(() => isAdmin.value ? [
-  { path: '/', label: '运行总览', icon: 'dashboard' },
-  { path: '/workspace', label: '中转工作区', icon: 'workspace' },
-  { path: '/cloud-resources', label: '云资源工作区', icon: 'cloud' },
+  { path: '/workspace', label: '中转管理', icon: 'workspace' },
+  { path: '/cloud-resources', label: '云资源', icon: 'cloud' },
   { path: '/users', label: '用户管理', icon: 'users' },
 ] : [{ path: '/usage', label: '我的用量', icon: 'workspace' }])
 
@@ -175,7 +173,7 @@ watch(sidebarOpen, value => {
 })
 
 function isActive(path) {
-  return path === '/' ? route.path === '/' : route.path === path || route.path.startsWith(`${path}/`)
+  return route.path === path || route.path.startsWith(`${path}/`)
 }
 
 const advancedActive = computed(() => advancedNavItems.some(item => isActive(item.path)))

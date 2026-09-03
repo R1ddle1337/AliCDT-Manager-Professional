@@ -4,7 +4,7 @@
       <div>
         <div class="eyebrow">OPERATIONS WORKSPACE</div>
         <div class="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h1 class="page-title">中转工作区</h1>
+          <h1 class="page-title">中转管理</h1>
           <span class="live-status"><span class="status-dot status-dot-success"></span>实时状态</span>
         </div>
         <p class="page-subtitle">从一个页面查看入口、节点、落地目标和流量保护状态</p>
@@ -29,7 +29,7 @@
       <button class="btn-ghost border border-amber-200 px-3 py-1.5 text-xs text-amber-800" @click="activeTab = attentionItems[0].tab">查看详情</button>
     </section>
 
-    <nav class="workspace-tabs" aria-label="中转工作区视图">
+    <nav class="workspace-tabs" aria-label="中转管理视图">
       <button v-for="tab in tabs" :key="tab.id" type="button" :class="['workspace-tab', activeTab === tab.id ? 'workspace-tab-active' : '']" @click="activeTab = tab.id">
         <span>{{ tab.label }}</span><b>{{ tab.count }}</b>
       </button>

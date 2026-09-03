@@ -104,7 +104,6 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 
 .nav-item:hover { background: #f8fafc; color: #1d4ed8; }
 .nav-item-active { background: #eff6ff; border-color: #dbeafe; color: #1d4ed8; }
-.nav-item-badge { margin-left: auto; border-radius: 999px; background: #dbeafe; padding: 2px 6px; color: #1d4ed8; font-size: 9px; font-weight: 700; }
 .nav-group-toggle { display: flex; width: 100%; align-items: center; justify-content: space-between; border: 0; border-radius: 8px; background: transparent; padding: 6px 12px; color: #94a3b8; cursor: pointer; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-align: left; }
 .nav-group-toggle:hover, .nav-group-toggle-active { color: #475569; }
 .nav-group-chevron { font-size: 18px; font-weight: 400; line-height: 1; transition: transform .16s ease; }

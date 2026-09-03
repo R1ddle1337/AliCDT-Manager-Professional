@@ -7,7 +7,6 @@ import './style.css'
 import { clearSession } from './utils/session'
 
 const Login = () => import('./views/Login.vue')
-const RelayOverview = () => import('./views/RelayOverview.vue')
 const AdminWorkspace = () => import('./views/AdminWorkspace.vue')
 const RelayNodes = () => import('./views/RelayNodes.vue')
 const LandingNodes = () => import('./views/LandingNodes.vue')
@@ -32,8 +31,8 @@ const router = createRouter({
   scrollBehavior: () => ({ top: 0 }),
   routes: [
     { path: '/login', component: Login, meta: { title: '登录' } },
-    { path: '/', component: RelayOverview, meta: authMeta('运行总览') },
-    { path: '/workspace', component: AdminWorkspace, meta: authMeta('中转工作区') },
+    { path: '/', redirect: '/workspace' },
+    { path: '/workspace', component: AdminWorkspace, meta: authMeta('中转管理') },
     { path: '/instances', redirect: '/cloud-resources' },
     { path: '/accounts', redirect: '/cloud-resources' },
     { path: '/relay-nodes', component: RelayNodes, meta: authMeta('中转节点') },
