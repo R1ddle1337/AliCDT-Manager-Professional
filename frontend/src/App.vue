@@ -31,7 +31,7 @@
                 :aria-current="isActive(item.path) ? 'page' : undefined"
                 @click="navigate(item.path)"
               >
-                <span class="nav-item-icon" aria-hidden="true">{{ item.icon }}</span>
+                <span class="nav-item-icon"><NavIcon :name="item.icon" /></span>
                 <span>{{ item.label }}</span>
                 <span v-if="item.recommended" class="nav-item-badge">推荐</span>
               </button>
@@ -60,7 +60,7 @@
                 :aria-current="isActive(item.path) ? 'page' : undefined"
                 @click="navigate(item.path)"
               >
-                <span class="nav-item-icon" aria-hidden="true">{{ item.icon }}</span>
+                <span class="nav-item-icon"><NavIcon :name="item.icon" /></span>
                 <span>{{ item.label }}</span>
               </button>
             </div>
@@ -118,6 +118,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useRelayStore } from './stores/relay'
 import { useUIStore } from './stores/ui'
 import CardLayoutToggle from './components/CardLayoutToggle.vue'
+import NavIcon from './components/NavIcon.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -129,20 +130,20 @@ const role = ref(localStorage.getItem('role') || 'admin')
 const isAdmin = computed(() => role.value !== 'user')
 const localDisplayName = computed(() => localStorage.getItem('displayName') || (isAdmin.value ? '管理员' : '用户'))
 const primaryNavItems = computed(() => isAdmin.value ? [
-  { path: '/', label: '运行总览', icon: '⌂' },
-  { path: '/workspace', label: '中转工作区', icon: '◎', recommended: true },
-  { path: '/cloud-resources', label: '云资源工作区', icon: '▣' },
-  { path: '/users', label: '用户管理', icon: '♙' },
-] : [{ path: '/usage', label: '我的用量' }])
+  { path: '/', label: '运行总览', icon: 'dashboard' },
+  { path: '/workspace', label: '中转工作区', icon: 'workspace', recommended: true },
+  { path: '/cloud-resources', label: '云资源工作区', icon: 'cloud' },
+  { path: '/users', label: '用户管理', icon: 'users' },
+] : [{ path: '/usage', label: '我的用量', icon: 'workspace' }])
 
 const advancedNavItems = [
-  { path: '/relay-pools', label: '入口池（高级）', icon: '◈' },
-  { path: '/relay-services', label: '独立转发（高级）', icon: '↗' },
-  { path: '/relay-nodes', label: '中转节点（高级）', icon: '◇' },
-  { path: '/landing-nodes', label: '落地目标（高级）', icon: '⌁' },
-  { path: '/dns', label: 'DNS 托管', icon: '⌘' },
-  { path: '/logs', label: '系统日志', icon: '≡' },
-  { path: '/settings', label: '系统设置', icon: '⚙' },
+  { path: '/relay-pools', label: '入口池（高级）', icon: 'pool' },
+  { path: '/relay-services', label: '独立转发（高级）', icon: 'service' },
+  { path: '/relay-nodes', label: '中转节点（高级）', icon: 'relay' },
+  { path: '/landing-nodes', label: '落地目标（高级）', icon: 'landing' },
+  { path: '/dns', label: 'DNS 托管', icon: 'dns' },
+  { path: '/logs', label: '系统日志', icon: 'logs' },
+  { path: '/settings', label: '系统设置', icon: 'settings' },
 ]
 
 // Keep every existing URL represented so bookmarks and older workflows remain
