@@ -1089,6 +1089,37 @@ func (s *Store) migrate(ctx context.Context) error {
 		ON CONFLICT(account_id) DO NOTHING`, now); err != nil {
 		return fmt.Errorf("seed historical traffic snapshots: %w", err)
 	}
+	// SQLite does not automatically index foreign-key columns. Build these only
+	// after every compatibility column above has been added so upgrades from the
+	// earliest Go schema cannot fail before reaching the backfill steps.
+	performanceIndexes := []string{
+		`CREATE INDEX IF NOT EXISTS idx_instances_account ON instances(account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_relay_nodes_cloud_account ON relay_nodes(cloud_account_id) WHERE cloud_account_id IS NOT NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_relay_nodes_ecs_instance ON relay_nodes(ecs_instance_id) WHERE ecs_instance_id<>''`,
+		`CREATE INDEX IF NOT EXISTS idx_relay_services_pool ON relay_services(pool_id) WHERE pool_id IS NOT NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_service_targets_landing ON service_targets(landing_node_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_relay_pool_members_node ON relay_pool_members(relay_node_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_relay_pool_members_service ON relay_pool_members(service_id) WHERE service_id IS NOT NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_relay_pool_targets_landing ON relay_pool_targets(landing_node_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_dns_records_relay ON dns_managed_records(relay_node_id) WHERE relay_node_id IS NOT NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_dns_records_pool ON dns_managed_records(pool_id) WHERE pool_id IS NOT NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_dns_record_pools_pool ON dns_managed_record_pools(pool_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_entry_groups_user ON user_entry_groups(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_entry_groups_node ON user_entry_groups(relay_node_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_user_sessions_expiry ON user_sessions(expires_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_admin_sessions_expiry ON admin_sessions(expires_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_enrollment_tokens_expiry ON enrollment_tokens(expires_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_usage_checkpoints_user_epoch ON usage_meter_checkpoints(user_id,billing_epoch)`,
+		`CREATE INDEX IF NOT EXISTS idx_traffic_leases_active_user ON traffic_leases(user_id,billing_epoch,status,expires_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_relay_events_created ON relay_events(created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_logs_category_id ON logs(category,id DESC)`,
+	}
+	for _, statement := range performanceIndexes {
+		if _, err := s.db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("create performance index: %w", err)
+		}
+	}
 	return nil
 }
 
