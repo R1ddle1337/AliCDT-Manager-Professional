@@ -14,7 +14,10 @@ import (
 	"github.com/R1ddle1337/AliCDT-Manager-Professional/internal/controller"
 )
 
-var version = "dev"
+var (
+	version      = "dev"
+	agentVersion = "dev"
+)
 
 func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
@@ -24,7 +27,7 @@ func main() {
 	bootstrapToken := flag.String("enroll-token", env("CDT_BOOTSTRAP_ENROLL_TOKEN", ""), "optional initial one-time agent token")
 	frontendDir := flag.String("frontend-dir", env("CDT_FRONTEND_DIR", ""), "optional built frontend directory")
 	agentInstaller := flag.String("agent-installer", env("CDT_AGENT_INSTALLER", ""), "optional agent installer script")
-	agentVersion := flag.String("agent-version", env("CDT_AGENT_VERSION", version), "Agent release label exposed to enrolled agents")
+	agentReleaseVersion := flag.String("agent-version", env("CDT_AGENT_VERSION", agentVersion), "Agent release label exposed to enrolled agents")
 	agentReleaseSource := flag.String("agent-release-source", env("CDT_AGENT_RELEASE_SOURCE", "github"), "Agent update source: github or embedded")
 	agentReleaseRepo := flag.String("agent-release-repo", env("CDT_AGENT_RELEASE_REPO", "R1ddle1337/AliCDT-Manager-Professional"), "GitHub repository containing Agent releases")
 	agentReleaseChannel := flag.String("agent-release-channel", env("CDT_AGENT_RELEASE_CHANNEL", "latest"), "GitHub release tag or latest")
@@ -52,7 +55,7 @@ func main() {
 			fatal(err)
 		}
 	}
-	server, err := controller.NewServer(store, controller.ServerOptions{AdminToken: *adminToken, FrontendDir: *frontendDir, AgentInstallerPath: *agentInstaller, AgentVersion: *agentVersion, AgentReleaseSource: *agentReleaseSource, AgentReleaseRepo: *agentReleaseRepo, AgentReleaseChannel: *agentReleaseChannel, AgentReleaseCacheDir: *agentReleaseCacheDir, UpdateRequestFile: *updateRequestFile, UpdateStatusFile: *updateStatusFile, AgentUpgradeRequestFile: *agentUpgradeRequestFile, TrafficSafetyWindow: *trafficSafetyWindow, TrafficSafetyWindowSet: true, DispatchToken: *dispatchToken})
+	server, err := controller.NewServer(store, controller.ServerOptions{AdminToken: *adminToken, FrontendDir: *frontendDir, AgentInstallerPath: *agentInstaller, AgentVersion: *agentReleaseVersion, AgentReleaseSource: *agentReleaseSource, AgentReleaseRepo: *agentReleaseRepo, AgentReleaseChannel: *agentReleaseChannel, AgentReleaseCacheDir: *agentReleaseCacheDir, UpdateRequestFile: *updateRequestFile, UpdateStatusFile: *updateStatusFile, AgentUpgradeRequestFile: *agentUpgradeRequestFile, TrafficSafetyWindow: *trafficSafetyWindow, TrafficSafetyWindowSet: true, DispatchToken: *dispatchToken})
 	if err != nil {
 		fatal(err)
 	}

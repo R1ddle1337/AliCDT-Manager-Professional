@@ -45,7 +45,14 @@ fi
 if docker image inspect alicdt-dispatcher:production >/dev/null 2>&1; then
   docker tag alicdt-dispatcher:production "$ROLLBACK_IMAGE"
 fi
-CDT_BUILD_VERSION="$(git -C "$REPO_DIR" rev-parse --short=12 HEAD)" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build --pull dispatcher
+source_fingerprint() {
+  local path
+  for path in "$@"; do
+    git -C "$REPO_DIR" rev-parse "HEAD:$path"
+  done | sha256sum | cut -c1-12
+}
+dispatcher_build_version="dispatcher-$(source_fingerprint cmd/dispatcher internal/dispatcher internal/protocol go.mod go.sum Dockerfile.dispatcher)"
+CDT_DISPATCHER_BUILD_VERSION="$dispatcher_build_version" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build --pull dispatcher
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --force-recreate --no-build --wait --wait-timeout 120
 health_port="${CDT_DISPATCH_HEALTH_PORT:-9091}"
 curl -fsS "http://127.0.0.1:$health_port/readyz" >/dev/null

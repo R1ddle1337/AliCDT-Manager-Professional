@@ -86,6 +86,8 @@ jobs:
           labels: ${{ steps.metadata.outputs.labels }}
           build-args: |
             BUILD_VERSION=${{ github.ref_name }}
+            AGENT_BUILD_VERSION=${{ github.ref_name }}
+            DISPATCHER_BUILD_VERSION=${{ github.ref_name }}
 
   dispatcher-image:
     runs-on: ubuntu-latest
@@ -114,4 +116,4 @@ jobs:
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
           build-args: |
-            BUILD_VERSION=${{ github.ref_name }}
+            DISPATCHER_BUILD_VERSION=${{ github.ref_name }}

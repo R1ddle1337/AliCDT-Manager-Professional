@@ -5,6 +5,8 @@ services:
       dockerfile: Dockerfile.controller
       args:
         BUILD_VERSION: ${CDT_BUILD_VERSION:-dev}
+        AGENT_BUILD_VERSION: ${CDT_AGENT_BUILD_VERSION:-dev}
+        DISPATCHER_BUILD_VERSION: ${CDT_DISPATCHER_BUILD_VERSION:-dev}
     image: alicdt-controller:dev
     container_name: alicdt-controller-dev
     restart: unless-stopped
