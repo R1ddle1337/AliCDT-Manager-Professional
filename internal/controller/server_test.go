@@ -2,8 +2,10 @@ package controller
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +15,72 @@ import (
 
 	"github.com/R1ddle1337/AliCDT-Manager-Professional/internal/protocol"
 )
+
+func TestDecodeJSONRejectsTrailingValue(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"name":"first"} {"name":"second"}`))
+	var payload struct {
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(request, &payload); err == nil {
+		t.Fatal("expected multiple JSON values to be rejected")
+	}
+}
+
+func TestFrontendCachingAndCompression(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	frontendDir := t.TempDir()
+	assetsDir := filepath.Join(frontendDir, "assets")
+	if err := os.MkdirAll(assetsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(frontendDir, "index.html"), []byte("<html><body>console</body></html>"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	javascript := bytes.Repeat([]byte("const status = 'healthy';\n"), 100)
+	if err := os.WriteFile(filepath.Join(assetsDir, "index-contenthash.js"), javascript, 0600); err != nil {
+		t.Fatal(err)
+	}
+	server, err := NewServer(store, ServerOptions{AdminToken: "admin", FrontendDir: frontendDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	indexRecorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(indexRecorder, httptest.NewRequest(http.MethodGet, "/dns", nil))
+	if indexRecorder.Code != http.StatusOK {
+		t.Fatalf("SPA fallback returned %d", indexRecorder.Code)
+	}
+	if got := indexRecorder.Header().Get("Cache-Control"); got != "no-cache, must-revalidate" {
+		t.Fatalf("unexpected index cache policy %q", got)
+	}
+
+	assetRequest := httptest.NewRequest(http.MethodGet, "/assets/index-contenthash.js", nil)
+	assetRequest.Header.Set("Accept-Encoding", "gzip")
+	assetRecorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(assetRecorder, assetRequest)
+	if got := assetRecorder.Header().Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
+		t.Fatalf("unexpected asset cache policy %q", got)
+	}
+	if got := assetRecorder.Header().Get("Content-Encoding"); got != "gzip" {
+		t.Fatalf("expected gzip content encoding, got %q", got)
+	}
+	reader, err := gzip.NewReader(assetRecorder.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decompressed, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(decompressed, javascript) {
+		t.Fatal("compressed asset content changed")
+	}
+}
 
 func TestControllerAgentLifecycle(t *testing.T) {
 	store, err := OpenStore(":memory:")

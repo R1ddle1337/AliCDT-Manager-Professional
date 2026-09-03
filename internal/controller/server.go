@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -146,6 +147,7 @@ func (s *Server) routes() chi.Router {
 	router.Use(middleware.Recoverer)
 	router.Use(middleware.Timeout(30 * time.Second))
 	router.Use(securityHeaders)
+	router.Use(middleware.Compress(5))
 	router.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "service": "alicdt-controller"})
 	})
@@ -400,11 +402,25 @@ func (s *Server) serveFrontend(w http.ResponseWriter, r *http.Request) {
 	relative, err := filepath.Rel(s.frontendDir, candidate)
 	if err == nil && !strings.HasPrefix(relative, "..") {
 		if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
+			setFrontendCachePolicy(w, clean)
 			http.ServeFile(w, r, candidate)
 			return
 		}
 	}
+	setFrontendCachePolicy(w, "index.html")
 	http.ServeFile(w, r, filepath.Join(s.frontendDir, "index.html"))
+}
+
+func setFrontendCachePolicy(w http.ResponseWriter, path string) {
+	if path == "index.html" {
+		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		return
+	}
+	if strings.HasPrefix(path, "assets/") {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=3600")
 }
 
 func (s *Server) adminAuth(next http.Handler) http.Handler {
@@ -1128,6 +1144,13 @@ func decodeJSON(r *http.Request, destination interface{}) error {
 	decoder := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {
+		return fmt.Errorf("invalid JSON: %w", err)
+	}
+	var extra interface{}
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("invalid JSON: request body must contain exactly one value")
+		}
 		return fmt.Errorf("invalid JSON: %w", err)
 	}
 	return nil
