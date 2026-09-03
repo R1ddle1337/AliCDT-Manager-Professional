@@ -7,6 +7,7 @@ import './style.css'
 
 import Login from './views/Login.vue'
 import RelayOverview from './views/RelayOverview.vue'
+import AdminWorkspace from './views/AdminWorkspace.vue'
 import RelayNodes from './views/RelayNodes.vue'
 import LandingNodes from './views/LandingNodes.vue'
 import RelayServices from './views/RelayServices.vue'
@@ -23,6 +24,7 @@ const router = createRouter({
   routes: [
     { path: '/login', component: Login },
     { path: '/', component: RelayOverview, meta: { auth: true, admin: true } },
+    { path: '/workspace', component: AdminWorkspace, meta: { auth: true, admin: true } },
     { path: '/instances', redirect: '/cloud-resources' },
     { path: '/accounts', redirect: '/cloud-resources' },
     { path: '/relay-nodes', component: RelayNodes, meta: { auth: true, admin: true } },

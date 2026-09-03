@@ -37,7 +37,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRelayStore } from '../stores/relay'
 import MaskedIP from '../components/MaskedIP.vue'
 import MaskedText from '../components/MaskedText.vue'
@@ -51,6 +51,7 @@ const legacyNodes = computed(() => store.relayNodes.filter(isLegacy))
 const upgradeBusy = ref(false)
 const upgradeMessage = ref('')
 const upgradeMessageType = ref('success')
+let refreshTimer
 
 const installCommand = computed(() => token.value
   ? `curl -fsSL https://${window.location.host}/agent/install.sh | sh -s -- --server https://${window.location.host} --token ${token.value}`
@@ -75,6 +76,7 @@ async function requestUpgrade(node) {
   if (!window.confirm(`确认远程升级 Agent“${node.name}”？Agent 会先排空新连接，升级期间现有连接不会被主动中断。`)) return
   upgradeBusy.value = true
   upgradeMessage.value = ''
+  upgradeMessageType.value = 'success'
   try { await store.requestAgentUpgrade(node.id); upgradeMessage.value = `已向“${node.name}”下发远程升级请求，Agent 将自动下载校验并重启。` } catch (error) { upgradeMessageType.value = 'error'; upgradeMessage.value = error.response?.data?.error || '远程升级请求失败' } finally { upgradeBusy.value = false }
 }
 async function requestUpgradeAll() {
@@ -94,10 +96,17 @@ function formatTime(value) {
 }
 
 function updateLabel(value) {
-  return { draining: '排空中', updating: '更新中', failed: '更新失败' }[value] || value
+  return { requested: '等待 Agent 拉取', draining: '排空中', updating: '更新中', failed: '更新失败' }[value] || value
 }
 
-onMounted(() => Promise.all([store.fetchRelayNodes(), store.fetchCloud()]))
+onMounted(async () => {
+  await Promise.all([store.fetchRelayNodes(), store.fetchCloud()])
+  // Upgrade state is reported by the Agent heartbeat. Poll only this light
+  // endpoint so operators can watch requested → draining → updating without
+  // manually refreshing the page.
+  refreshTimer = window.setInterval(() => store.fetchRelayNodes(), 5000)
+})
+onUnmounted(() => { if (refreshTimer) window.clearInterval(refreshTimer) })
 </script>
 
 <style scoped>

@@ -124,16 +124,17 @@ const isAdmin = computed(() => role.value !== 'user')
 const localDisplayName = computed(() => localStorage.getItem('displayName') || (isAdmin.value ? '管理员' : '用户'))
 const primaryNavItems = computed(() => isAdmin.value ? [
   { path: '/', label: '运行总览' },
-  { path: '/relay-pools', label: '统一入口', recommended: true },
-  { path: '/relay-nodes', label: '中转节点' },
-  { path: '/landing-nodes', label: '落地节点' },
+  { path: '/workspace', label: '中转工作区', recommended: true },
   { path: '/cloud-resources', label: '云资源工作区' },
   { path: '/users', label: '用户管理' },
 ] : [{ path: '/usage', label: '我的用量' }])
 
 const advancedNavItems = [
+  { path: '/relay-pools', label: '入口池（高级）' },
+  { path: '/relay-services', label: '独立转发（高级）' },
+  { path: '/relay-nodes', label: '中转节点（高级）' },
+  { path: '/landing-nodes', label: '落地目标（高级）' },
   { path: '/dns', label: 'DNS 托管' },
-  { path: '/relay-services', label: '单机转发' },
   { path: '/logs', label: '系统日志' },
   { path: '/settings', label: '系统设置' },
 ]
