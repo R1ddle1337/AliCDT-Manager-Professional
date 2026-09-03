@@ -19,7 +19,10 @@ services:
     environment:
       CDT_ADMIN_TOKEN: ${CDT_ADMIN_TOKEN:?set CDT_ADMIN_TOKEN}
       CDT_DATABASE: /app/data/guard.db
-      CDT_AGENT_RELEASE_SOURCE: github
+      # The local image contains the checksum-verified Agent built from this
+      # deployment. Set CDT_AGENT_RELEASE_SOURCE=github when a published
+      # GitHub release should be authoritative instead.
+      CDT_AGENT_RELEASE_SOURCE: ${CDT_AGENT_RELEASE_SOURCE:-embedded}
       CDT_AGENT_RELEASE_REPO: R1ddle1337/AliCDT-Manager-Professional
       CDT_AGENT_RELEASE_CHANNEL: latest
       CDT_AGENT_RELEASE_CACHE_DIR: /app/data/agent-releases

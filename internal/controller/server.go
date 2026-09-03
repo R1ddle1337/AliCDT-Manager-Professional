@@ -99,8 +99,10 @@ func NewServer(store *Store, opts ServerOptions) (*Server, error) {
 		cloud.SetTrafficSafetyWindow(opts.TrafficSafetyWindow)
 	}
 	server := &Server{store: store, adminToken: adminToken, dispatchToken: dispatchToken, frontendDir: opts.FrontendDir, agentInstallerPath: opts.AgentInstallerPath, updateRequestFile: opts.UpdateRequestFile, updateStatusFile: opts.UpdateStatusFile, agentVersion: agentVersion, agentReleaseSource: releaseSource, agentReleaseRepo: releaseRepo, agentReleaseChannel: releaseChannel, agentReleaseCacheDir: releaseCacheDir, cloud: cloud}
-	if cachedVersion, err := os.ReadFile(filepath.Join(releaseCacheDir, "version")); err == nil {
-		server.agentReleaseVersion = strings.TrimSpace(string(cachedVersion))
+	if releaseSource == "github" {
+		if cachedVersion, err := os.ReadFile(filepath.Join(releaseCacheDir, "version")); err == nil {
+			server.agentReleaseVersion = strings.TrimSpace(string(cachedVersion))
+		}
 	}
 	if opts.AgentInstallerPath != "" {
 		server.agentAssetsDir = filepath.Dir(opts.AgentInstallerPath)
@@ -305,14 +307,18 @@ func (s *Server) serveAgentAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	path := ""
 	if asset == "checksums.txt" {
-		if s.agentReleaseCacheDir != "" {
-			candidate := filepath.Join(s.agentReleaseCacheDir, asset)
-			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-				path = candidate
-			}
-		}
-		if path == "" && s.agentAssetsDir != "" {
+		if s.agentReleaseSource == "embedded" {
 			path = filepath.Join(s.agentAssetsDir, asset)
+		} else {
+			if s.agentReleaseCacheDir != "" {
+				candidate := filepath.Join(s.agentReleaseCacheDir, asset)
+				if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+					path = candidate
+				}
+			}
+			if path == "" && s.agentAssetsDir != "" {
+				path = filepath.Join(s.agentAssetsDir, asset)
+			}
 		}
 	} else {
 		path, _ = s.agentAssetPath(asset)

@@ -35,6 +35,7 @@ if [ -f "$ENV_FILE" ]; then
   sed -i '/^CDT_AGENT_UPDATE_INTERVAL=/d' "$ENV_FILE"
   if ! grep -q '^CDT_AGENT_UPDATE_TIME=' "$ENV_FILE"; then echo 'CDT_AGENT_UPDATE_TIME=04:00' >> "$ENV_FILE"; fi
   if ! grep -q '^CDT_AGENT_UPDATE_LOCATION=' "$ENV_FILE"; then echo 'CDT_AGENT_UPDATE_LOCATION=Asia/Shanghai' >> "$ENV_FILE"; fi
+  if ! grep -q '^CDT_AGENT_AUTO_FIREWALL=' "$ENV_FILE"; then echo 'CDT_AGENT_AUTO_FIREWALL=true' >> "$ENV_FILE"; fi
 fi
 
 # Install/update the disk-protection task alongside the Agent.  It is kept
@@ -55,17 +56,32 @@ if [ -f "$BINARY" ]; then install -m 0700 "$BINARY" "/var/lib/cdt-relay/backups/
 install -m 0755 "${TMP_DIR}/${ASSET}" "${BINARY}.new"
 mv -f "${BINARY}.new" "$BINARY"
 
+# Remove the temporary UFW-only timer used by pre-firewall-manager Agents.
+# Native Agent reconciliation now handles all supported firewall backends.
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl disable --now cdt-relay-firewall-sync.timer >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/cdt-relay-firewall-sync.timer /etc/systemd/system/cdt-relay-firewall-sync.service
+  systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+if [ -f /etc/crontabs/root ]; then
+  sed -i '/# cdt-relay-firewall-sync/d' /etc/crontabs/root
+fi
+rm -f /usr/local/sbin/cdt-relay-firewall-sync /etc/cdt-relay/firewall-sync.env
+
 SYSTEMD_UNIT="/etc/systemd/system/${SERVICE}.service"
 OPENRC_UNIT="/etc/init.d/${SERVICE}"
 if [ -f "$SYSTEMD_UNIT" ] && command -v systemctl >/dev/null 2>&1; then
   if grep -q '^ReadWritePaths=' "$SYSTEMD_UNIT"; then
-    sed -i 's#^ReadWritePaths=.*#ReadWritePaths=/var/lib/cdt-relay /usr/local/bin#' "$SYSTEMD_UNIT"
+    sed -i 's#^ReadWritePaths=.*#ReadWritePaths=/var/lib/cdt-relay /usr/local/bin /etc/ufw#' "$SYSTEMD_UNIT"
   else
-    sed -i '/^ProtectSystem=/a ReadWritePaths=/var/lib/cdt-relay /usr/local/bin' "$SYSTEMD_UNIT"
+    sed -i '/^ProtectSystem=/a ReadWritePaths=/var/lib/cdt-relay /usr/local/bin /etc/ufw' "$SYSTEMD_UNIT"
   fi
   systemctl daemon-reload
   systemctl restart "$SERVICE"
 elif [ -f "$OPENRC_UNIT" ] && command -v rc-service >/dev/null 2>&1; then
+  if grep -q '^  export .*CDT_AGENT_DATA_DIR' "$OPENRC_UNIT" && ! grep -q '^  export .*CDT_AGENT_AUTO_FIREWALL' "$OPENRC_UNIT"; then
+    sed -i '/^  export .*CDT_AGENT_DATA_DIR/ s/$/ CDT_AGENT_AUTO_FIREWALL/' "$OPENRC_UNIT"
+  fi
   rc-service "$SERVICE" restart
 else
   echo "Agent binary upgraded, but no systemd/OpenRC service was found; restart ${SERVICE} manually." >&2

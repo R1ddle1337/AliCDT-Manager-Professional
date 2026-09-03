@@ -104,6 +104,15 @@ The relay is protocol-transparent. SS2022, VLESS, REALITY, WebSocket, gRPC and
 other TCP/UDP protocols remain encrypted end-to-end between client and landing
 server.
 
+The Agent reconciles host firewall rules whenever its config changes and every
+30 seconds. It supports an already-active UFW, firewalld, nftables, or
+iptables/ip6tables installation, adds only enabled externally bound listener
+ports, and removes only rules it previously created when a service or pool is
+disabled. It never enables or resets a firewall, does nothing on hosts without
+one, and leaves cloud security-group policy under operator control. Set
+`CDT_AGENT_AUTO_FIREWALL=false` in `/etc/cdt-relay/agent.env` to disable
+automatic host-firewall changes.
+
 ## Relay pool eligibility and automatic draining
 
 A pool publishes one A record for each eligible member. A member is eligible

@@ -111,6 +111,7 @@ CDT_NODE_NAME="$(escape_env "$NODE_NAME")"
 CDT_PUBLIC_IP="$(escape_env "$PUBLIC_IP")"
 CDT_AGENT_DATA_DIR=/var/lib/cdt-relay
 CDT_AGENT_AUTO_UPDATE=true
+CDT_AGENT_AUTO_FIREWALL=true
 CDT_AGENT_UPDATE_TIME=04:00
 CDT_AGENT_UPDATE_LOCATION=Asia/Shanghai
 EOF
@@ -149,7 +150,7 @@ NoNewPrivileges=true
 ProtectHome=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/cdt-relay /usr/local/bin
+ReadWritePaths=/var/lib/cdt-relay /usr/local/bin /etc/ufw
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
@@ -190,7 +191,7 @@ start_pre() {
   fi
   . /etc/cdt-relay/agent.env
   export CDT_CONTROLLER_URL CDT_ENROLL_TOKEN CDT_NODE_NAME CDT_PUBLIC_IP
-  export CDT_AGENT_DATA_DIR CDT_AGENT_AUTO_UPDATE CDT_AGENT_UPDATE_TIME
+  export CDT_AGENT_DATA_DIR CDT_AGENT_AUTO_UPDATE CDT_AGENT_AUTO_FIREWALL CDT_AGENT_UPDATE_TIME
   export CDT_AGENT_UPDATE_LOCATION CDT_AGENT_UPDATE_INTERVAL
 }
 EOF

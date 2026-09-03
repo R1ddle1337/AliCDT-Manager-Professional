@@ -18,8 +18,11 @@ docker compose --env-file /root/.config/alicdt-manager/production.env \
 
 The controller listens on the existing loopback port (`18000` by default),
 uses `/app/alicdt-manager/data` for the SQLite database, and serves the Vue
-console and Agent assets from the same image. Keep the admin and dispatch
-tokens out of Git and restrict the environment file to mode `0600`.
+console and checksum-verified Agent assets from the same image. The production
+Compose default is the image's embedded Agent; set
+`CDT_AGENT_RELEASE_SOURCE=github` explicitly when a published GitHub release
+should be authoritative. Keep the admin and dispatch tokens out of Git and
+restrict the environment file to mode `0600`.
 
 ## Updates and rollback
 

@@ -36,6 +36,8 @@ type Options struct {
 	HeartbeatEvery      time.Duration
 	AutoUpdate          bool
 	AutoUpdateSet       bool
+	AutoFirewall        bool
+	AutoFirewallSet     bool
 	UpdateCheckInterval time.Duration
 	UpdateTime          string
 	UpdateLocation      string
@@ -59,6 +61,8 @@ type Client struct {
 	updateMu     sync.RWMutex
 	updateStatus string
 	updateError  string
+	autoFirewall bool
+	firewall     *firewallManager
 }
 
 func New(opts Options, engine *relay.Engine) (*Client, error) {
@@ -81,6 +85,9 @@ func New(opts Options, engine *relay.Engine) (*Client, error) {
 	}
 	if !opts.AutoUpdateSet {
 		opts.AutoUpdate = true
+	}
+	if !opts.AutoFirewallSet {
+		opts.AutoFirewall = true
 	}
 	if strings.TrimSpace(opts.UpdateTime) == "" {
 		opts.UpdateTime = "04:00"
@@ -105,6 +112,8 @@ func New(opts Options, engine *relay.Engine) (*Client, error) {
 		engine:       engine,
 		updateStatus: "idle",
 		startedAt:    time.Now().UTC(),
+		autoFirewall: opts.AutoFirewall,
+		firewall:     newFirewallManager(opts.DataDir),
 	}, nil
 }
 
@@ -121,6 +130,9 @@ func (c *Client) Run(ctx context.Context) error {
 	if err := c.loadCachedConfig(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "cached config could not be restored: %v\n", err)
 	}
+	if c.hasConfig {
+		c.syncFirewall(ctx, c.lastConfig)
+	}
 	if err := c.pollConfig(ctx); err != nil {
 		// The agent remains available and retries; the last valid config continues
 		// serving even when the controller is temporarily unavailable.
@@ -136,8 +148,10 @@ func (c *Client) Run(ctx context.Context) error {
 
 	pollTicker := time.NewTicker(c.opts.PollInterval)
 	heartbeatTicker := time.NewTicker(c.opts.HeartbeatEvery)
+	firewallTicker := time.NewTicker(30 * time.Second)
 	defer pollTicker.Stop()
 	defer heartbeatTicker.Stop()
+	defer firewallTicker.Stop()
 	var updateTicker *time.Ticker
 	var updateTimer *time.Timer
 	var updateC <-chan time.Time
@@ -164,6 +178,10 @@ func (c *Client) Run(ctx context.Context) error {
 				fmt.Fprintf(os.Stderr, "heartbeat failed: %v\n", err)
 			} else {
 				_ = c.confirmPendingUpdate()
+			}
+		case <-firewallTicker.C:
+			if c.hasConfig {
+				c.syncFirewall(ctx, c.lastConfig)
 			}
 		case <-updateC:
 			if c.opts.AutoUpdate {
@@ -243,7 +261,21 @@ func (c *Client) loadCachedConfig(ctx context.Context) error {
 	}
 	c.lastConfig = config
 	c.hasConfig = true
+	c.syncFirewall(ctx, config)
 	return nil
+}
+
+func (c *Client) syncFirewall(ctx context.Context, config protocol.AgentConfig) {
+	if !c.autoFirewall || c.firewall == nil {
+		return
+	}
+	syncCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := c.firewall.sync(syncCtx, config); err != nil && ctx.Err() == nil {
+		// Firewall reconciliation is intentionally best-effort. A broken or
+		// restricted host firewall must not stop an already-valid relay config.
+		fmt.Fprintf(os.Stderr, "firewall sync failed: %v\n", err)
+	}
 }
 
 func (c *Client) loadOrEnroll(ctx context.Context) error {
@@ -415,6 +447,7 @@ func (c *Client) pollConfig(ctx context.Context) error {
 	}
 	c.lastConfig = config
 	c.hasConfig = true
+	c.syncFirewall(ctx, config)
 	return nil
 }
 

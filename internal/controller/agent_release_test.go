@@ -60,3 +60,43 @@ func TestAgentReleaseReturnsChecksumAndAvailability(t *testing.T) {
 		t.Fatalf("unexpected release: %+v", release)
 	}
 }
+
+func TestEmbeddedAgentReleaseTakesPrecedenceOverCachedGitHubAsset(t *testing.T) {
+	assets := t.TempDir()
+	cache := t.TempDir()
+	assetName := "cdt-relay-agent-linux-amd64"
+	if err := os.WriteFile(filepath.Join(assets, assetName), []byte("embedded"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assets, "checksums.txt"), []byte("embedded-checksum  "+assetName+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assets, "install.sh"), []byte("#!/bin/sh\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, assetName), []byte("cached"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, "checksums.txt"), []byte("cached-checksum  "+assetName+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, "version"), []byte("old-github-version\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	server, err := NewServer(store, ServerOptions{AdminToken: "admin", AgentInstallerPath: filepath.Join(assets, "install.sh"), AgentVersion: "embedded-version", AgentReleaseSource: "embedded", AgentReleaseCacheDir: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := server.agentAssetPath(assetName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != filepath.Join(assets, assetName) || server.agentReleaseVersion != "" {
+		t.Fatalf("embedded release did not take precedence: path=%q cached-version=%q", path, server.agentReleaseVersion)
+	}
+}

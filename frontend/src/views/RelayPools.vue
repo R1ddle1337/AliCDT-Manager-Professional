@@ -24,7 +24,7 @@
             <div class="sm:col-span-2"><label class="field-label">固定入口域名</label><input v-model.trim="form.hostname" class="input" placeholder="例如：relay.example.com" required /><p class="field-hint">这是 Dispatcher 网关对外提供服务的完整域名；控制器不会为它托管 DNS。</p></div>
           </template>
           <div><label class="field-label">监听端口</label><input v-model.number="form.listen_port" type="number" min="1" max="65535" class="input" required /></div>
-          <div><label class="field-label">转发协议</label><select v-model="form.network" class="input"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="tcp+udp">TCP + UDP</option></select></div>
+          <div><label class="field-label">转发协议</label><select v-model="form.network" class="input"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="tcp+udp">TCP + UDP</option></select><p class="field-hint">Agent 会自动同步主机防火墙端口；云安全组仍需允许该端口。</p></div>
           <div><label class="field-label">Relay 内部调度</label><select v-model="form.mode" class="input"><option value="failover">主备</option><option value="round_robin">轮询</option><option value="weighted">加权</option><option value="ip_hash">IP Hash</option></select></div>
           <label class="flex items-center gap-2 self-end pb-2 text-sm text-slate-600"><input v-model="form.enabled" type="checkbox" />启用入口池</label>
           <label class="flex items-center gap-2 self-end pb-2 text-sm text-slate-600"><input v-model="form.auto_drain" type="checkbox" />流量达阈值自动排空</label>

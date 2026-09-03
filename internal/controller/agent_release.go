@@ -74,8 +74,16 @@ func (s *Server) agentAssetPath(asset string) (string, error) {
 		return "", errors.New("unsupported agent asset")
 	}
 	s.agentReleaseMu.Lock()
+	releaseSource := s.agentReleaseSource
 	cacheDir := s.agentReleaseCacheDir
+	assetsDir := s.agentAssetsDir
 	s.agentReleaseMu.Unlock()
+	if releaseSource == "embedded" && assetsDir != "" {
+		candidate := filepath.Join(assetsDir, asset)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate, nil
+		}
+	}
 	if cacheDir != "" {
 		candidate := filepath.Join(cacheDir, asset)
 		checksumPath := filepath.Join(cacheDir, "checksums.txt")
@@ -85,10 +93,10 @@ func (s *Server) agentAssetPath(asset string) (string, error) {
 			}
 		}
 	}
-	if s.agentAssetsDir == "" {
+	if assetsDir == "" {
 		return "", os.ErrNotExist
 	}
-	candidate := filepath.Join(s.agentAssetsDir, asset)
+	candidate := filepath.Join(assetsDir, asset)
 	if info, err := os.Stat(candidate); err != nil || info.IsDir() {
 		return "", os.ErrNotExist
 	}

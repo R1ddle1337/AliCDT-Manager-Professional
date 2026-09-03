@@ -26,7 +26,8 @@
 - 添加账户先保存后同步，避免等待阿里云接口返回
 - 账户卡片直接生成 root SSH Agent 安装命令，注册码一次性使用
 - Agent 自动升级：HTTPS 下载、SHA-256 校验、原子替换、失败自动回滚
-- Agent 默认每天北京时间 04:00 检查 GitHub Release；控制器会缓存已验证版本，GitHub 暂时不可用时不影响现有转发
+- Agent 默认每天北京时间 04:00 检查控制器内置的已校验版本；需要 GitHub Release 时设置 `CDT_AGENT_RELEASE_SOURCE=github`，GitHub 暂时不可用时不影响现有转发
+- Agent 自动管理现有 UFW、firewalld、nftables 或 iptables 的入口规则；入口服务/池停用后只删除 Agent 自己创建的规则，不会自行启用或重置防火墙
 - Alpine/小磁盘 Agent 自动安装 sing-box `access.log` 守护任务：每分钟检查，超过 50 MiB 原地清空（可配置）
 - TCP/UDP/TCP+UDP 透明转发，支持主备、轮询、加权和源 IP Hash
 - TCP 长连接与 UDP 会话固定落地目标，健康异常时新连接自动切换
