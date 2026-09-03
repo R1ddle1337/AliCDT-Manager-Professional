@@ -17,7 +17,7 @@
     </header>
 
     <section class="summary-grid summary-fixed">
-      <article class="card workspace-stat stat-blue"><span>Relay Agent</span><strong>{{ onlineNodes }}<small>/ {{ store.relayNodes.length }}</small></strong><em>{{ legacyNodes.length ? `${legacyNodes.length} 台待升级` : '全部支持当前能力' }}</em></article>
+      <article class="card workspace-stat stat-blue"><span>Relay Agent</span><strong>{{ onlineNodes }}<small>/ {{ store.relayNodes.length }}</small></strong><em>{{ upgradeNodes.length ? `${upgradeNodes.length} 台待升级` : '全部为最新版本' }}</em></article>
       <article class="card workspace-stat stat-indigo"><span>运行入口</span><strong>{{ enabledEntries }}<small>/ {{ entries.length }}</small></strong><em>{{ unhealthyEntries ? `${unhealthyEntries} 个入口需要关注` : '入口状态正常' }}</em></article>
       <article class="card workspace-stat stat-emerald"><span>落地目标</span><strong>{{ enabledLandingNodes }}<small>/ {{ store.landingNodes.length }}</small></strong><em>{{ store.landingNodes.length ? '可用于故障切换' : '请先添加落地目标' }}</em></article>
       <article class="card workspace-stat stat-amber"><span>本月已计量</span><strong>{{ usageGB.toFixed(2) }}<small>GB</small></strong><em>{{ quotaExceededCount ? `${quotaExceededCount} 个入口已达额度` : '暂无额度熔断' }}</em></article>
@@ -52,14 +52,14 @@
         </article>
 
         <article class="card panel-card">
-          <div class="panel-heading"><div><h2>Agent 状态</h2><p>心跳、能力和远程升级状态</p></div><div class="panel-heading-actions"><button v-if="legacyNodes.length" class="btn-ghost border border-blue-100 px-2 py-1 text-[10px] text-blue-700" :disabled="upgradeAllBusy" @click="upgradeAll">{{ upgradeAllBusy ? '提交中...' : `升级全部 ${legacyNodes.length} 台` }}</button><span class="panel-code">AGENT</span></div></div>
+          <div class="panel-heading"><div><h2>Agent 状态</h2><p>心跳、能力和远程升级状态</p></div><div class="panel-heading-actions"><button v-if="upgradeNodes.length" class="btn-ghost border border-blue-100 px-2 py-1 text-[10px] text-blue-700" :disabled="upgradeAllBusy" @click="upgradeAll">{{ upgradeAllBusy ? '提交中...' : `升级全部 ${upgradeNodes.length} 台` }}</button><span class="panel-code">AGENT</span></div></div>
           <div v-if="!store.relayNodes.length" class="empty-panel">尚未注册 Relay Agent。</div>
           <div v-else class="agent-list">
             <div v-for="node in store.relayNodes.slice(0, 6)" :key="node.id" class="agent-item">
               <span class="status-dot" :class="node.status === 'online' ? 'status-dot-success' : 'status-dot-muted'"></span>
               <div class="min-w-0 flex-1"><strong class="block truncate">{{ node.name }}</strong><small>{{ node.agent_version || '版本未知' }} · {{ formatTime(node.last_seen_at) }}<template v-if="node.update_status && node.update_status !== 'idle'"> · <span :class="node.update_status === 'failed' ? 'update-error' : 'update-progress'">{{ updateLabel(node.update_status) }}</span></template></small></div>
-              <span v-if="isLegacy(node)" class="upgrade-pill">待升级</span><span v-else class="ready-pill">就绪</span>
-              <button v-if="isLegacy(node)" class="btn-ghost border border-blue-100 px-2 py-1 text-[10px] text-blue-700" :disabled="upgradeBusyIDs.has(node.id) || node.update_status === 'requested'" @click="upgrade(node)">{{ node.update_status === 'requested' ? '已请求' : (upgradeBusyIDs.has(node.id) ? '请求中' : '升级') }}</button>
+              <span v-if="needsUpgrade(node)" class="upgrade-pill">待升级</span><span v-else class="ready-pill">就绪</span>
+              <button v-if="needsUpgrade(node)" class="btn-ghost border border-blue-100 px-2 py-1 text-[10px] text-blue-700" :disabled="upgradeBusyIDs.has(node.id) || upgradeInProgress(node)" @click="upgrade(node)">{{ upgradeInProgress(node) ? updateLabel(node.update_status) : (upgradeBusyIDs.has(node.id) ? '请求中' : '升级') }}</button>
             </div>
           </div>
           <button v-if="store.relayNodes.length > 6" class="more-link" @click="activeTab = 'nodes'">查看全部 {{ store.relayNodes.length }} 台 Agent →</button>
@@ -94,7 +94,7 @@
 
     <template v-else-if="activeTab === 'nodes'">
       <section class="workspace-columns">
-        <article class="card panel-card"><div class="panel-heading"><div><h2>中转节点</h2><p>远程升级不需要登录节点 root</p></div><button class="btn-primary px-3 py-2 text-xs" @click="go('/relay-nodes')">添加节点</button></div><div class="node-table"><div v-for="node in store.relayNodes" :key="node.id" class="node-table-row"><span class="status-dot" :class="node.status === 'online' ? 'status-dot-success' : 'status-dot-muted'"></span><div class="min-w-0 flex-1"><strong class="block truncate">{{ node.name }}</strong><small>{{ node.public_ip || '未上报 IP' }} · {{ node.agent_version || '版本未知' }}</small></div><span v-if="isLegacy(node)" class="upgrade-pill">待升级</span><span v-else class="ready-pill">能力正常</span><button v-if="isLegacy(node)" class="btn-ghost border border-blue-100 px-2 py-1 text-[10px] text-blue-700" :disabled="upgradeBusyIDs.has(node.id) || node.update_status === 'requested'" @click="upgrade(node)">{{ node.update_status === 'requested' ? '已请求' : '远程升级' }}</button></div><div v-if="!store.relayNodes.length" class="empty-panel">尚未注册 Relay Agent。</div></div></article>
+        <article class="card panel-card"><div class="panel-heading"><div><h2>中转节点</h2><p>远程升级不需要登录节点 root</p></div><button class="btn-primary px-3 py-2 text-xs" @click="go('/relay-nodes')">添加节点</button></div><div class="node-table"><div v-for="node in store.relayNodes" :key="node.id" class="node-table-row"><span class="status-dot" :class="node.status === 'online' ? 'status-dot-success' : 'status-dot-muted'"></span><div class="min-w-0 flex-1"><strong class="block truncate">{{ node.name }}</strong><small>{{ node.public_ip || '未上报 IP' }} · {{ node.agent_version || '版本未知' }}</small></div><span v-if="needsUpgrade(node)" class="upgrade-pill">待升级</span><span v-else class="ready-pill">版本正常</span><button v-if="needsUpgrade(node)" class="btn-ghost border border-blue-100 px-2 py-1 text-[10px] text-blue-700" :disabled="upgradeBusyIDs.has(node.id) || upgradeInProgress(node)" @click="upgrade(node)">{{ upgradeInProgress(node) ? updateLabel(node.update_status) : '远程升级' }}</button></div><div v-if="!store.relayNodes.length" class="empty-panel">尚未注册 Relay Agent。</div></div></article>
         <article class="card panel-card"><div class="panel-heading"><div><h2>落地目标</h2><p>协议参数保留不变，只替换中转入口</p></div><button class="btn-primary px-3 py-2 text-xs" @click="go('/landing-nodes')">添加目标</button></div><div class="node-table"><div v-for="node in store.landingNodes" :key="node.id" class="node-table-row"><span class="status-dot" :class="node.enabled ? 'status-dot-success' : 'status-dot-muted'"></span><div class="min-w-0 flex-1"><strong class="block truncate">{{ node.name }}</strong><small>{{ node.address }}:{{ node.port }} · {{ (node.protocol || node.network || 'TCP').toUpperCase() }}</small></div><span class="state-tag" :class="node.enabled ? 'state-online' : ''">{{ node.enabled ? '启用' : '停用' }}</span><button class="btn-ghost px-2 py-1 text-xs" @click="go('/landing-nodes')">管理</button></div><div v-if="!store.landingNodes.length" class="empty-panel">尚未添加落地目标。</div></div></article>
       </section>
     </template>
@@ -135,7 +135,7 @@ const entries = computed(() => [
 ])
 
 const onlineNodes = computed(() => store.relayNodes.filter(node => node.status === 'online').length)
-const legacyNodes = computed(() => store.relayNodes.filter(isLegacy))
+const upgradeNodes = computed(() => store.relayNodes.filter(needsUpgrade))
 const enabledEntries = computed(() => entries.value.filter(entry => entry.enabled).length)
 const unhealthyEntries = computed(() => entries.value.filter(entry => entry.enabled && !entry.healthy).length)
 const enabledLandingNodes = computed(() => store.landingNodes.filter(node => node.enabled !== false).length)
@@ -152,7 +152,7 @@ const filteredEntries = computed(() => {
 })
 const attentionItems = computed(() => {
   const items = []
-  if (legacyNodes.value.length) items.push({ text: `${legacyNodes.value.length} 台 Agent 尚未支持共享额度租约`, tab: 'nodes' })
+  if (upgradeNodes.value.length) items.push({ text: `${upgradeNodes.value.length} 台 Agent 有可用更新`, tab: 'nodes' })
   const offline = store.relayNodes.length - onlineNodes.value
   if (offline > 0) items.push({ text: `${offline} 台中转节点离线`, tab: 'nodes' })
   if (unhealthyEntries.value) items.push({ text: `${unhealthyEntries.value} 个入口没有健康目标`, tab: 'entries' })
@@ -166,6 +166,8 @@ const tabs = computed(() => [
 ])
 
 function isLegacy(node) { const capabilities = node.capabilities || []; return !capabilities.includes('shared_meters_v1') || !capabilities.includes('quota_leases_v1') }
+function needsUpgrade(node) { return isLegacy(node) || node.update_available }
+function upgradeInProgress(node) { return ['requested', 'draining', 'updating'].includes(node.update_status) }
 function updateLabel(value) { return { requested: '等待 Agent 拉取', draining: '排空中', updating: '更新中', failed: '更新失败' }[value] || value }
 function go(path) { router.push(path) }
 function formatTime(value) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '尚未上报' }
@@ -176,7 +178,7 @@ async function upgrade(node) {
   try { await store.requestAgentUpgrade(node.id); showMessage(`已向“${node.name}”下发升级请求，Agent 恢复心跳后会自动执行`) } catch (error) { showMessage(error.response?.data?.error || '远程升级请求失败', 'error') } finally { const next = new Set(upgradeBusyIDs.value); next.delete(node.id); upgradeBusyIDs.value = next }
 }
 async function upgradeAll() {
-  if (!legacyNodes.value.length || !window.confirm(`确认通过宿主机兼容通道升级 ${legacyNodes.value.length} 台旧版 Agent？系统会逐台执行并等待心跳确认。`)) return
+  if (!upgradeNodes.value.length || !window.confirm(`确认升级 ${upgradeNodes.value.length} 台 Agent？系统会按架构校验 SHA256，并自动兼容旧版节点。`)) return
   upgradeAllBusy.value = true
   try {
     const result = await store.requestAgentUpgradeAll()

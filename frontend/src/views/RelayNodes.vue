@@ -4,7 +4,7 @@
       <div><div class="eyebrow">CDT RELAYS</div><h1 class="page-title">中转节点</h1><p class="page-subtitle">安装在阿里云 CDT ECS 上的 Go Relay Agent · 入口 IP 默认仅显示前两段</p></div>
       <div class="flex flex-wrap items-end gap-2">
         <label class="account-picker"><span>绑定云账户</span><select v-model="selectedAccountID" class="input"><option value="">不绑定（Agent 有元数据时自动关联）</option><option v-for="account in store.cloud.accounts" :key="account.id" :value="String(account.id)">{{ account.name }} · {{ account.region_id }}</option></select></label>
-        <button class="btn-ghost border border-blue-200 text-blue-700" :disabled="upgradeBusy || !legacyNodes.length" @click="requestUpgradeAll">{{ upgradeBusy ? '升级请求中...' : (legacyNodes.length ? `远程升级 ${legacyNodes.length} 台 Agent` : 'Agent 已是最新') }}</button>
+        <button class="btn-ghost border border-blue-200 text-blue-700" :disabled="upgradeBusy || !upgradeNodes.length" @click="requestUpgradeAll">{{ upgradeBusy ? '升级请求中...' : (upgradeNodes.length ? `升级 ${upgradeNodes.length} 台 Agent` : 'Agent 已是最新') }}</button>
         <button class="btn-primary" @click="generateToken">添加中转节点</button>
       </div>
     </header>
@@ -20,7 +20,7 @@
           <div class="min-w-0"><div class="flex items-center gap-2"><span class="status-dot" :class="node.status === 'online' ? 'status-dot-success' : 'status-dot-muted'"></span><h2 class="truncate font-bold text-slate-800">{{ node.name }}</h2></div><p class="mt-2 font-mono text-[11px] text-slate-400">{{ node.id }}</p></div>
           <div class="relay-node-actions">
             <span class="state-tag" :class="node.status === 'online' ? 'state-online' : ''">{{ node.status === 'online' ? '在线' : '离线' }}</span>
-            <button v-if="isLegacy(node)" class="btn-ghost border border-blue-100 px-2 py-1 text-xs text-blue-700" :disabled="upgradeBusy || node.update_status === 'requested'" @click="requestUpgrade(node)">{{ node.update_status === 'requested' ? '已请求' : '立即升级' }}</button>
+            <button v-if="needsUpgrade(node)" class="btn-ghost border border-blue-100 px-2 py-1 text-xs text-blue-700" :disabled="upgradeBusy || upgradeInProgress(node)" @click="requestUpgrade(node)">{{ upgradeInProgress(node) ? updateLabel(node.update_status) : '立即升级' }}</button>
           </div>
         </div>
         <div class="relay-node-metrics">
@@ -48,7 +48,7 @@ const tokenTTL = 30
 const error = ref('')
 const selectedAccountID = ref('')
 const legacyNodeCount = computed(() => store.relayNodes.filter(node => !(node.capabilities || []).includes('shared_meters_v1') || !(node.capabilities || []).includes('quota_leases_v1')).length)
-const legacyNodes = computed(() => store.relayNodes.filter(isLegacy))
+const upgradeNodes = computed(() => store.relayNodes.filter(needsUpgrade))
 const upgradeBusy = ref(false)
 const upgradeMessage = ref('')
 const upgradeMessageType = ref('success')
@@ -73,6 +73,8 @@ async function copyCommand() {
 }
 
 function isLegacy(node) { const capabilities = node.capabilities || []; return !capabilities.includes('shared_meters_v1') || !capabilities.includes('quota_leases_v1') }
+function needsUpgrade(node) { return isLegacy(node) || node.update_available }
+function upgradeInProgress(node) { return ['requested', 'draining', 'updating'].includes(node.update_status) }
 async function requestUpgrade(node) {
   if (!window.confirm(`确认远程升级 Agent“${node.name}”？Agent 会先排空新连接，升级期间现有连接不会被主动中断。`)) return
   upgradeBusy.value = true
@@ -81,13 +83,13 @@ async function requestUpgrade(node) {
   try { await store.requestAgentUpgrade(node.id); upgradeMessage.value = `已向“${node.name}”下发远程升级请求，Agent 将自动下载校验并重启。` } catch (error) { upgradeMessageType.value = 'error'; upgradeMessage.value = error.response?.data?.error || '远程升级请求失败' } finally { upgradeBusy.value = false }
 }
 async function requestUpgradeAll() {
-  if (!legacyNodes.value.length || !window.confirm(`确认向 ${legacyNodes.value.length} 台旧版 Agent 下发远程升级请求？`)) return
+  if (!upgradeNodes.value.length || !window.confirm(`确认升级 ${upgradeNodes.value.length} 台 Agent？系统会按架构校验 SHA256，并自动兼容旧版节点。`)) return
   upgradeBusy.value = true
   upgradeMessage.value = ''
   upgradeMessageType.value = 'success'
   try {
     const result = await store.requestAgentUpgradeAll()
-    upgradeMessage.value = result.requested ? `已提交 ${result.requested} 台 Agent 的宿主机兼容升级任务，页面会自动跟踪状态。` : '所有 Agent 已具备最新能力。'
+    upgradeMessage.value = result.requested ? `已提交 ${result.requested} 台 Agent 升级任务，页面会自动跟踪状态。${result.host_bridge_error ? ` ${result.host_bridge_error}` : ''}` : '所有 Agent 已是最新版本。'
   } catch (error) {
     upgradeMessageType.value = 'error'
     upgradeMessage.value = error.response?.data?.error || '升级任务提交失败，请检查宿主机升级服务'

@@ -785,32 +785,57 @@ func (s *Server) requestAgentUpgrade(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	if err := s.signalAgentUpgrade(r.Context()); err != nil && agentCapabilitiesMissing(node) {
-		_ = s.store.MarkAgentUpgradeFailed(r.Context(), node.ID, err.Error())
-		writeError(w, http.StatusServiceUnavailable, err)
-		return
+	if agentCapabilitiesMissing(node) {
+		if err := s.signalAgentUpgrade(r.Context()); err != nil {
+			_ = s.store.MarkAgentUpgradeFailed(r.Context(), node.ID, err.Error())
+			writeError(w, http.StatusServiceUnavailable, err)
+			return
+		}
 	}
 	writeJSON(w, http.StatusAccepted, node)
 }
 
 func (s *Server) requestAllAgentUpgrades(w http.ResponseWriter, r *http.Request) {
-	nodes, err := s.store.RequestLegacyAgentUpgrades(r.Context())
+	nodes, err := s.store.ListRelayNodes(r.Context())
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	if len(nodes) == 0 {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"requested": 0, "nodes": nodes, "message": "所有 Agent 已具备最新能力"})
-		return
-	}
-	if err := s.signalAgentUpgrade(r.Context()); err != nil {
-		for _, node := range nodes {
-			_ = s.store.MarkAgentUpgradeFailed(r.Context(), node.ID, err.Error())
+	s.annotateAgentUpdates(nodes)
+	targetIDs := make([]string, 0, len(nodes))
+	legacyIDs := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		if !node.UpdateAvailable {
+			continue
 		}
-		writeError(w, http.StatusServiceUnavailable, err)
+		targetIDs = append(targetIDs, node.ID)
+		if agentCapabilitiesMissing(node) {
+			legacyIDs = append(legacyIDs, node.ID)
+		}
+	}
+	if len(targetIDs) == 0 {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"requested": 0, "nodes": nodes, "message": "所有 Agent 已是最新版本"})
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]interface{}{"requested": len(nodes), "nodes": nodes, "message": "已提交宿主机兼容升级任务"})
+	queued, err := s.store.RequestAgentUpgrades(r.Context(), targetIDs, "管理员已请求批量升级 Agent")
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	bridgeError := ""
+	if len(legacyIDs) > 0 {
+		if err := s.signalAgentUpgrade(r.Context()); err != nil {
+			bridgeError = err.Error()
+			for _, id := range legacyIDs {
+				_ = s.store.MarkAgentUpgradeFailed(r.Context(), id, err.Error())
+			}
+		}
+	}
+	message := "已向所有过期 Agent 下发校验升级任务"
+	if bridgeError != "" {
+		message = "新版 Agent 已收到升级任务，但旧版 Agent 的宿主机兼容通道不可用"
+	}
+	writeJSON(w, http.StatusAccepted, map[string]interface{}{"requested": len(queued), "nodes": queued, "legacy_requested": len(legacyIDs), "host_bridge_error": bridgeError, "message": message})
 }
 
 func agentCapabilitiesMissing(node RelayNode) bool {
@@ -907,7 +932,50 @@ func (s *Server) listRelayNodes(w http.ResponseWriter, r *http.Request) {
 			nodes[index].Status = "offline"
 		}
 	}
+	s.annotateAgentUpdates(nodes)
 	writeJSON(w, http.StatusOK, nodes)
+}
+
+func (s *Server) annotateAgentUpdates(nodes []RelayNode) {
+	expectedByArch := make(map[string]string, 2)
+	unavailableArch := make(map[string]bool, 2)
+	for index := range nodes {
+		if agentCapabilitiesMissing(nodes[index]) {
+			nodes[index].UpdateAvailable = true
+			continue
+		}
+		arch := normalizeAgentArchitecture(nodes[index].Architecture)
+		if arch == "" || unavailableArch[arch] {
+			continue
+		}
+		expected := expectedByArch[arch]
+		if expected == "" {
+			asset := "cdt-relay-agent-linux-" + arch
+			assetPath, err := s.agentAssetPath(asset)
+			if err != nil {
+				unavailableArch[arch] = true
+				continue
+			}
+			expected, err = releaseChecksum(filepath.Join(filepath.Dir(assetPath), "checksums.txt"), asset)
+			if err != nil {
+				unavailableArch[arch] = true
+				continue
+			}
+			expectedByArch[arch] = strings.ToLower(expected)
+		}
+		nodes[index].UpdateAvailable = !strings.EqualFold(strings.TrimSpace(nodes[index].BinarySHA256), expected)
+	}
+}
+
+func normalizeAgentArchitecture(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "amd64", "x86_64":
+		return "amd64"
+	case "arm64", "aarch64":
+		return "arm64"
+	default:
+		return ""
+	}
 }
 
 func (s *Server) createLandingNode(w http.ResponseWriter, r *http.Request) {

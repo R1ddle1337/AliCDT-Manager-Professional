@@ -44,6 +44,7 @@ type RelayNode struct {
 	UpdateStatus    string          `json:"update_status,omitempty"`
 	UpdateError     string          `json:"update_error,omitempty"`
 	UpdateAt        *time.Time      `json:"update_at,omitempty"`
+	UpdateAvailable bool            `json:"update_available"`
 	Status          string          `json:"status"`
 	LastSeenAt      *time.Time      `json:"last_seen_at,omitempty"`
 	CurrentRevision int64           `json:"current_revision"`
@@ -1430,35 +1431,14 @@ func (s *Store) AuthenticateAgent(ctx context.Context, id, secret string) error 
 // delivered through the normal authenticated config poll, so the controller
 // never needs SSH or access to the Relay host.
 func (s *Store) RequestAgentUpgrade(ctx context.Context, id string) (RelayNode, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	nodes, err := s.RequestAgentUpgrades(ctx, []string{id}, "管理员已请求远程升级 Agent")
 	if err != nil {
 		return RelayNode{}, err
 	}
-	defer tx.Rollback()
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	result, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET update_status='requested',update_error='',update_at=?,desired_revision=desired_revision+1 WHERE id=?`, now, id)
-	if err != nil {
-		return RelayNode{}, err
-	}
-	if affected, _ := result.RowsAffected(); affected == 0 {
+	if len(nodes) != 1 {
 		return RelayNode{}, sql.ErrNoRows
 	}
-	if err := insertEvent(ctx, tx, id, "info", "agent_update", "管理员已请求远程升级 Agent", time.Now().UTC()); err != nil {
-		return RelayNode{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return RelayNode{}, err
-	}
-	nodes, err := s.ListRelayNodes(ctx)
-	if err != nil {
-		return RelayNode{}, err
-	}
-	for _, node := range nodes {
-		if node.ID == id {
-			return node, nil
-		}
-	}
-	return RelayNode{}, sql.ErrNoRows
+	return nodes[0], nil
 }
 
 func (s *Store) UpdateHeartbeat(ctx context.Context, id string, heartbeat protocol.AgentHeartbeat) error {
