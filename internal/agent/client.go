@@ -138,6 +138,9 @@ func (c *Client) Run(ctx context.Context) error {
 		c.syncFirewall(ctx, c.lastConfig)
 	}
 	if err := c.pollConfig(ctx); err != nil {
+		if errors.Is(err, ErrRestartRequested) {
+			return err
+		}
 		// The agent remains available and retries; the last valid config continues
 		// serving even when the controller is temporarily unavailable.
 		fmt.Fprintf(os.Stderr, "initial config poll failed: %v\n", err)
@@ -175,6 +178,9 @@ func (c *Client) Run(ctx context.Context) error {
 			return nil
 		case <-pollTicker.C:
 			if err := c.pollConfig(ctx); err != nil {
+				if errors.Is(err, ErrRestartRequested) {
+					return err
+				}
 				fmt.Fprintf(os.Stderr, "config poll failed: %v\n", err)
 			}
 		case <-heartbeatTicker.C:
@@ -480,6 +486,14 @@ func (c *Client) pollConfig(ctx context.Context) error {
 	c.lastConfig = config
 	c.hasConfig = true
 	c.syncFirewall(ctx, config)
+	if config.ForceUpdate {
+		if err := c.checkForUpdate(ctx); err != nil {
+			return err
+		}
+		// There was no newer binary available. Clear the one-shot request so it
+		// does not remain visible as a pending operation forever.
+		_ = c.setRemoteUpdateState(ctx, "idle", "")
+	}
 	return nil
 }
 

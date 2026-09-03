@@ -1417,6 +1417,41 @@ func (s *Store) AuthenticateAgent(ctx context.Context, id, secret string) error 
 	return nil
 }
 
+// RequestAgentUpgrade queues a remote update for the Agent. The request is
+// delivered through the normal authenticated config poll, so the controller
+// never needs SSH or access to the Relay host.
+func (s *Store) RequestAgentUpgrade(ctx context.Context, id string) (RelayNode, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return RelayNode{}, err
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	result, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET update_status='requested',update_error='',update_at=?,desired_revision=desired_revision+1 WHERE id=?`, now, id)
+	if err != nil {
+		return RelayNode{}, err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return RelayNode{}, sql.ErrNoRows
+	}
+	if err := insertEvent(ctx, tx, id, "info", "agent_update", "管理员已请求远程升级 Agent", time.Now().UTC()); err != nil {
+		return RelayNode{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return RelayNode{}, err
+	}
+	nodes, err := s.ListRelayNodes(ctx)
+	if err != nil {
+		return RelayNode{}, err
+	}
+	for _, node := range nodes {
+		if node.ID == id {
+			return node, nil
+		}
+	}
+	return RelayNode{}, sql.ErrNoRows
+}
+
 func (s *Store) UpdateHeartbeat(ctx context.Context, id string, heartbeat protocol.AgentHeartbeat) error {
 	encoded, err := json.Marshal(heartbeat.Services)
 	if err != nil {
@@ -1550,6 +1585,7 @@ func (s *Store) AgentConfig(ctx context.Context, id string) (protocol.AgentConfi
 	}
 	var revision int64
 	var protectionSuspended int
+	var updateStatus string
 	if err := s.db.QueryRowContext(ctx, `SELECT rn.desired_revision,
 		CASE WHEN (COALESCE(a.protection_triggered,0)=1 OR COALESCE(a.protection_predictive,0)=1) AND (
 			COALESCE(a.protection_mode,'alert_only')='drain_relay' OR EXISTS(
@@ -1557,10 +1593,10 @@ func (s *Store) AgentConfig(ctx context.Context, id string) (protocol.AgentConfi
 				WHERE ars.relay_node_id=rn.id AND ars.enabled=1 AND COALESCE(arp.enabled,1)=1 AND COALESCE(arp.auto_drain,1)=1
 			)
 		) THEN 1 ELSE 0 END
-		FROM relay_nodes rn LEFT JOIN accounts a ON a.id=rn.cloud_account_id OR (rn.cloud_account_id IS NULL AND rn.ecs_instance_id IN (SELECT instance_id FROM instances WHERE account_id=a.id)) WHERE rn.id=?`, id).Scan(&revision, &protectionSuspended); err != nil {
+		,COALESCE(rn.update_status,'idle') FROM relay_nodes rn LEFT JOIN accounts a ON a.id=rn.cloud_account_id OR (rn.cloud_account_id IS NULL AND rn.ecs_instance_id IN (SELECT instance_id FROM instances WHERE account_id=a.id)) WHERE rn.id=?`, id).Scan(&revision, &protectionSuspended, &updateStatus); err != nil {
 		return protocol.AgentConfig{}, err
 	}
-	config := protocol.AgentConfig{Revision: revision, Services: make([]protocol.ServiceConfig, 0, len(services))}
+	config := protocol.AgentConfig{Revision: revision, ForceUpdate: strings.EqualFold(strings.TrimSpace(updateStatus), "requested"), Services: make([]protocol.ServiceConfig, 0, len(services))}
 	for _, service := range services {
 		item := protocol.ServiceConfig{
 			ID:                    service.ID,

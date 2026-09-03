@@ -15,8 +15,9 @@ const (
 // AgentConfig is the complete desired state for one CDT relay node. Configs
 // are versioned and applied atomically by the agent.
 type AgentConfig struct {
-	Revision int64           `json:"revision"`
-	Services []ServiceConfig `json:"services"`
+	Revision    int64           `json:"revision"`
+	Services    []ServiceConfig `json:"services"`
+	ForceUpdate bool            `json:"force_update,omitempty"`
 }
 
 type ServiceConfig struct {

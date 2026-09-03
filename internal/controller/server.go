@@ -192,6 +192,7 @@ func (s *Server) routes() chi.Router {
 		router.Delete("/api/v2/entry-groups/{groupID}", s.deleteEntryGroup)
 		router.Post("/api/v2/enrollment-tokens", s.createEnrollmentToken)
 		router.Get("/api/v2/relay-nodes", s.listRelayNodes)
+		router.Post("/api/v2/relay-nodes/{agentID}/upgrade", s.requestAgentUpgrade)
 		router.Get("/api/v2/landing-nodes", s.listLandingNodes)
 		router.Get("/api/v2/landing-nodes/{landingID}/relay-links", s.landingRelayLinks)
 		router.Post("/api/v2/landing-nodes", s.createLandingNode)
@@ -715,6 +716,15 @@ func (s *Server) enrollAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, response)
+}
+
+func (s *Server) requestAgentUpgrade(w http.ResponseWriter, r *http.Request) {
+	node, err := s.store.RequestAgentUpgrade(r.Context(), chi.URLParam(r, "agentID"))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, node)
 }
 
 func (s *Server) agentConfig(w http.ResponseWriter, r *http.Request) {

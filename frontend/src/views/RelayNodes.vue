@@ -4,13 +4,13 @@
       <div><div class="eyebrow">CDT RELAYS</div><h1 class="page-title">中转节点</h1><p class="page-subtitle">安装在阿里云 CDT ECS 上的 Go Relay Agent · 入口 IP 默认仅显示前两段</p></div>
       <div class="flex flex-wrap items-end gap-2">
         <label class="account-picker"><span>绑定云账户</span><select v-model="selectedAccountID" class="input"><option value="">不绑定（Agent 有元数据时自动关联）</option><option v-for="account in store.cloud.accounts" :key="account.id" :value="String(account.id)">{{ account.name }} · {{ account.region_id }}</option></select></label>
-        <button class="btn-ghost border border-slate-200" @click="showUpgrade = !showUpgrade">{{ showUpgrade ? '收起升级命令' : '升级已安装 Agent' }}</button>
+        <button class="btn-ghost border border-blue-200 text-blue-700" :disabled="upgradeBusy || !legacyNodes.length" @click="requestUpgradeAll">{{ upgradeBusy ? '升级请求中...' : (legacyNodes.length ? `远程升级 ${legacyNodes.length} 台 Agent` : 'Agent 已是最新') }}</button>
         <button class="btn-primary" @click="generateToken">添加中转节点</button>
       </div>
     </header>
 
-    <div v-if="showUpgrade" class="card command-card p-5"><div class="flex items-start justify-between gap-4"><div><h2 class="text-sm font-bold text-slate-800">已安装 Agent 一次性升级</h2><p class="mt-1 text-xs leading-5 text-slate-500">旧版 Agent 首次升级需要在对应 CDT 服务器 root 终端执行。升级会保留现有凭证和配置，之后由 Agent 自动检查更新。</p></div><button class="btn-ghost border border-slate-200 text-xs" @click="copyUpgradeCommand">复制</button></div><pre class="command-box mt-4"><MaskedText :value="upgradeCommand" /></pre></div>
-    <div v-if="legacyNodeCount" class="notice notice-info legacy-agent-notice"><span>发现 {{ legacyNodeCount }} 台 Relay Agent 尚未支持共享计量/多 Relay 额度租约。</span><button class="btn-ghost border border-blue-200 px-2 py-1 text-xs text-blue-700" @click="showUpgrade = true">查看升级命令</button></div>
+    <div v-if="legacyNodeCount" class="notice notice-info legacy-agent-notice"><span>发现 {{ legacyNodeCount }} 台 Relay Agent 尚未支持共享计量/多 Relay 额度租约。</span><button class="btn-ghost border border-blue-200 px-2 py-1 text-xs text-blue-700" :disabled="upgradeBusy" @click="requestUpgradeAll">远程升级全部</button></div>
+    <div v-if="upgradeMessage" class="notice" :class="upgradeMessageType === 'error' ? 'notice-error' : 'notice-success'">{{ upgradeMessage }}</div>
     <div v-if="installCommand" class="card command-card p-5"><div class="flex items-start justify-between gap-4"><div><h2 class="text-sm font-bold text-slate-800">SSH 安装命令</h2><p class="mt-1 text-xs text-slate-500">在目标 CDT 服务器 root 终端执行；注册码 {{ tokenTTL }} 分钟内有效且只能使用一次。</p></div><button class="btn-ghost border border-slate-200 text-xs" @click="copyCommand">复制</button></div><pre class="command-box mt-4"><MaskedText :value="installCommand" /></pre></div>
     <div v-if="error" class="notice notice-error">{{ error }}</div>
 
@@ -20,6 +20,7 @@
           <div class="min-w-0"><div class="flex items-center gap-2"><span class="status-dot" :class="node.status === 'online' ? 'status-dot-success' : 'status-dot-muted'"></span><h2 class="truncate font-bold text-slate-800">{{ node.name }}</h2></div><p class="mt-2 font-mono text-[11px] text-slate-400">{{ node.id }}</p></div>
           <div class="relay-node-actions">
             <span class="state-tag" :class="node.status === 'online' ? 'state-online' : ''">{{ node.status === 'online' ? '在线' : '离线' }}</span>
+            <button v-if="isLegacy(node)" class="btn-ghost border border-blue-100 px-2 py-1 text-xs text-blue-700" :disabled="upgradeBusy || node.update_status === 'requested'" @click="requestUpgrade(node)">{{ node.update_status === 'requested' ? '已请求' : '立即升级' }}</button>
           </div>
         </div>
         <div class="relay-node-metrics">
@@ -44,15 +45,16 @@ const store = useRelayStore()
 const token = ref('')
 const tokenTTL = 30
 const error = ref('')
-const showUpgrade = ref(false)
 const selectedAccountID = ref('')
 const legacyNodeCount = computed(() => store.relayNodes.filter(node => !(node.capabilities || []).includes('shared_meters_v1') || !(node.capabilities || []).includes('quota_leases_v1')).length)
+const legacyNodes = computed(() => store.relayNodes.filter(isLegacy))
+const upgradeBusy = ref(false)
+const upgradeMessage = ref('')
+const upgradeMessageType = ref('success')
 
 const installCommand = computed(() => token.value
   ? `curl -fsSL https://${window.location.host}/agent/install.sh | sh -s -- --server https://${window.location.host} --token ${token.value}`
   : '')
-const upgradeCommand = computed(() => `curl -fsSL https://${window.location.host}/agent/upgrade.sh | sh -s -- --server https://${window.location.host}`)
-
 async function generateToken() {
   error.value = ''
   try {
@@ -68,8 +70,23 @@ async function copyCommand() {
   await navigator.clipboard.writeText(installCommand.value)
 }
 
-async function copyUpgradeCommand() {
-  await navigator.clipboard.writeText(upgradeCommand.value)
+function isLegacy(node) { const capabilities = node.capabilities || []; return !capabilities.includes('shared_meters_v1') || !capabilities.includes('quota_leases_v1') }
+async function requestUpgrade(node) {
+  if (!window.confirm(`确认远程升级 Agent“${node.name}”？Agent 会先排空新连接，升级期间现有连接不会被主动中断。`)) return
+  upgradeBusy.value = true
+  upgradeMessage.value = ''
+  try { await store.requestAgentUpgrade(node.id); upgradeMessage.value = `已向“${node.name}”下发远程升级请求，Agent 将自动下载校验并重启。` } catch (error) { upgradeMessageType.value = 'error'; upgradeMessage.value = error.response?.data?.error || '远程升级请求失败' } finally { upgradeBusy.value = false }
+}
+async function requestUpgradeAll() {
+  if (!legacyNodes.value.length || !window.confirm(`确认向 ${legacyNodes.value.length} 台旧版 Agent 下发远程升级请求？`)) return
+  upgradeBusy.value = true
+  upgradeMessage.value = ''
+  upgradeMessageType.value = 'success'
+  const results = await Promise.allSettled(legacyNodes.value.map(node => store.requestAgentUpgrade(node.id)))
+  const failed = results.filter(result => result.status === 'rejected').length
+  upgradeMessageType.value = failed ? 'error' : 'success'
+  upgradeMessage.value = failed ? `${results.length - failed} 台已下发，${failed} 台请求失败，请稍后重试。` : `已向 ${results.length} 台 Agent 下发远程升级请求。`
+  upgradeBusy.value = false
 }
 
 function formatTime(value) {
