@@ -43,6 +43,8 @@
 import { ref, computed, onMounted } from 'vue'
 import { useStore } from '../stores'
 import { formatTime as formatClockTime } from '../utils/time'
+import { apiErrorMessage } from '../utils/session'
+import { notifyError } from '../utils/notifications'
 import MaskedIP from './MaskedIP.vue'
 
 const props = defineProps({ instance: Object, account: Object })
@@ -66,10 +68,10 @@ const trafficColor = computed(() => trafficPct.value >= 90 ? 'text-danger' : tra
 const trafficBarColor = computed(() => trafficPct.value >= 90 ? 'bg-danger' : trafficPct.value >= 75 ? 'bg-warning' : 'bg-success')
 
 function startEditName() { newName.value = props.instance.instance_name || ''; editingName.value = true }
-async function saveName() { const value = newName.value.trim(); if (!value || value === props.instance.instance_name) { editingName.value = false; return }; isSavingName.value = true; try { await store.renameInstance(props.instance.instance_id, value); editingName.value = false } catch (e) { alert('名称修改失败：' + (e.response?.data?.detail || e.message)) } finally { isSavingName.value = false } }
-async function handleStart() { if (isStarting.value) return; isStarting.value = true; try { await store.controlInstance(props.instance.instance_id, 'start') } catch (e) { alert('启动失败：' + (e.response?.data?.detail || e.message)) } finally { isStarting.value = false } }
-async function handleStop() { if (isStopping.value) return; isStopping.value = true; try { await store.controlInstance(props.instance.instance_id, 'stop') } catch (e) { alert('停止失败：' + (e.response?.data?.detail || e.message)) } finally { isStopping.value = false } }
-async function syncThis() { if (isSyncing.value) return; isSyncing.value = true; try { await store.syncSingleInstance(props.instance.instance_id) } catch (e) { alert('同步失败：' + (e.response?.data?.detail || e.message)) } finally { isSyncing.value = false } }
+async function saveName() { const value = newName.value.trim(); if (!value || value === props.instance.instance_name) { editingName.value = false; return }; isSavingName.value = true; try { await store.renameInstance(props.instance.instance_id, value); editingName.value = false } catch (e) { notifyError(`名称修改失败：${apiErrorMessage(e)}`) } finally { isSavingName.value = false } }
+async function handleStart() { if (isStarting.value) return; isStarting.value = true; try { await store.controlInstance(props.instance.instance_id, 'start') } catch (e) { notifyError(`启动失败：${apiErrorMessage(e)}`) } finally { isStarting.value = false } }
+async function handleStop() { if (isStopping.value) return; isStopping.value = true; try { await store.controlInstance(props.instance.instance_id, 'stop') } catch (e) { notifyError(`停止失败：${apiErrorMessage(e)}`) } finally { isStopping.value = false } }
+async function syncThis() { if (isSyncing.value) return; isSyncing.value = true; try { await store.syncSingleInstance(props.instance.instance_id) } catch (e) { notifyError(`同步失败：${apiErrorMessage(e)}`) } finally { isSyncing.value = false } }
 async function loadBilling() { if (!props.account) return; billingLoading.value = true; billingError.value = ''; try { const result = await store.getBilling(props.account.id); billing.value = result; billingError.value = result.errors?.join('；') || '' } catch (e) { billingError.value = e.response?.data?.detail || '账单获取失败，请检查账户权限' } finally { billingLoading.value = false } }
 onMounted(() => { if (showBilling.value) loadBilling() })
 function formatTime(t) { return formatClockTime(t) }

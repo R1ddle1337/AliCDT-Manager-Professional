@@ -1,8 +1,9 @@
 import { defineStore } from 'pinia'
 import axios from 'axios'
 import { ref } from 'vue'
+import { clearSession, saveSession } from '../utils/session'
 
-const api = axios.create({ baseURL: '/api' })
+const api = axios.create({ baseURL: '/api', timeout: 20000 })
 api.interceptors.request.use(cfg => {
   const token = localStorage.getItem('token')
   if (token) cfg.headers.Authorization = `Bearer ${token}`
@@ -10,8 +11,8 @@ api.interceptors.request.use(cfg => {
 })
 api.interceptors.response.use(r => r, err => {
   if (err.response?.status === 401) {
-    localStorage.removeItem('token')
-    window.location.href = '/login'
+    clearSession()
+    if (window.location.pathname !== '/login') window.location.assign('/login')
   }
   return Promise.reject(err)
 })
@@ -25,7 +26,7 @@ export const useStore = defineStore('main', () => {
 
   async function login(username, password) {
     const { data } = await api.post('/auth/login', { username, password })
-    localStorage.setItem('token', data.token)
+    saveSession(data, username)
     return data
   }
 

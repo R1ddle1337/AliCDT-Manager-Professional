@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import axios from 'axios'
 import { ref } from 'vue'
+import { clearSession, saveSession } from '../utils/session'
 
 const api = axios.create({ baseURL: '/api/v2', timeout: 20000 })
 api.interceptors.request.use(config => {
@@ -10,11 +11,8 @@ api.interceptors.request.use(config => {
 })
 api.interceptors.response.use(response => response, error => {
   if (error.response?.status === 401 && !error.config?.url?.startsWith('/auth/')) {
-    localStorage.removeItem('token')
-    localStorage.removeItem('role')
-    localStorage.removeItem('username')
-    localStorage.removeItem('displayName')
-    window.location.href = '/login'
+    clearSession()
+    if (window.location.pathname !== '/login') window.location.assign('/login')
   }
   return Promise.reject(error)
 })
@@ -35,19 +33,13 @@ export const useRelayStore = defineStore('relay-platform', () => {
 
   async function login(username, password, twoFactorCode = '') {
     const { data } = await api.post('/auth/login', { username, password, two_factor_code: twoFactorCode })
-    localStorage.setItem('token', data.token)
-    localStorage.setItem('role', data.role || 'admin')
-    localStorage.setItem('username', data.username || username)
-    localStorage.setItem('displayName', data.display_name || data.username || username)
+    saveSession(data, username)
     return data
   }
 
   async function logout() {
     try { await api.post('/auth/logout') } catch (_) { /* local logout still proceeds */ }
-    localStorage.removeItem('token')
-    localStorage.removeItem('role')
-    localStorage.removeItem('username')
-    localStorage.removeItem('displayName')
+    clearSession()
   }
 
   async function fetchUsers() {

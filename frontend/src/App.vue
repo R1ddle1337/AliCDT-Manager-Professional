@@ -1,5 +1,6 @@
 <template>
   <div class="app-shell min-h-screen bg-background text-text font-sans antialiased" :data-card-layout="ui.cardLayout">
+    <NotificationCenter />
     <div v-if="isLogin">
       <router-view v-slot="{ Component }">
         <transition name="fade" mode="out-in">
@@ -124,6 +125,7 @@ import { useRelayStore } from './stores/relay'
 import { useUIStore } from './stores/ui'
 import CardLayoutToggle from './components/CardLayoutToggle.vue'
 import NavIcon from './components/NavIcon.vue'
+import NotificationCenter from './components/NotificationCenter.vue'
 
 const route = useRoute()
 const router = useRouter()

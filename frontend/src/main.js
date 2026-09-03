@@ -4,6 +4,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import axios from 'axios'
 import App from './App.vue'
 import './style.css'
+import { clearSession } from './utils/session'
 
 const Login = () => import('./views/Login.vue')
 const RelayOverview = () => import('./views/RelayOverview.vue')
@@ -63,10 +64,7 @@ router.beforeEach(async (to, from, next) => {
       localStorage.setItem('username', data.username || '')
       localStorage.setItem('displayName', data.display_name || data.username || '')
     } catch (_) {
-      localStorage.removeItem('token')
-      localStorage.removeItem('role')
-      localStorage.removeItem('username')
-      localStorage.removeItem('displayName')
+      clearSession()
       return next('/login')
     }
   }
