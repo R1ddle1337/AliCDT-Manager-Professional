@@ -72,6 +72,17 @@ export const useRelayStore = defineStore('relay-platform', () => {
     await Promise.all([fetchUsers(), fetchCloud()])
   }
 
+  async function fetchUserUsageLedger(id) {
+    const { data } = await api.get(`/users/${id}/usage-ledger`)
+    return data || []
+  }
+
+  async function adjustUserQuota(id, payload) {
+    const { data } = await api.post(`/users/${id}/quota/adjust`, payload)
+    await Promise.all([fetchUsers(), fetchRelayNodes()])
+    return data
+  }
+
   async function createEntryGroup(payload) {
     const { data } = await api.post('/entry-groups', payload)
     await Promise.all([fetchUsers(), fetchRelayNodes(), fetchServices()])
@@ -93,6 +104,11 @@ export const useRelayStore = defineStore('relay-platform', () => {
     const { data } = await api.get('/user/overview')
     currentUser.value = data
     return data
+  }
+
+  async function fetchMyUsageLedger() {
+    const { data } = await api.get('/user/usage-ledger')
+    return data || []
   }
 
   async function fetchRelayNodes() {
@@ -320,7 +336,7 @@ export const useRelayStore = defineStore('relay-platform', () => {
 
   return {
     relayNodes, landingNodes, services, pools, events, dnsProviders, dnsRecords, cloud, users, currentUser, loading, updateStatus,
-    login, logout, fetchUsers, createUser, updateUser, deleteUser, fetchMyUsage,
+    login, logout, fetchUsers, createUser, updateUser, deleteUser, fetchUserUsageLedger, adjustUserQuota, fetchMyUsage, fetchMyUsageLedger,
     createEntryGroup, updateEntryGroup, deleteEntryGroup,
     fetchRelayNodes, fetchLandingNodes, fetchServices, fetchEvents, fetchCloud, fetchAll,
     createEnrollmentToken, createLandingNode, updateLandingNode, deleteLandingNode, fetchLandingRelayLinks,

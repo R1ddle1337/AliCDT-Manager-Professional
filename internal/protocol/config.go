@@ -35,6 +35,10 @@ type ServiceConfig struct {
 	// either side of a transparent proxy.
 	BillingMode           string         `json:"billing_mode,omitempty"`
 	TrafficLimitGB        float64        `json:"traffic_limit_gb,omitempty"`
+	QuotaLeaseID          string         `json:"quota_lease_id,omitempty"`
+	QuotaLeaseBytes       uint64         `json:"quota_lease_bytes,omitempty"`
+	QuotaLeaseSequence    int64          `json:"quota_lease_sequence,omitempty"`
+	QuotaLeaseExpiresAt   *time.Time     `json:"quota_lease_expires_at,omitempty"`
 	BillingEpoch          int64          `json:"billing_epoch,omitempty"`
 	AccessBlocked         bool           `json:"access_blocked,omitempty"`
 	DialTimeoutMillis     int            `json:"dial_timeout_ms"`
@@ -85,6 +89,7 @@ type AgentHeartbeat struct {
 	CurrentRevision int64           `json:"current_revision"`
 	StartedAt       time.Time       `json:"started_at"`
 	Services        []ServiceStatus `json:"services"`
+	Capabilities    []string        `json:"capabilities,omitempty"`
 }
 
 type AgentRelease struct {
@@ -97,22 +102,26 @@ type AgentRelease struct {
 }
 
 type ServiceStatus struct {
-	ID                string         `json:"id"`
-	MeterKey          string         `json:"meter_key,omitempty"`
-	Name              string         `json:"name"`
-	Listening         bool           `json:"listening"`
-	ActiveConnections int64          `json:"active_connections"`
-	TotalConnections  uint64         `json:"total_connections"`
-	BytesUp           uint64         `json:"bytes_up"`
-	BytesDown         uint64         `json:"bytes_down"`
-	BilledBytes       uint64         `json:"billed_bytes"`
-	BillingMode       string         `json:"billing_mode"`
-	TrafficLimitGB    float64        `json:"traffic_limit_gb,omitempty"`
-	BillingEpoch      int64          `json:"billing_epoch,omitempty"`
-	QuotaExceeded     bool           `json:"quota_exceeded"`
-	AccessBlocked     bool           `json:"access_blocked"`
-	Targets           []TargetStatus `json:"targets"`
-	LastError         string         `json:"last_error,omitempty"`
+	ID                  string         `json:"id"`
+	MeterKey            string         `json:"meter_key,omitempty"`
+	Name                string         `json:"name"`
+	Listening           bool           `json:"listening"`
+	ActiveConnections   int64          `json:"active_connections"`
+	TotalConnections    uint64         `json:"total_connections"`
+	BytesUp             uint64         `json:"bytes_up"`
+	BytesDown           uint64         `json:"bytes_down"`
+	BilledBytes         uint64         `json:"billed_bytes"`
+	BillingMode         string         `json:"billing_mode"`
+	TrafficLimitGB      float64        `json:"traffic_limit_gb,omitempty"`
+	QuotaLeaseID        string         `json:"quota_lease_id,omitempty"`
+	QuotaLeaseBytes     uint64         `json:"quota_lease_bytes,omitempty"`
+	QuotaLeaseSequence  int64          `json:"quota_lease_sequence,omitempty"`
+	QuotaLeaseExpiresAt *time.Time     `json:"quota_lease_expires_at,omitempty"`
+	BillingEpoch        int64          `json:"billing_epoch,omitempty"`
+	QuotaExceeded       bool           `json:"quota_exceeded"`
+	AccessBlocked       bool           `json:"access_blocked"`
+	Targets             []TargetStatus `json:"targets"`
+	LastError           string         `json:"last_error,omitempty"`
 }
 
 type TargetStatus struct {

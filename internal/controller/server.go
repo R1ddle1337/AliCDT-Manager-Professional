@@ -163,6 +163,7 @@ func (s *Server) routes() chi.Router {
 		router.Get("/api/v2/auth/me", s.currentIdentity)
 		router.Post("/api/v2/auth/logout", s.logoutConsole)
 		router.Get("/api/v2/user/overview", s.currentUserOverview)
+		router.Get("/api/v2/user/usage-ledger", s.currentUserUsageLedger)
 	})
 
 	router.Route("/api/v2/agents", func(router chi.Router) {
@@ -183,6 +184,8 @@ func (s *Server) routes() chi.Router {
 		router.Post("/api/v2/users", s.createConsoleUser)
 		router.Put("/api/v2/users/{userID}", s.updateConsoleUser)
 		router.Delete("/api/v2/users/{userID}", s.deleteConsoleUser)
+		router.Get("/api/v2/users/{userID}/usage-ledger", s.userUsageLedger)
+		router.Post("/api/v2/users/{userID}/quota/adjust", s.adjustUserQuota)
 		router.Get("/api/v2/entry-groups", s.listEntryGroups)
 		router.Post("/api/v2/entry-groups", s.createEntryGroup)
 		router.Put("/api/v2/entry-groups/{groupID}", s.updateEntryGroup)
@@ -454,6 +457,20 @@ func (s *Server) currentUserOverview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, principal.User)
 }
 
+func (s *Server) currentUserUsageLedger(w http.ResponseWriter, r *http.Request) {
+	principal, ok := consolePrincipalFromContext(r.Context())
+	if !ok || principal.Role != consoleRoleUser || principal.User == nil {
+		writeError(w, http.StatusForbidden, errors.New("user access is required"))
+		return
+	}
+	entries, err := s.store.ListUsageLedger(r.Context(), principal.User.ID, 100)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, entries)
+}
+
 func (s *Server) logoutConsole(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.DeleteConsoleSession(r.Context(), bearerToken(r)); err != nil {
 		writeStoreError(w, err)
@@ -522,6 +539,52 @@ func (s *Server) deleteConsoleUser(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.AddSystemLog(r.Context(), "info", "user_management", fmt.Sprintf("删除控制台用户 ID：%d", userID))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func parseUserIDParam(r *http.Request) (int64, error) {
+	userID, err := strconv.ParseInt(chi.URLParam(r, "userID"), 10, 64)
+	if err != nil || userID <= 0 {
+		return 0, errors.New("invalid user id")
+	}
+	return userID, nil
+}
+
+func (s *Server) userUsageLedger(w http.ResponseWriter, r *http.Request) {
+	userID, err := parseUserIDParam(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	entries, err := s.store.ListUsageLedger(r.Context(), userID, 200)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, entries)
+}
+
+func (s *Server) adjustUserQuota(w http.ResponseWriter, r *http.Request) {
+	userID, err := parseUserIDParam(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	var request UsageAdjustmentRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	user, err := s.store.AdjustUserTrafficLimit(r.Context(), userID, request)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeStoreError(w, err)
+		} else {
+			writeError(w, http.StatusBadRequest, err)
+		}
+		return
+	}
+	_ = s.store.AddSystemLog(r.Context(), "info", "traffic_quota", fmt.Sprintf("调整用户 %s 额度：%+.3f GB", user.Username, request.DeltaGB))
+	writeJSON(w, http.StatusOK, user)
 }
 
 func (s *Server) listEntryGroups(w http.ResponseWriter, r *http.Request) {

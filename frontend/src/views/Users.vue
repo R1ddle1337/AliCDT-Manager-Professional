@@ -44,7 +44,7 @@
         <div class="entry-groups">
           <div class="account-list-title">入口端口组 <span>{{ user.entry_groups?.length || 0 }}</span></div>
           <div v-for="group in (user.entry_groups || [])" :key="group.id" class="entry-group-row">
-            <div class="min-w-0"><strong>{{ group.name }}</strong><small>{{ group.relay_node_name }} · {{ group.network.toUpperCase() }} · {{ group.start_port }}–{{ group.start_port + group.port_count - 1 }}</small><small class="port-list">端口：{{ group.ports.map(port => port.port).join(', ') }}</small></div>
+            <div class="min-w-0"><strong>{{ group.name }}</strong><small>{{ group.relay_node_name }} · {{ group.network.toUpperCase() }} · {{ group.start_port }}–{{ group.start_port + group.port_count - 1 }}</small><small v-if="group.traffic_lease">额度分片：{{ formatByteGB(group.traffic_lease.used_bytes) }} / {{ formatByteGB(group.traffic_lease.reserved_bytes) }} · 序列 {{ group.traffic_lease.sequence }}</small><small class="port-list">端口：{{ group.ports.map(port => port.port).join(', ') }}</small></div>
             <div class="entry-group-actions"><span class="state-tag" :class="group.enabled ? 'state-enabled' : 'state-disabled'">{{ group.enabled ? '启用' : '停用' }}</span><button class="btn-ghost" type="button" @click="resetGroupTraffic(group)">流量清零</button><button class="btn-ghost" type="button" @click="toggleGroup(group)">{{ group.enabled ? '停用' : '启用' }}</button><button class="btn-danger" type="button" @click="removeGroup(group)">删除</button></div>
           </div>
           <div v-if="!(user.entry_groups || []).length" class="account-empty">尚未分配入口端口组</div>
@@ -63,6 +63,7 @@
           <span>{{ user.last_login_at ? '最近登录 ' + formatDate(user.last_login_at) : '尚未登录' }}</span>
           <div>
             <button class="btn-ghost" type="button" @click="openGroupCreate(user)">分配端口组</button>
+            <button class="btn-ghost" type="button" @click="openQuota(user)">额度流水</button>
             <button class="btn-ghost" type="button" @click="toggleUser(user)">{{ user.enabled ? '禁用' : '启用' }}</button>
             <button class="btn-ghost" type="button" @click="openEdit(user)">编辑</button>
             <button class="btn-danger" type="button" @click="removeUser(user)">删除</button>
@@ -119,7 +120,7 @@
         <div><div class="eyebrow">USER ENTRY GROUP</div><h2 class="mt-1 text-lg font-bold text-slate-900">为 {{ groupUser?.display_name }} 分配入口端口组</h2><p class="mt-2 text-xs leading-5 text-slate-500">默认自动分配连续 10 个端口，同一用户的全部端口共享一份月流量额度。</p></div>
         <div class="form-grid">
           <div><label class="field-label">端口组名称</label><input v-model.trim="groupForm.name" class="input" placeholder="例如：Alice 主入口" required /></div>
-          <div><label class="field-label">中转节点</label><select v-model="groupForm.relay_node_id" class="input" required><option v-for="node in availableRelayNodes" :key="node.id" :value="node.id">{{ node.name }} · {{ node.public_ip || '未上报 IP' }}</option></select></div>
+          <div><label class="field-label">中转节点</label><select v-model="groupForm.relay_node_id" class="input" required><option v-for="node in availableRelayNodes" :key="node.id" :value="node.id" :disabled="groupForm.port_count > 1 && !node.capabilities?.includes('shared_meters_v1')">{{ node.name }} · {{ node.public_ip || '未上报 IP' }}{{ node.capabilities?.includes('shared_meters_v1') ? '' : ' · Agent 待升级' }}</option></select></div>
           <div><label class="field-label">起始端口（0 = 自动）</label><input v-model.number="groupForm.start_port" type="number" min="0" max="59999" class="input" /></div>
           <div><label class="field-label">端口数量（1–100）</label><input v-model.number="groupForm.port_count" type="number" min="1" max="100" class="input" required /></div>
           <div><label class="field-label">监听协议</label><select v-model="groupForm.network" class="input"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="tcp+udp">TCP + UDP</option></select></div>
@@ -129,6 +130,15 @@
         <div v-if="groupError" class="notice notice-error">{{ groupError }}</div>
         <div class="form-actions"><button class="btn-ghost border border-slate-200" type="button" @click="showGroupForm = false">取消</button><button class="btn-primary" :disabled="groupSaving">{{ groupSaving ? '分配中...' : '分配并发布' }}</button></div>
       </form>
+    </Modal>
+
+    <Modal v-if="showQuotaForm" size="large" @close="showQuotaForm = false">
+      <div class="space-y-5">
+        <div><div class="eyebrow">USAGE LEDGER</div><h2 class="mt-1 text-lg font-bold text-slate-900">{{ quotaUser?.display_name }} · 额度与用量流水</h2><p class="mt-2 text-xs leading-5 text-slate-500">正数为追加额度，负数为扣减额度；每次调整必须填写审计备注。</p></div>
+        <form class="quota-form" @submit.prevent="adjustQuota"><div><label class="field-label">调整额度（GB）</label><input v-model.number="quotaForm.delta_gb" type="number" step="0.01" class="input" placeholder="例如 50 或 -20" required /></div><div><label class="field-label">审计备注</label><input v-model.trim="quotaForm.note" class="input" maxlength="200" placeholder="例如：续费追加 50 GB" required /></div><button class="btn-primary" :disabled="quotaSaving">{{ quotaSaving ? '提交中...' : '确认调整' }}</button></form>
+        <div v-if="quotaError" class="notice notice-error">{{ quotaError }}</div>
+        <div class="ledger-list"><div v-for="entry in usageLedger" :key="entry.id" class="ledger-row"><div><strong>{{ ledgerKind(entry.kind) }}</strong><small>{{ formatDate(entry.created_at) }} · {{ entry.note || entry.source }}</small></div><span :class="entry.delta_bytes < 0 ? 'ledger-minus' : 'ledger-plus'">{{ formatLedgerDelta(entry) }}</span></div><div v-if="!usageLedger.length" class="account-empty">暂无流水，Agent 上报流量或调整额度后会自动记录。</div></div>
+      </div>
     </Modal>
   </div>
 </template>
@@ -142,6 +152,7 @@ import Modal from '../components/Modal.vue'
 const store = useRelayStore()
 const showForm = ref(false)
 const showGroupForm = ref(false)
+const showQuotaForm = ref(false)
 const editTarget = ref(null)
 const saving = ref(false)
 const formError = ref('')
@@ -151,6 +162,11 @@ const groupUser = ref(null)
 const groupTargets = ref([])
 const availableRelayNodes = computed(() => store.relayNodes)
 const groupForm = ref({ user_id: 0, relay_node_id: '', name: '', start_port: 0, port_count: 10, network: 'tcp', mode: 'failover', enabled: true, billing_mode: 'both' })
+const quotaUser = ref(null)
+const quotaForm = ref({ delta_gb: 0, note: '' })
+const quotaSaving = ref(false)
+const quotaError = ref('')
+const usageLedger = ref([])
 const message = ref({ type: 'success', text: '' })
 let messageTimer
 
@@ -165,6 +181,8 @@ const assignableAccounts = computed(() => store.cloud.accounts.filter(account =>
 function formatGB(value) {
   return `${Number(value || 0).toFixed(2)} GB`
 }
+
+function formatByteGB(value) { return `${(Number(value || 0) / 1073741824).toFixed(3)} GB` }
 
 function formatPercent(value) {
   return `${Number(value || 0).toFixed(1)}%`
@@ -235,7 +253,8 @@ async function saveUser() {
 
 function openGroupCreate(user) {
   groupUser.value = user
-  groupForm.value = { user_id: user.id, relay_node_id: availableRelayNodes.value[0]?.id || store.relayNodes[0]?.id || '', name: `${user.display_name} 入口`, start_port: 0, port_count: 10, network: 'tcp', mode: 'failover', enabled: true, billing_mode: user.billing_mode || 'both' }
+  const capableNode = availableRelayNodes.value.find(node => node.capabilities?.includes('shared_meters_v1'))
+  groupForm.value = { user_id: user.id, relay_node_id: capableNode?.id || '', name: `${user.display_name} 入口`, start_port: 0, port_count: 10, network: 'tcp', mode: 'failover', enabled: true, billing_mode: user.billing_mode || 'both' }
   groupTargets.value = store.landingNodes.filter(node => node.enabled).slice(0, 1).map(node => node.id)
   groupError.value = ''
   showGroupForm.value = true
@@ -261,6 +280,24 @@ async function resetGroupTraffic(group) {
   if (!serviceID || !window.confirm(`确认清零入口组“${group.name}”所属用户的共享月流量？其全部入口端口都会同时清零。`)) return
   try { await store.resetServiceTraffic(serviceID); showMessage('该用户全部端口的共享流量已清零') } catch (error) { showMessage(error.response?.data?.error || '流量清零失败', 'error') }
 }
+
+async function openQuota(user) {
+  quotaUser.value = user
+  quotaForm.value = { delta_gb: 0, note: '' }
+  quotaError.value = ''
+  showQuotaForm.value = true
+  try { usageLedger.value = await store.fetchUserUsageLedger(user.id) } catch (error) { quotaError.value = error.response?.data?.error || '流水读取失败' }
+}
+
+async function adjustQuota() {
+  if (!quotaUser.value || !Number(quotaForm.value.delta_gb)) { quotaError.value = '调整额度不能为 0'; return }
+  quotaSaving.value = true
+  quotaError.value = ''
+  try { await store.adjustUserQuota(quotaUser.value.id, quotaForm.value); usageLedger.value = await store.fetchUserUsageLedger(quotaUser.value.id); quotaForm.value = { delta_gb: 0, note: '' }; showMessage('额度已调整并写入审计流水') } catch (error) { quotaError.value = error.response?.data?.error || '额度调整失败' } finally { quotaSaving.value = false }
+}
+
+function ledgerKind(kind) { return { usage: 'Agent 流量', quota_adjustment: '额度增减', quota_set: '额度设置', reset: '流量清零', billing_mode_change: '计费方向变更' }[kind] || kind }
+function formatLedgerDelta(entry) { const value = Number(entry.delta_bytes || 0) / 1073741824; if (entry.kind === 'reset' || entry.kind === 'billing_mode_change') return '—'; return `${value > 0 ? '+' : ''}${value.toFixed(3)} GB` }
 
 async function removeGroup(group) {
   if (!window.confirm(`确认删除入口组“${group.name}”？端口会隔离 30 分钟，防止旧客户端误连新用户。`)) return
@@ -341,6 +378,16 @@ onMounted(() => Promise.all([store.fetchUsers(), store.fetchCloud(), store.fetch
 .entry-group-row .port-list { max-width: 360px; overflow: hidden; color: #94a3b8; text-overflow: ellipsis; white-space: nowrap; }
 .entry-group-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 3px; }
 .entry-group-actions button { padding: 4px 6px; font-size: 9px; }
+.quota-form { display: grid; grid-template-columns: 140px minmax(0, 1fr) auto; align-items: end; gap: 10px; }
+.ledger-list { max-height: 340px; overflow-y: auto; border: 1px solid #e5eaf1; border-radius: 10px; }
+.ledger-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid #f1f5f9; padding: 11px 13px; }
+.ledger-row:last-child { border-bottom: 0; }
+.ledger-row strong, .ledger-row small { display: block; }
+.ledger-row strong { color: #334155; font-size: 11px; }
+.ledger-row small { margin-top: 3px; color: #94a3b8; font-size: 9px; }
+.ledger-row > span { font-family: ui-monospace, monospace; font-size: 10px; font-weight: 700; }
+.ledger-plus { color: #15803d; }
+.ledger-minus { color: #dc2626; }
 .account-list-title, .account-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 11px; }
 .account-list-title { background: #f8fafc; color: #64748b; font-size: 9px; font-weight: 700; }
 .account-list-title span { color: #2563eb; }
@@ -363,5 +410,5 @@ onMounted(() => Promise.all([store.fetchUsers(), store.fetchCloud(), store.fetch
 .account-option small { margin-top: 3px; color: #94a3b8; font-size: 9px; }
 .form-actions { display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #f1f5f9; padding-top: 16px; }
 @media (max-width: 850px) { .user-grid { grid-template-columns: 1fr; } }
-@media (max-width: 640px) { .page-header { align-items: stretch; flex-direction: column; } .summary-grid, .form-grid, .account-picker { grid-template-columns: 1fr; } .account-option:nth-child(odd) { border-right: 0; } .user-footer, .entry-group-row { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 640px) { .page-header { align-items: stretch; flex-direction: column; } .summary-grid, .form-grid, .account-picker, .quota-form { grid-template-columns: 1fr; } .account-option:nth-child(odd) { border-right: 0; } .user-footer, .entry-group-row { align-items: flex-start; flex-direction: column; } }
 </style>

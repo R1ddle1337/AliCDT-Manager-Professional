@@ -134,6 +134,33 @@ func TestServicesWithSameMeterKeyShareExactQuota(t *testing.T) {
 	}
 }
 
+func TestQuotaLeaseOverridesUserLimitAndExpiresLocally(t *testing.T) {
+	future := time.Now().Add(time.Minute)
+	cfg := protocol.ServiceConfig{
+		ID: "leased", MeterKey: "user:9", BillingMode: protocol.BillingModeBoth, TrafficLimitGB: 100,
+		BillingEpoch: currentBillingEpoch(time.Now()), QuotaLeaseID: "lease-1", QuotaLeaseBytes: 5, QuotaLeaseExpiresAt: &future,
+	}
+	runner := newServiceRunner(context.Background(), cfg, newTrafficMeter(cfg, protocol.ServiceStatus{}))
+	if written, err := runner.writeCounted(io.Discard, []byte("1234567"), trafficIngress, true); written != 5 || !errors.Is(err, errTrafficQuotaExceeded) {
+		t.Fatalf("lease boundary write = %d, %v", written, err)
+	}
+	past := time.Now().Add(-time.Second)
+	cfg.QuotaLeaseID = "lease-2"
+	cfg.QuotaLeaseBytes = 100
+	cfg.QuotaLeaseExpiresAt = &past
+	expired := newServiceRunner(context.Background(), cfg, newTrafficMeter(cfg, protocol.ServiceStatus{}))
+	if written, err := expired.writeCounted(io.Discard, []byte("x"), trafficIngress, true); written != 0 || !errors.Is(err, errTrafficQuotaExceeded) {
+		t.Fatalf("expired lease write = %d, %v", written, err)
+	}
+	cfg.QuotaLeaseID = "lease-empty"
+	cfg.QuotaLeaseBytes = 0
+	cfg.QuotaLeaseExpiresAt = &future
+	empty := newServiceRunner(context.Background(), cfg, newTrafficMeter(cfg, protocol.ServiceStatus{}))
+	if written, err := empty.writeCounted(io.Discard, []byte("x"), trafficIngress, true); written != 0 || !errors.Is(err, errTrafficQuotaExceeded) {
+		t.Fatalf("empty lease write = %d, %v", written, err)
+	}
+}
+
 func TestUDPDatagramIsNeverPartiallyForwardedAtQuotaBoundary(t *testing.T) {
 	const limitBytes = uint64(5)
 	cfg := protocol.ServiceConfig{

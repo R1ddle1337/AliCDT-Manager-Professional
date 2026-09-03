@@ -49,6 +49,7 @@ type RelayNode struct {
 	CurrentRevision int64           `json:"current_revision"`
 	DesiredRevision int64           `json:"desired_revision"`
 	Services        json.RawMessage `json:"service_status,omitempty"`
+	Capabilities    []string        `json:"capabilities"`
 }
 
 type LandingNode struct {
@@ -285,6 +286,7 @@ type UserEntryGroup struct {
 	TrafficLimitGB float64         `json:"traffic_limit_gb"`
 	BillingEpoch   int64           `json:"billing_epoch"`
 	Ports          []UserEntryPort `json:"ports"`
+	Lease          *TrafficLease   `json:"traffic_lease,omitempty"`
 	CreatedAt      time.Time       `json:"created_at"`
 	UpdatedAt      time.Time       `json:"updated_at"`
 }
@@ -316,6 +318,41 @@ type CreateUserEntryGroupRequest struct {
 	UDPIdleTimeoutSeconds int                   `json:"udp_idle_timeout_seconds"`
 	Health                HealthSettings        `json:"health"`
 	Targets               []CreateServiceTarget `json:"targets"`
+}
+
+type UsageLedgerEntry struct {
+	ID           string    `json:"id"`
+	UserID       int64     `json:"user_id"`
+	MeterKey     string    `json:"meter_key"`
+	BillingEpoch int64     `json:"billing_epoch"`
+	Direction    string    `json:"direction"`
+	Kind         string    `json:"kind"`
+	DeltaBytes   int64     `json:"delta_bytes"`
+	TotalBytes   uint64    `json:"total_bytes"`
+	Note         string    `json:"note,omitempty"`
+	Source       string    `json:"source"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+type UsageAdjustmentRequest struct {
+	DeltaGB  float64 `json:"delta_gb"`
+	Note     string  `json:"note"`
+	MeterKey string  `json:"meter_key,omitempty"`
+}
+
+type TrafficLease struct {
+	ID            string    `json:"id"`
+	UserID        int64     `json:"user_id"`
+	MeterKey      string    `json:"meter_key"`
+	RelayNodeID   string    `json:"relay_node_id"`
+	BillingEpoch  int64     `json:"billing_epoch"`
+	ReservedBytes uint64    `json:"reserved_bytes"`
+	UsedBytes     uint64    `json:"used_bytes"`
+	Sequence      int64     `json:"sequence"`
+	Status        string    `json:"status"`
+	ExpiresAt     time.Time `json:"expires_at"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type CreateServiceTarget struct {
@@ -542,6 +579,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			current_revision INTEGER NOT NULL DEFAULT 0,
 			desired_revision INTEGER NOT NULL DEFAULT 0,
 			service_status_json TEXT NOT NULL DEFAULT '[]',
+			capabilities_json TEXT NOT NULL DEFAULT '[]',
 			created_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS settings (
@@ -725,6 +763,46 @@ func (s *Store) migrate(ctx context.Context) error {
 			reason TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS usage_ledger (
+			id TEXT PRIMARY KEY,
+			user_id INTEGER NOT NULL REFERENCES console_users(id) ON DELETE CASCADE,
+			meter_key TEXT NOT NULL,
+			billing_epoch INTEGER NOT NULL,
+			direction TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			delta_bytes INTEGER NOT NULL,
+			total_bytes INTEGER NOT NULL,
+			note TEXT NOT NULL DEFAULT '',
+			source TEXT NOT NULL DEFAULT 'controller',
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS usage_meter_checkpoints (
+			relay_node_id TEXT NOT NULL,
+			meter_key TEXT NOT NULL,
+			user_id INTEGER NOT NULL REFERENCES console_users(id) ON DELETE CASCADE,
+			billing_epoch INTEGER NOT NULL,
+			total_bytes INTEGER NOT NULL,
+			bytes_up INTEGER NOT NULL DEFAULT 0,
+			bytes_down INTEGER NOT NULL DEFAULT 0,
+			lease_id TEXT NOT NULL DEFAULT '',
+			sequence INTEGER NOT NULL DEFAULT 0,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(relay_node_id,meter_key,billing_epoch)
+		)`,
+		`CREATE TABLE IF NOT EXISTS traffic_leases (
+			id TEXT PRIMARY KEY,
+			user_id INTEGER NOT NULL REFERENCES console_users(id) ON DELETE CASCADE,
+			meter_key TEXT NOT NULL,
+			relay_node_id TEXT NOT NULL REFERENCES relay_nodes(id) ON DELETE CASCADE,
+			billing_epoch INTEGER NOT NULL,
+			reserved_bytes INTEGER NOT NULL,
+			sequence INTEGER NOT NULL DEFAULT 1,
+			status TEXT NOT NULL DEFAULT 'active',
+			expires_at TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			UNIQUE(user_id,relay_node_id,billing_epoch)
+		)`,
 		`CREATE TABLE IF NOT EXISTS service_targets (
 			id TEXT PRIMARY KEY,
 			service_id TEXT NOT NULL REFERENCES relay_services(id) ON DELETE CASCADE,
@@ -841,6 +919,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		{name: "update_status", definition: "TEXT NOT NULL DEFAULT 'idle'"},
 		{name: "update_error", definition: "TEXT NOT NULL DEFAULT ''"},
 		{name: "update_at", definition: "TEXT"},
+		{name: "capabilities_json", definition: "TEXT NOT NULL DEFAULT '[]'"},
 	} {
 		if err := s.ensureColumn(ctx, "relay_nodes", column.name, column.definition); err != nil {
 			return err
@@ -884,6 +963,21 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_relay_port_quarantine_lookup ON relay_port_quarantine(relay_node_id,listen_port,release_after)`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_usage_ledger_user_period ON usage_ledger(user_id,billing_epoch,created_at)`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "usage_meter_checkpoints", "bytes_up", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "usage_meter_checkpoints", "bytes_down", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "usage_meter_checkpoints", "lease_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "usage_meter_checkpoints", "sequence", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE console_users SET billing_epoch=COALESCE((SELECT MAX(billing_epoch) FROM relay_services WHERE relay_services.user_id=console_users.id),billing_epoch) WHERE billing_epoch<=1`); err != nil {
@@ -1328,6 +1422,10 @@ func (s *Store) UpdateHeartbeat(ctx context.Context, id string, heartbeat protoc
 	if err != nil {
 		return err
 	}
+	capabilities, err := json.Marshal(heartbeat.Capabilities)
+	if err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -1343,8 +1441,8 @@ func (s *Store) UpdateHeartbeat(ctx context.Context, id string, heartbeat protoc
 	if updateStatus == "" {
 		updateStatus = "idle"
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET status='online', last_seen_at=?, agent_version=?, binary_sha256=?, update_status=?, update_error=?, update_at=?, current_revision=?, service_status_json=? WHERE id=?`,
-		now.Format(time.RFC3339Nano), heartbeat.AgentVersion, strings.TrimSpace(heartbeat.BinarySHA256), updateStatus, strings.TrimSpace(heartbeat.UpdateError), now.Format(time.RFC3339Nano), heartbeat.CurrentRevision, string(encoded), id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET status='online', last_seen_at=?, agent_version=?, binary_sha256=?, update_status=?, update_error=?, update_at=?, current_revision=?, service_status_json=?,capabilities_json=? WHERE id=?`,
+		now.Format(time.RFC3339Nano), heartbeat.AgentVersion, strings.TrimSpace(heartbeat.BinarySHA256), updateStatus, strings.TrimSpace(heartbeat.UpdateError), now.Format(time.RFC3339Nano), heartbeat.CurrentRevision, string(encoded), string(capabilities), id); err != nil {
 		return err
 	}
 	if oldRevision != heartbeat.CurrentRevision {
@@ -1380,6 +1478,12 @@ func (s *Store) UpdateHeartbeat(ctx context.Context, id string, heartbeat protoc
 				}
 			}
 		}
+	}
+	if err := recordUsageHeartbeatTx(ctx, tx, id, heartbeat.Services, now); err != nil {
+		return err
+	}
+	if err := renewTrafficLeasesTx(ctx, tx, id, heartbeat.Services, now); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -1436,6 +1540,14 @@ func flattenTargetHealth(raw string) map[string]bool {
 }
 
 func (s *Store) AgentConfig(ctx context.Context, id string) (protocol.AgentConfig, error) {
+	services, err := s.ListRelayServices(ctx, id)
+	if err != nil {
+		return protocol.AgentConfig{}, err
+	}
+	leases, err := s.EnsureTrafficLeases(ctx, id, services)
+	if err != nil {
+		return protocol.AgentConfig{}, err
+	}
 	var revision int64
 	var protectionSuspended int
 	if err := s.db.QueryRowContext(ctx, `SELECT rn.desired_revision,
@@ -1446,10 +1558,6 @@ func (s *Store) AgentConfig(ctx context.Context, id string) (protocol.AgentConfi
 			)
 		) THEN 1 ELSE 0 END
 		FROM relay_nodes rn LEFT JOIN accounts a ON a.id=rn.cloud_account_id OR (rn.cloud_account_id IS NULL AND rn.ecs_instance_id IN (SELECT instance_id FROM instances WHERE account_id=a.id)) WHERE rn.id=?`, id).Scan(&revision, &protectionSuspended); err != nil {
-		return protocol.AgentConfig{}, err
-	}
-	services, err := s.ListRelayServices(ctx, id)
-	if err != nil {
 		return protocol.AgentConfig{}, err
 	}
 	config := protocol.AgentConfig{Revision: revision, Services: make([]protocol.ServiceConfig, 0, len(services))}
@@ -1479,6 +1587,12 @@ func (s *Store) AgentConfig(ctx context.Context, id string) (protocol.AgentConfi
 		}
 		if service.UserID != nil {
 			item.MeterKey = fmt.Sprintf("user:%d", *service.UserID)
+			if lease, exists := leases[*service.UserID]; exists {
+				item.QuotaLeaseID = lease.ID
+				item.QuotaLeaseBytes = lease.ReservedBytes
+				item.QuotaLeaseSequence = lease.Sequence
+				item.QuotaLeaseExpiresAt = &lease.ExpiresAt
+			}
 		}
 		for _, target := range service.Targets {
 			item.Targets = append(item.Targets, protocol.TargetConfig{
@@ -1493,7 +1607,7 @@ func (s *Store) AgentConfig(ctx context.Context, id string) (protocol.AgentConfi
 }
 
 func (s *Store) ListRelayNodes(ctx context.Context) ([]RelayNode, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,public_ip,COALESCE(ecs_instance_id,''),COALESCE(region_id,''),cloud_account_id,architecture,os,agent_version,COALESCE(binary_sha256,''),COALESCE(update_status,'idle'),COALESCE(update_error,''),update_at,status,last_seen_at,current_revision,desired_revision,service_status_json FROM relay_nodes ORDER BY created_at`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,public_ip,COALESCE(ecs_instance_id,''),COALESCE(region_id,''),cloud_account_id,architecture,os,agent_version,COALESCE(binary_sha256,''),COALESCE(update_status,'idle'),COALESCE(update_error,''),update_at,status,last_seen_at,current_revision,desired_revision,service_status_json,COALESCE(capabilities_json,'[]') FROM relay_nodes ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -1503,8 +1617,8 @@ func (s *Store) ListRelayNodes(ctx context.Context) ([]RelayNode, error) {
 		var node RelayNode
 		var lastSeen, updateAt sql.NullString
 		var cloudAccountID sql.NullInt64
-		var statusJSON string
-		if err := rows.Scan(&node.ID, &node.Name, &node.PublicIP, &node.ECSInstanceID, &node.RegionID, &cloudAccountID, &node.Architecture, &node.OS, &node.AgentVersion, &node.BinarySHA256, &node.UpdateStatus, &node.UpdateError, &updateAt, &node.Status, &lastSeen, &node.CurrentRevision, &node.DesiredRevision, &statusJSON); err != nil {
+		var statusJSON, capabilitiesJSON string
+		if err := rows.Scan(&node.ID, &node.Name, &node.PublicIP, &node.ECSInstanceID, &node.RegionID, &cloudAccountID, &node.Architecture, &node.OS, &node.AgentVersion, &node.BinarySHA256, &node.UpdateStatus, &node.UpdateError, &updateAt, &node.Status, &lastSeen, &node.CurrentRevision, &node.DesiredRevision, &statusJSON, &capabilitiesJSON); err != nil {
 			return nil, err
 		}
 		if cloudAccountID.Valid {
@@ -1519,6 +1633,7 @@ func (s *Store) ListRelayNodes(ctx context.Context) ([]RelayNode, error) {
 			node.UpdateAt = &parsed
 		}
 		node.Services = json.RawMessage(statusJSON)
+		_ = json.Unmarshal([]byte(capabilitiesJSON), &node.Capabilities)
 		nodes = append(nodes, node)
 	}
 	return nodes, rows.Err()
@@ -2203,6 +2318,22 @@ func (s *Store) ListUserEntryGroups(ctx context.Context, userID int64) ([]UserEn
 		if err := portRows.Close(); err != nil {
 			return nil, err
 		}
+		var lease TrafficLease
+		var reserved, used int64
+		var expires, created, updated string
+		err = s.db.QueryRowContext(ctx, `SELECT tl.id,tl.user_id,tl.meter_key,tl.relay_node_id,tl.billing_epoch,tl.reserved_bytes,COALESCE(cp.total_bytes,0),tl.sequence,tl.status,tl.expires_at,tl.created_at,tl.updated_at
+			FROM traffic_leases tl LEFT JOIN usage_meter_checkpoints cp ON cp.relay_node_id=tl.relay_node_id AND cp.meter_key=tl.meter_key AND cp.billing_epoch=tl.billing_epoch
+			WHERE tl.user_id=? AND tl.relay_node_id=? AND tl.billing_epoch=?`, groups[i].UserID, groups[i].RelayNodeID, groups[i].BillingEpoch).Scan(&lease.ID, &lease.UserID, &lease.MeterKey, &lease.RelayNodeID, &lease.BillingEpoch, &reserved, &used, &lease.Sequence, &lease.Status, &expires, &created, &updated)
+		if err == nil {
+			lease.ReservedBytes = uint64(maxInt64(reserved, 0))
+			lease.UsedBytes = uint64(maxInt64(used, 0))
+			lease.ExpiresAt = parseDatabaseTime(expires)
+			lease.CreatedAt = parseDatabaseTime(created)
+			lease.UpdatedAt = parseDatabaseTime(updated)
+			groups[i].Lease = &lease
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
 	}
 	return groups, nil
 }
@@ -2287,12 +2418,49 @@ func (s *Store) CreateUserEntryGroup(ctx context.Context, raw CreateUserEntryGro
 	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM relay_nodes WHERE id=?`, request.RelayNodeID).Scan(&exists); err != nil {
 		return UserEntryGroup{}, errors.New("relay node does not exist")
 	}
+	if request.PortCount > 1 {
+		supported, err := relaySupportsCapabilityTx(ctx, tx, request.RelayNodeID, "shared_meters_v1")
+		if err != nil {
+			return UserEntryGroup{}, err
+		}
+		if !supported {
+			return UserEntryGroup{}, errors.New("upgrade the selected relay agent before allocating a multi-port group")
+		}
+	}
 	var otherRelayServices int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM relay_services WHERE user_id=? AND relay_node_id<>?`, request.UserID, request.RelayNodeID).Scan(&otherRelayServices); err != nil {
 		return UserEntryGroup{}, err
 	}
 	if otherRelayServices > 0 {
-		return UserEntryGroup{}, errors.New("a user can use only one relay node until distributed quota leases are enabled")
+		supported, err := relaySupportsQuotaLeasesTx(ctx, tx, request.RelayNodeID)
+		if err != nil {
+			return UserEntryGroup{}, err
+		}
+		if !supported {
+			return UserEntryGroup{}, errors.New("the selected relay agent must report quota_leases_v1 before sharing a user across relays")
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT DISTINCT relay_node_id FROM relay_services WHERE user_id=?`, request.UserID)
+		if err != nil {
+			return UserEntryGroup{}, err
+		}
+		for rows.Next() {
+			var existingRelayID string
+			if err := rows.Scan(&existingRelayID); err != nil {
+				rows.Close()
+				return UserEntryGroup{}, err
+			}
+			existingSupported, err := relaySupportsQuotaLeasesTx(ctx, tx, existingRelayID)
+			if err != nil || !existingSupported {
+				rows.Close()
+				if err != nil {
+					return UserEntryGroup{}, err
+				}
+				return UserEntryGroup{}, errors.New("all relay agents for a shared user must support quota_leases_v1")
+			}
+		}
+		if err := rows.Close(); err != nil {
+			return UserEntryGroup{}, err
+		}
 	}
 	var standaloneServices int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM relay_services WHERE user_id=? AND entry_group_id IS NULL`, request.UserID).Scan(&standaloneServices); err != nil {
@@ -2528,6 +2696,12 @@ func (s *Store) ResetRelayServiceTraffic(ctx context.Context, id string) (RelayS
 			return RelayService{}, err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET desired_revision=desired_revision+1 WHERE id IN (SELECT relay_node_id FROM relay_services WHERE user_id=?)`, userID.Int64); err != nil {
+			return RelayService{}, err
+		}
+		if err := releaseUserTrafficLeasesTx(ctx, tx, userID.Int64, time.Now().UTC()); err != nil {
+			return RelayService{}, err
+		}
+		if err := insertUsageResetTx(ctx, tx, userID.Int64, nextEpoch, "管理员手动清零用户流量", time.Now().UTC()); err != nil {
 			return RelayService{}, err
 		}
 	} else {

@@ -537,6 +537,7 @@ func (c *Client) sendHeartbeat(ctx context.Context) error {
 		CurrentRevision: c.engine.Revision(),
 		StartedAt:       c.startedAt,
 		Services:        services,
+		Capabilities:    []string{"shared_meters_v1", "quota_leases_v1"},
 	}
 	path := fmt.Sprintf("/api/v2/agents/%s/heartbeat", c.creds.AgentID)
 	return c.requestJSON(ctx, http.MethodPost, path, c.creds.Secret, heartbeat, nil)

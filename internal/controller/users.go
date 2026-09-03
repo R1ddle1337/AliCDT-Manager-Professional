@@ -213,6 +213,27 @@ func (s *Store) ListConsoleUsers(ctx context.Context) ([]ConsoleUser, error) {
 			users[index].EntryGroups = append(users[index].EntryGroups, group)
 		}
 	}
+	// The durable checkpoints are authoritative when one user is present on
+	// multiple Relay nodes. Summing one checkpoint per Relay avoids both the
+	// per-port duplicate statuses and the old max-only multi-Relay projection.
+	for index := range users {
+		user := &users[index]
+		if user.RelayService == nil {
+			continue
+		}
+		var count int
+		var billed, bytesUp, bytesDown int64
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(total_bytes),0),COALESCE(SUM(bytes_up),0),COALESCE(SUM(bytes_down),0) FROM usage_meter_checkpoints WHERE user_id=? AND billing_epoch=?`, user.ID, effectiveBillingEpoch(user.BillingEpoch)).Scan(&count, &billed, &bytesUp, &bytesDown); err != nil {
+			return nil, err
+		}
+		if count > 0 {
+			user.TrafficKnown = true
+			user.BilledBytes = uint64(maxInt64(billed, 0))
+			user.BytesUp = uint64(maxInt64(bytesUp, 0))
+			user.BytesDown = uint64(maxInt64(bytesDown, 0))
+			user.TrafficUsedGB = float64(user.BilledBytes) / (1024 * 1024 * 1024)
+		}
+	}
 	for index := range users {
 		user := &users[index]
 		if user.RelayService != nil {
@@ -354,6 +375,24 @@ func (s *Store) UpdateConsoleUser(ctx context.Context, userID int64, request Con
 	}
 	if currentEnabled != boolInt(enabled) || currentTrafficLimit != request.TrafficLimitGB || billingChanged {
 		if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET desired_revision=desired_revision+1 WHERE id IN (SELECT relay_node_id FROM relay_services WHERE user_id=?)`, userID); err != nil {
+			return ConsoleUser{}, err
+		}
+	}
+	if currentTrafficLimit != request.TrafficLimitGB {
+		deltaBytes, deltaErr := gbToLedgerBytes(request.TrafficLimitGB - currentTrafficLimit)
+		limitBytes, limitErr := gbToLedgerBytes(request.TrafficLimitGB)
+		if deltaErr != nil || limitErr != nil {
+			return ConsoleUser{}, errors.New("traffic limit is outside the supported ledger range")
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO usage_ledger(id,user_id,meter_key,billing_epoch,direction,kind,delta_bytes,total_bytes,note,source,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, randomID("usage"), userID, fmt.Sprintf("user:%d", userID), effectiveBillingEpoch(nextEpoch), "quota", "quota_set", deltaBytes, limitBytes, "管理员编辑用户额度", "admin", now); err != nil {
+			return ConsoleUser{}, err
+		}
+	}
+	if billingChanged {
+		if err := releaseUserTrafficLeasesTx(ctx, tx, userID, time.Now().UTC()); err != nil {
+			return ConsoleUser{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO usage_ledger(id,user_id,meter_key,billing_epoch,direction,kind,delta_bytes,total_bytes,note,source,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, randomID("usage"), userID, fmt.Sprintf("user:%d", userID), effectiveBillingEpoch(nextEpoch), request.BillingMode, "billing_mode_change", 0, 0, "管理员修改计费方向并重置计数", "admin", now); err != nil {
 			return ConsoleUser{}, err
 		}
 	}

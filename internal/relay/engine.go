@@ -62,7 +62,7 @@ func (e *Engine) Apply(ctx context.Context, desired protocol.AgentConfig) error 
 		seen[cfg.ID] = struct{}{}
 		key := serviceMeterKey(cfg)
 		if previous, exists := meterConfigs[key]; exists {
-			if previous.BillingMode != cfg.BillingMode || previous.BillingEpoch != cfg.BillingEpoch || previous.TrafficLimitGB != cfg.TrafficLimitGB || previous.AccessBlocked != cfg.AccessBlocked {
+			if previous.BillingMode != cfg.BillingMode || previous.BillingEpoch != cfg.BillingEpoch || previous.TrafficLimitGB != cfg.TrafficLimitGB || previous.AccessBlocked != cfg.AccessBlocked || previous.QuotaLeaseID != cfg.QuotaLeaseID || previous.QuotaLeaseBytes != cfg.QuotaLeaseBytes || previous.QuotaLeaseSequence != cfg.QuotaLeaseSequence || !sameOptionalTime(previous.QuotaLeaseExpiresAt, cfg.QuotaLeaseExpiresAt) {
 				return fmt.Errorf("shared meter %q has inconsistent quota configuration", key)
 			}
 		} else {
@@ -263,6 +263,28 @@ func serviceMeterKey(cfg protocol.ServiceConfig) string {
 	return cfg.ID
 }
 
+func sameOptionalTime(left, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.Equal(*right)
+}
+
+func quotaLimitBytes(cfg protocol.ServiceConfig) uint64 {
+	if cfg.QuotaLeaseID != "" {
+		return cfg.QuotaLeaseBytes
+	}
+	return quotaBytes(cfg.TrafficLimitGB)
+}
+
+func quotaLeaseExpired(cfg protocol.ServiceConfig) bool {
+	return cfg.QuotaLeaseID != "" && (cfg.QuotaLeaseExpiresAt == nil || !time.Now().Before(*cfg.QuotaLeaseExpiresAt))
+}
+
+func hasQuotaLimit(cfg protocol.ServiceConfig) bool {
+	return cfg.QuotaLeaseID != "" || quotaLimitBytes(cfg) > 0
+}
+
 func newTrafficMeter(cfg protocol.ServiceConfig, restored protocol.ServiceStatus) *trafficMeter {
 	meter := &trafficMeter{billingEpoch: cfg.BillingEpoch}
 	if restored.ID != "" && restored.BillingEpoch == cfg.BillingEpoch {
@@ -270,7 +292,7 @@ func newTrafficMeter(cfg protocol.ServiceConfig, restored protocol.ServiceStatus
 		meter.bytesDown = restored.BytesDown
 		meter.billedBytes = restored.BilledBytes
 	}
-	meter.refreshQuotaState(cfg.TrafficLimitGB)
+	meter.refreshQuotaState(cfg)
 	return meter
 }
 
@@ -421,9 +443,9 @@ func (r *serviceRunner) config() protocol.ServiceConfig {
 	return r.cfg
 }
 
-func (m *trafficMeter) refreshQuotaState(limitGB float64) {
-	limit := quotaBytes(limitGB)
-	if limit > 0 && atomic.LoadUint64(&m.billedBytes) >= limit {
+func (m *trafficMeter) refreshQuotaState(cfg protocol.ServiceConfig) {
+	limit := quotaLimitBytes(cfg)
+	if (cfg.QuotaLeaseID != "" && limit == 0) || limit > 0 && atomic.LoadUint64(&m.billedBytes) >= limit {
 		atomic.StoreInt32(&m.quotaExceeded, 1)
 		return
 	}
@@ -440,7 +462,7 @@ func (m *trafficMeter) update(cfg protocol.ServiceConfig) {
 		atomic.StoreUint64(&m.billedBytes, 0)
 		m.periodMu.Unlock()
 	}
-	m.refreshQuotaState(cfg.TrafficLimitGB)
+	m.refreshQuotaState(cfg)
 }
 
 func currentBillingEpoch(now time.Time) int64 {
@@ -501,8 +523,12 @@ func (r *serviceRunner) reserveBilledBytes(requested int) (int, error) {
 	if requested <= 0 {
 		return 0, nil
 	}
-	limit := quotaBytes(r.config().TrafficLimitGB)
+	limit := quotaLimitBytes(r.config())
 	if limit == 0 {
+		if r.config().QuotaLeaseID != "" {
+			atomic.StoreInt32(&r.meter.quotaExceeded, 1)
+			return 0, errTrafficQuotaExceeded
+		}
 		atomic.AddUint64(&r.meter.billedBytes, uint64(requested))
 		return requested, nil
 	}
@@ -532,7 +558,7 @@ func (r *serviceRunner) refundBilledBytes(reserved, written int) {
 	}
 	difference := uint64(reserved - written)
 	atomic.AddUint64(&r.meter.billedBytes, ^(difference - 1))
-	if quotaBytes(r.config().TrafficLimitGB) > atomic.LoadUint64(&r.meter.billedBytes) {
+	if quotaLimitBytes(r.config()) > atomic.LoadUint64(&r.meter.billedBytes) {
 		atomic.StoreInt32(&r.meter.quotaExceeded, 0)
 	}
 }
@@ -542,6 +568,10 @@ func (r *serviceRunner) writeCounted(w io.Writer, payload []byte, direction traf
 		return 0, nil
 	}
 	if r.config().AccessBlocked {
+		return 0, errTrafficQuotaExceeded
+	}
+	if quotaLeaseExpired(r.config()) {
+		atomic.StoreInt32(&r.meter.quotaExceeded, 1)
 		return 0, errTrafficQuotaExceeded
 	}
 	r.meter.ensureCurrentBillingPeriod()
@@ -561,7 +591,7 @@ func (r *serviceRunner) writeCounted(w io.Writer, payload []byte, direction traf
 			return 0, errTrafficQuotaExceeded
 		}
 		payload = payload[:reserved]
-	} else if quotaBytes(r.config().TrafficLimitGB) > 0 && atomic.LoadInt32(&r.meter.quotaExceeded) != 0 {
+	} else if hasQuotaLimit(r.config()) && atomic.LoadInt32(&r.meter.quotaExceeded) != 0 {
 		return 0, errTrafficQuotaExceeded
 	}
 	written, err := w.Write(payload)
@@ -576,7 +606,7 @@ func (r *serviceRunner) writeCounted(w io.Writer, payload []byte, direction traf
 	if err == nil && written < len(payload) {
 		err = io.ErrShortWrite
 	}
-	if err == nil && billed && quotaBytes(r.config().TrafficLimitGB) > 0 && atomic.LoadInt32(&r.meter.quotaExceeded) != 0 {
+	if err == nil && billed && hasQuotaLimit(r.config()) && atomic.LoadInt32(&r.meter.quotaExceeded) != 0 {
 		err = errTrafficQuotaExceeded
 	}
 	return written, err
@@ -674,7 +704,7 @@ func (r *serviceRunner) handleTCP(client net.Conn) {
 		r.setLastError(errors.New("service access is blocked"))
 		return
 	}
-	if quotaBytes(cfg.TrafficLimitGB) > 0 && atomic.LoadInt32(&r.meter.quotaExceeded) != 0 {
+	if quotaLeaseExpired(cfg) || hasQuotaLimit(cfg) && atomic.LoadInt32(&r.meter.quotaExceeded) != 0 {
 		r.setLastError(errTrafficQuotaExceeded)
 		return
 	}
@@ -1002,20 +1032,24 @@ func (r *serviceRunner) snapshot() protocol.ServiceStatus {
 	defer r.meter.periodMu.RUnlock()
 	cfg := r.config()
 	status := protocol.ServiceStatus{
-		ID:                cfg.ID,
-		MeterKey:          serviceMeterKey(cfg),
-		Name:              cfg.Name,
-		Listening:         atomic.LoadInt32(&r.listening) == 1,
-		ActiveConnections: atomic.LoadInt64(&r.activeConnections),
-		TotalConnections:  atomic.LoadUint64(&r.totalConnections),
-		BytesUp:           atomic.LoadUint64(&r.meter.bytesUp),
-		BytesDown:         atomic.LoadUint64(&r.meter.bytesDown),
-		BilledBytes:       atomic.LoadUint64(&r.meter.billedBytes),
-		BillingMode:       cfg.BillingMode,
-		TrafficLimitGB:    cfg.TrafficLimitGB,
-		BillingEpoch:      atomic.LoadInt64(&r.meter.billingEpoch),
-		QuotaExceeded:     quotaBytes(cfg.TrafficLimitGB) > 0 && atomic.LoadInt32(&r.meter.quotaExceeded) != 0,
-		AccessBlocked:     cfg.AccessBlocked,
+		ID:                  cfg.ID,
+		MeterKey:            serviceMeterKey(cfg),
+		Name:                cfg.Name,
+		Listening:           atomic.LoadInt32(&r.listening) == 1,
+		ActiveConnections:   atomic.LoadInt64(&r.activeConnections),
+		TotalConnections:    atomic.LoadUint64(&r.totalConnections),
+		BytesUp:             atomic.LoadUint64(&r.meter.bytesUp),
+		BytesDown:           atomic.LoadUint64(&r.meter.bytesDown),
+		BilledBytes:         atomic.LoadUint64(&r.meter.billedBytes),
+		BillingMode:         cfg.BillingMode,
+		TrafficLimitGB:      cfg.TrafficLimitGB,
+		BillingEpoch:        atomic.LoadInt64(&r.meter.billingEpoch),
+		QuotaLeaseID:        cfg.QuotaLeaseID,
+		QuotaLeaseBytes:     cfg.QuotaLeaseBytes,
+		QuotaLeaseSequence:  cfg.QuotaLeaseSequence,
+		QuotaLeaseExpiresAt: cfg.QuotaLeaseExpiresAt,
+		QuotaExceeded:       quotaLeaseExpired(cfg) || hasQuotaLimit(cfg) && atomic.LoadInt32(&r.meter.quotaExceeded) != 0,
+		AccessBlocked:       cfg.AccessBlocked,
 	}
 	r.healthMu.RLock()
 	for _, target := range cfg.Targets {

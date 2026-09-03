@@ -182,6 +182,9 @@ func TestUserEntryGroupAllocatesContiguousPortsWithSharedMeter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := store.UpdateHeartbeat(ctx, agent.AgentID, protocol.AgentHeartbeat{Capabilities: []string{"shared_meters_v1", "quota_leases_v1"}}); err != nil {
+		t.Fatal(err)
+	}
 	landing, err := store.CreateLandingNode(ctx, CreateLandingNodeRequest{Name: "landing", Address: "127.0.0.1", Port: 443, Network: "tcp"})
 	if err != nil {
 		t.Fatal(err)
