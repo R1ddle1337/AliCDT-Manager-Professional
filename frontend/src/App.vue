@@ -8,7 +8,7 @@
       </router-view>
     </div>
 
-    <div v-else class="min-h-screen lg:flex">
+    <div v-else class="min-h-screen admin-shell" :class="sidebarOpen ? 'sidebar-expanded' : 'sidebar-collapsed'">
       <aside class="app-sidebar">
         <div class="sidebar-brand">
           <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
@@ -31,6 +31,7 @@
                 :aria-current="isActive(item.path) ? 'page' : undefined"
                 @click="navigate(item.path)"
               >
+                <span class="nav-item-icon" aria-hidden="true">{{ item.icon }}</span>
                 <span>{{ item.label }}</span>
                 <span v-if="item.recommended" class="nav-item-badge">推荐</span>
               </button>
@@ -59,6 +60,7 @@
                 :aria-current="isActive(item.path) ? 'page' : undefined"
                 @click="navigate(item.path)"
               >
+                <span class="nav-item-icon" aria-hidden="true">{{ item.icon }}</span>
                 <span>{{ item.label }}</span>
               </button>
             </div>
@@ -78,6 +80,10 @@
 
       <main class="app-main">
         <header class="app-topbar">
+          <div class="topbar-leading">
+            <button type="button" class="sidebar-toggle" :aria-expanded="sidebarOpen" aria-label="展开或收起侧栏" @click="sidebarOpen = !sidebarOpen"><span aria-hidden="true">☰</span></button>
+            <div class="topbar-brand"><span class="topbar-brand-mark">A</span><strong>AliCDT</strong><small>管理员控制台</small></div>
+          </div>
           <div class="topbar-context">
             <span class="topbar-kicker">WORKSPACE</span>
             <strong>{{ activeItem.label }}</strong>
@@ -123,26 +129,27 @@ const role = ref(localStorage.getItem('role') || 'admin')
 const isAdmin = computed(() => role.value !== 'user')
 const localDisplayName = computed(() => localStorage.getItem('displayName') || (isAdmin.value ? '管理员' : '用户'))
 const primaryNavItems = computed(() => isAdmin.value ? [
-  { path: '/', label: '运行总览' },
-  { path: '/workspace', label: '中转工作区', recommended: true },
-  { path: '/cloud-resources', label: '云资源工作区' },
-  { path: '/users', label: '用户管理' },
+  { path: '/', label: '运行总览', icon: '⌂' },
+  { path: '/workspace', label: '中转工作区', icon: '◎', recommended: true },
+  { path: '/cloud-resources', label: '云资源工作区', icon: '▣' },
+  { path: '/users', label: '用户管理', icon: '♙' },
 ] : [{ path: '/usage', label: '我的用量' }])
 
 const advancedNavItems = [
-  { path: '/relay-pools', label: '入口池（高级）' },
-  { path: '/relay-services', label: '独立转发（高级）' },
-  { path: '/relay-nodes', label: '中转节点（高级）' },
-  { path: '/landing-nodes', label: '落地目标（高级）' },
-  { path: '/dns', label: 'DNS 托管' },
-  { path: '/logs', label: '系统日志' },
-  { path: '/settings', label: '系统设置' },
+  { path: '/relay-pools', label: '入口池（高级）', icon: '◈' },
+  { path: '/relay-services', label: '独立转发（高级）', icon: '↗' },
+  { path: '/relay-nodes', label: '中转节点（高级）', icon: '◇' },
+  { path: '/landing-nodes', label: '落地目标（高级）', icon: '⌁' },
+  { path: '/dns', label: 'DNS 托管', icon: '⌘' },
+  { path: '/logs', label: '系统日志', icon: '≡' },
+  { path: '/settings', label: '系统设置', icon: '⚙' },
 ]
 
 // Keep every existing URL represented so bookmarks and older workflows remain
 // discoverable, while the default view focuses on the unified entry flow.
 const allNavItems = computed(() => [...primaryNavItems.value, ...advancedNavItems.filter(() => isAdmin.value)])
 const advancedOpen = ref(false)
+const sidebarOpen = ref(true)
 watch(() => route.path, () => { role.value = localStorage.getItem('role') || 'admin' }, { immediate: true })
 
 function isActive(path) {
@@ -242,7 +249,21 @@ onUnmounted(stopUpdatePolling)
 .fade-enter-from,
 .fade-leave-to { opacity: 0; }
 
-.app-topbar { display: flex; height: 64px; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid #e5eaf1; background: rgba(255,255,255,.96); padding: 0 30px; backdrop-filter: blur(10px); }
+.admin-shell { min-height: 100vh; background: #f8fafc; }
+.app-sidebar { transition: width .22s ease, transform .22s ease, opacity .18s ease; }
+.sidebar-collapsed .app-sidebar { width: 0; overflow: hidden; border-right: 0; opacity: 0; pointer-events: none; }
+.sidebar-collapsed .app-main { margin-left: 0; }
+.app-topbar { display: flex; height: 64px; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid #e5e7eb; background: rgba(255,255,255,.92); padding: 0 24px; backdrop-filter: blur(14px); }
+.topbar-leading { display: flex; min-width: 0; align-items: center; gap: 11px; }
+.sidebar-toggle { display: inline-grid; width: 34px; height: 34px; place-items: center; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; color: #64748b; cursor: pointer; font-size: 15px; line-height: 1; transition: .15s ease; }
+.sidebar-toggle:hover { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; }
+.topbar-brand { display: none; min-width: 0; align-items: baseline; gap: 8px; }
+.sidebar-collapsed .topbar-brand { display: inline-flex; }
+.topbar-brand-mark { display: inline-grid; width: 23px; height: 23px; place-items: center; border-radius: 6px; background: #2563eb; color: #fff; font-size: 11px; font-weight: 800; }
+.topbar-brand strong { color: #1e293b; font-size: 14px; letter-spacing: -.02em; }
+.topbar-brand small { color: #94a3b8; font-size: 10px; }
+.nav-item-icon { display: inline-grid; width: 21px; height: 21px; flex: 0 0 auto; place-items: center; border-radius: 6px; background: #f1f5f9; color: #94a3b8; font-size: 13px; font-weight: 700; line-height: 1; }
+.nav-item-active .nav-item-icon { background: #dbeafe; color: #2563eb; }
 .topbar-context { display: flex; min-width: 0; align-items: baseline; gap: 10px; }
 .topbar-kicker { color: #94a3b8; font-size: 9px; font-weight: 800; letter-spacing: .16em; }
 .topbar-context strong { overflow: hidden; color: #334155; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
