@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import axios from 'axios'
 import { ref } from 'vue'
-import { clearSession, saveSession } from '../utils/session'
+import { apiErrorMessage, clearSession, saveSession } from '../utils/session'
+import { notifyError } from '../utils/notifications'
 
 const api = axios.create({ baseURL: '/api', timeout: 20000 })
 api.interceptors.request.use(cfg => {
@@ -13,6 +14,8 @@ api.interceptors.response.use(r => r, err => {
   if (err.response?.status === 401) {
     clearSession()
     if (window.location.pathname !== '/login') window.location.assign('/login')
+  } else if (!err.response || err.response.status >= 500) {
+    notifyError(apiErrorMessage(err, '控制器暂时不可用，请稍后重试'))
   }
   return Promise.reject(err)
 })

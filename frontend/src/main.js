@@ -77,6 +77,7 @@ router.beforeEach(async (to, from, next) => {
 
 router.afterEach(to => {
   document.title = `${to.meta.title || '控制台'} · AliCDT`
+  sessionStorage.removeItem('alicdt_chunk_reload')
   window.requestAnimationFrame(() => document.documentElement.classList.remove('route-pending'))
 })
 
