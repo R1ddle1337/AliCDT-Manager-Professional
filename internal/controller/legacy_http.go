@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -230,13 +231,18 @@ func (s *Server) legacyTestDailyReport(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) legacyChangePassword(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		Password string `json:"password"`
+		CurrentPassword string `json:"current_password"`
+		Password        string `json:"password"`
 	}
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.store.ChangeAdminPassword(r.Context(), request.Password); err != nil {
+	if strings.TrimSpace(request.CurrentPassword) == "" {
+		writeError(w, http.StatusBadRequest, errors.New("current_password is required; use the security center endpoint"))
+		return
+	}
+	if err := s.store.ChangeAdminPasswordWithCurrent(r.Context(), request.CurrentPassword, request.Password); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
