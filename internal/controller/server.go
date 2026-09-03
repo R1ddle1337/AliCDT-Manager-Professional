@@ -183,6 +183,10 @@ func (s *Server) routes() chi.Router {
 		router.Post("/api/v2/users", s.createConsoleUser)
 		router.Put("/api/v2/users/{userID}", s.updateConsoleUser)
 		router.Delete("/api/v2/users/{userID}", s.deleteConsoleUser)
+		router.Get("/api/v2/entry-groups", s.listEntryGroups)
+		router.Post("/api/v2/entry-groups", s.createEntryGroup)
+		router.Put("/api/v2/entry-groups/{groupID}", s.updateEntryGroup)
+		router.Delete("/api/v2/entry-groups/{groupID}", s.deleteEntryGroup)
 		router.Post("/api/v2/enrollment-tokens", s.createEnrollmentToken)
 		router.Get("/api/v2/relay-nodes", s.listRelayNodes)
 		router.Get("/api/v2/landing-nodes", s.listLandingNodes)
@@ -520,6 +524,65 @@ func (s *Server) deleteConsoleUser(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) listEntryGroups(w http.ResponseWriter, r *http.Request) {
+	userID := int64(0)
+	if raw := r.URL.Query().Get("user_id"); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || parsed <= 0 {
+			writeError(w, http.StatusBadRequest, errors.New("invalid user id"))
+			return
+		}
+		userID = parsed
+	}
+	groups, err := s.store.ListUserEntryGroups(r.Context(), userID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, groups)
+}
+
+func (s *Server) createEntryGroup(w http.ResponseWriter, r *http.Request) {
+	var request CreateUserEntryGroupRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	group, err := s.store.CreateUserEntryGroup(r.Context(), request)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	_ = s.store.AddSystemLog(r.Context(), "info", "entry_group", fmt.Sprintf("创建用户入口组：%s（%d 个端口）", group.Name, group.PortCount))
+	writeJSON(w, http.StatusCreated, group)
+}
+
+func (s *Server) updateEntryGroup(w http.ResponseWriter, r *http.Request) {
+	var request CreateUserEntryGroupRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	group, err := s.store.UpdateUserEntryGroup(r.Context(), chi.URLParam(r, "groupID"), request)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeStoreError(w, err)
+		} else {
+			writeError(w, http.StatusBadRequest, err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, group)
+}
+
+func (s *Server) deleteEntryGroup(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.DeleteUserEntryGroup(r.Context(), chi.URLParam(r, "groupID")); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) adminInitialized(w http.ResponseWriter, r *http.Request) {
 	initialized, err := s.store.IsAdminInitialized(r.Context())
 	if err != nil {
@@ -755,7 +818,7 @@ func (s *Server) listRelayServices(w http.ResponseWriter, r *http.Request) {
 	}
 	filtered := services[:0]
 	for _, service := range services {
-		if service.PoolID == "" {
+		if service.PoolID == "" && service.EntryGroupID == "" {
 			filtered = append(filtered, service)
 		}
 	}

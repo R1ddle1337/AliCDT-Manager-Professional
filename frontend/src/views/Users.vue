@@ -36,9 +36,18 @@
         <div class="traffic-track"><div class="traffic-fill" :class="user.traffic_percent >= 100 ? 'traffic-danger' : ''" :style="{ width: Math.min(100, user.traffic_percent || 0) + '%' }"></div></div>
         <div class="traffic-meta"><span>{{ user.traffic_known ? formatPercent(user.traffic_percent) + ' 已使用' : '存在未知用量' }}</span><span>剩余 {{ formatGB(user.traffic_remaining_gb) }}</span></div>
 
-        <div v-if="user.relay_service" class="relay-binding">
+        <div v-if="user.relay_service && !(user.entry_groups || []).length" class="relay-binding">
           <div><span>独立入口</span><strong>{{ user.relay_service.name }}</strong><small>{{ user.relay_service.relay_node_name }} · {{ billingModeLabel(user.relay_service.billing_mode) }}</small></div>
           <span class="state-tag" :class="user.relay_service.quota_exceeded ? 'state-disabled' : 'state-enabled'">{{ user.relay_service.quota_exceeded ? '额度耗尽' : (user.relay_service.reported ? 'Agent 已上报' : '等待 Agent') }}</span>
+        </div>
+
+        <div class="entry-groups">
+          <div class="account-list-title">入口端口组 <span>{{ user.entry_groups?.length || 0 }}</span></div>
+          <div v-for="group in (user.entry_groups || [])" :key="group.id" class="entry-group-row">
+            <div class="min-w-0"><strong>{{ group.name }}</strong><small>{{ group.relay_node_name }} · {{ group.network.toUpperCase() }} · {{ group.start_port }}–{{ group.start_port + group.port_count - 1 }}</small><small class="port-list">端口：{{ group.ports.map(port => port.port).join(', ') }}</small></div>
+            <div class="entry-group-actions"><span class="state-tag" :class="group.enabled ? 'state-enabled' : 'state-disabled'">{{ group.enabled ? '启用' : '停用' }}</span><button class="btn-ghost" type="button" @click="resetGroupTraffic(group)">流量清零</button><button class="btn-ghost" type="button" @click="toggleGroup(group)">{{ group.enabled ? '停用' : '启用' }}</button><button class="btn-danger" type="button" @click="removeGroup(group)">删除</button></div>
+          </div>
+          <div v-if="!(user.entry_groups || []).length" class="account-empty">尚未分配入口端口组</div>
         </div>
 
         <div class="account-list">
@@ -53,6 +62,7 @@
         <div class="user-footer">
           <span>{{ user.last_login_at ? '最近登录 ' + formatDate(user.last_login_at) : '尚未登录' }}</span>
           <div>
+            <button class="btn-ghost" type="button" @click="openGroupCreate(user)">分配端口组</button>
             <button class="btn-ghost" type="button" @click="toggleUser(user)">{{ user.enabled ? '禁用' : '启用' }}</button>
             <button class="btn-ghost" type="button" @click="openEdit(user)">编辑</button>
             <button class="btn-danger" type="button" @click="removeUser(user)">删除</button>
@@ -77,6 +87,7 @@
             <input v-model="form.password" type="password" class="input" minlength="8" :required="!editTarget" autocomplete="new-password" :placeholder="editTarget ? '留空表示不修改' : '至少 8 位字符'" />
           </div>
           <div><label class="field-label">用户月流量额度（GB）</label><input v-model.number="form.traffic_limit_gb" type="number" min="0.01" step="0.01" class="input" required /></div>
+          <div><label class="field-label">计费方向</label><select v-model="form.billing_mode" class="input"><option value="both">双向合计</option><option value="upload">仅上传（用户 → 落地）</option><option value="download">仅下载（落地 → 用户）</option></select><p class="field-hint">修改方向会开启新的计量周期并清零当前 Agent 计数。</p></div>
           <div class="field-wide setting-toggle-row">
             <div><strong>允许登录</strong><p class="field-hint">禁用或重置密码会立即撤销该用户的全部会话。</p></div>
             <button type="button" class="toggle" :class="form.enabled ? 'toggle-on' : ''" :aria-pressed="form.enabled" @click="form.enabled = !form.enabled"><span></span></button>
@@ -102,6 +113,23 @@
         </div>
       </form>
     </Modal>
+
+    <Modal v-if="showGroupForm" size="large" @close="showGroupForm = false">
+      <form class="space-y-5" @submit.prevent="saveGroup">
+        <div><div class="eyebrow">USER ENTRY GROUP</div><h2 class="mt-1 text-lg font-bold text-slate-900">为 {{ groupUser?.display_name }} 分配入口端口组</h2><p class="mt-2 text-xs leading-5 text-slate-500">默认自动分配连续 10 个端口，同一用户的全部端口共享一份月流量额度。</p></div>
+        <div class="form-grid">
+          <div><label class="field-label">端口组名称</label><input v-model.trim="groupForm.name" class="input" placeholder="例如：Alice 主入口" required /></div>
+          <div><label class="field-label">中转节点</label><select v-model="groupForm.relay_node_id" class="input" required><option v-for="node in availableRelayNodes" :key="node.id" :value="node.id">{{ node.name }} · {{ node.public_ip || '未上报 IP' }}</option></select></div>
+          <div><label class="field-label">起始端口（0 = 自动）</label><input v-model.number="groupForm.start_port" type="number" min="0" max="59999" class="input" /></div>
+          <div><label class="field-label">端口数量（1–100）</label><input v-model.number="groupForm.port_count" type="number" min="1" max="100" class="input" required /></div>
+          <div><label class="field-label">监听协议</label><select v-model="groupForm.network" class="input"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="tcp+udp">TCP + UDP</option></select></div>
+          <div><label class="field-label">计费方向（继承用户）</label><select v-model="groupForm.billing_mode" class="input" disabled><option value="both">双向合计</option><option value="upload">仅上传</option><option value="download">仅下载</option></select></div>
+        </div>
+        <div><label class="field-label">落地目标（所有端口共用）</label><div class="account-picker"><label v-for="node in store.landingNodes" :key="node.id" class="account-option"><input v-model="groupTargets" type="checkbox" :value="node.id" /><span><strong>{{ node.name }}</strong><small>{{ node.address }}:{{ node.port }}</small></span></label><div v-if="!store.landingNodes.length" class="account-empty">请先创建落地节点</div></div></div>
+        <div v-if="groupError" class="notice notice-error">{{ groupError }}</div>
+        <div class="form-actions"><button class="btn-ghost border border-slate-200" type="button" @click="showGroupForm = false">取消</button><button class="btn-primary" :disabled="groupSaving">{{ groupSaving ? '分配中...' : '分配并发布' }}</button></div>
+      </form>
+    </Modal>
   </div>
 </template>
 
@@ -113,13 +141,20 @@ import Modal from '../components/Modal.vue'
 
 const store = useRelayStore()
 const showForm = ref(false)
+const showGroupForm = ref(false)
 const editTarget = ref(null)
 const saving = ref(false)
 const formError = ref('')
+const groupError = ref('')
+const groupSaving = ref(false)
+const groupUser = ref(null)
+const groupTargets = ref([])
+const availableRelayNodes = computed(() => store.relayNodes)
+const groupForm = ref({ user_id: 0, relay_node_id: '', name: '', start_port: 0, port_count: 10, network: 'tcp', mode: 'failover', enabled: true, billing_mode: 'both' })
 const message = ref({ type: 'success', text: '' })
 let messageTimer
 
-const blank = () => ({ username: '', display_name: '', password: '', enabled: true, traffic_limit_gb: 200, account_ids: [] })
+const blank = () => ({ username: '', display_name: '', password: '', enabled: true, traffic_limit_gb: 200, billing_mode: 'both', account_ids: [] })
 const form = ref(blank())
 const enabledCount = computed(() => store.users.filter(user => user.enabled).length)
 const assignedAccountCount = computed(() => store.cloud.accounts.filter(account => account.user_id).length)
@@ -163,6 +198,7 @@ function openEdit(user) {
     password: '',
     enabled: user.enabled,
     traffic_limit_gb: user.traffic_limit_gb,
+    billing_mode: user.billing_mode || 'both',
     account_ids: user.accounts.map(account => account.id),
   }
   formError.value = ''
@@ -176,6 +212,7 @@ function userPayload(user, changes = {}) {
     password: '',
     enabled: user.enabled,
     traffic_limit_gb: user.traffic_limit_gb,
+    billing_mode: user.billing_mode || 'both',
     account_ids: user.accounts.map(account => account.id),
     ...changes,
   }
@@ -194,6 +231,40 @@ async function saveUser() {
   } finally {
     saving.value = false
   }
+}
+
+function openGroupCreate(user) {
+  groupUser.value = user
+  groupForm.value = { user_id: user.id, relay_node_id: availableRelayNodes.value[0]?.id || store.relayNodes[0]?.id || '', name: `${user.display_name} 入口`, start_port: 0, port_count: 10, network: 'tcp', mode: 'failover', enabled: true, billing_mode: user.billing_mode || 'both' }
+  groupTargets.value = store.landingNodes.filter(node => node.enabled).slice(0, 1).map(node => node.id)
+  groupError.value = ''
+  showGroupForm.value = true
+}
+
+async function saveGroup() {
+  if (!groupTargets.value.length) { groupError.value = '至少选择一个落地节点'; return }
+  groupSaving.value = true
+  groupError.value = ''
+  try {
+    await store.createEntryGroup({ ...groupForm.value, targets: groupTargets.value.map((id, index) => ({ landing_node_id: id, priority: index * 10, weight: 1, enabled: true })), dial_timeout_ms: 2500, udp_idle_timeout_seconds: 60, health: { enabled: true, interval_seconds: 4, timeout_ms: 2000, failure_threshold: 2, success_threshold: 3, recovery_cooldown_seconds: 60 } })
+    showGroupForm.value = false
+    showMessage('入口端口组已分配，Agent 将自动发布')
+  } catch (error) { groupError.value = error.response?.data?.error || '入口组创建失败' } finally { groupSaving.value = false }
+}
+
+async function toggleGroup(group) {
+  try { await store.updateEntryGroup(group.id, { name: group.name, enabled: !group.enabled }); showMessage(group.enabled ? '入口组已停用' : '入口组已启用') } catch (error) { showMessage(error.response?.data?.error || '入口组状态更新失败', 'error') }
+}
+
+async function resetGroupTraffic(group) {
+  const serviceID = group.ports?.[0]?.service_id
+  if (!serviceID || !window.confirm(`确认清零入口组“${group.name}”所属用户的共享月流量？其全部入口端口都会同时清零。`)) return
+  try { await store.resetServiceTraffic(serviceID); showMessage('该用户全部端口的共享流量已清零') } catch (error) { showMessage(error.response?.data?.error || '流量清零失败', 'error') }
+}
+
+async function removeGroup(group) {
+  if (!window.confirm(`确认删除入口组“${group.name}”？端口会隔离 30 分钟，防止旧客户端误连新用户。`)) return
+  try { await store.deleteEntryGroup(group.id); showMessage('入口组已删除，端口进入隔离期') } catch (error) { showMessage(error.response?.data?.error || '入口组删除失败', 'error') }
 }
 
 async function toggleUser(user) {
@@ -223,7 +294,7 @@ function showMessage(text, type = 'success') {
   messageTimer = window.setTimeout(() => { message.value.text = '' }, 5000)
 }
 
-onMounted(() => Promise.all([store.fetchUsers(), store.fetchCloud()]))
+onMounted(() => Promise.all([store.fetchUsers(), store.fetchCloud(), store.fetchRelayNodes(), store.fetchLandingNodes()]))
 </script>
 
 <style scoped>
@@ -262,6 +333,14 @@ onMounted(() => Promise.all([store.fetchUsers(), store.fetchCloud()]))
 .relay-binding > div > span, .relay-binding small { color: #94a3b8; font-size: 9px; }
 .relay-binding strong { margin-top: 3px; color: #334155; font-size: 11px; }
 .relay-binding small { margin-top: 3px; }
+.entry-groups { margin-top: 14px; overflow: hidden; border: 1px solid #dbeafe; border-radius: 10px; }
+.entry-group-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid #eff6ff; padding: 10px 11px; }
+.entry-group-row strong, .entry-group-row small { display: block; }
+.entry-group-row strong { color: #334155; font-size: 11px; }
+.entry-group-row small { margin-top: 3px; color: #64748b; font-size: 9px; }
+.entry-group-row .port-list { max-width: 360px; overflow: hidden; color: #94a3b8; text-overflow: ellipsis; white-space: nowrap; }
+.entry-group-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 3px; }
+.entry-group-actions button { padding: 4px 6px; font-size: 9px; }
 .account-list-title, .account-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 11px; }
 .account-list-title { background: #f8fafc; color: #64748b; font-size: 9px; font-weight: 700; }
 .account-list-title span { color: #2563eb; }
@@ -284,5 +363,5 @@ onMounted(() => Promise.all([store.fetchUsers(), store.fetchCloud()]))
 .account-option small { margin-top: 3px; color: #94a3b8; font-size: 9px; }
 .form-actions { display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #f1f5f9; padding-top: 16px; }
 @media (max-width: 850px) { .user-grid { grid-template-columns: 1fr; } }
-@media (max-width: 640px) { .page-header { align-items: stretch; flex-direction: column; } .summary-grid, .form-grid, .account-picker { grid-template-columns: 1fr; } .account-option:nth-child(odd) { border-right: 0; } .user-footer { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 640px) { .page-header { align-items: stretch; flex-direction: column; } .summary-grid, .form-grid, .account-picker { grid-template-columns: 1fr; } .account-option:nth-child(odd) { border-right: 0; } .user-footer, .entry-group-row { align-items: flex-start; flex-direction: column; } }
 </style>

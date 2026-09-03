@@ -67,6 +67,7 @@ type RelayService struct {
 	ID                    string          `json:"id"`
 	RelayNodeID           string          `json:"relay_node_id"`
 	PoolID                string          `json:"pool_id,omitempty"`
+	EntryGroupID          string          `json:"entry_group_id,omitempty"`
 	UserID                *int64          `json:"user_id,omitempty"`
 	UserName              string          `json:"user_name,omitempty"`
 	UserEnabled           bool            `json:"user_enabled"`
@@ -260,6 +261,57 @@ type CreateRelayServiceRequest struct {
 	Enabled               *bool                 `json:"enabled,omitempty"`
 	BillingMode           string                `json:"billing_mode"`
 	TrafficLimitGB        float64               `json:"traffic_limit_gb"`
+	DialTimeoutMillis     int                   `json:"dial_timeout_ms"`
+	UDPIdleTimeoutSeconds int                   `json:"udp_idle_timeout_seconds"`
+	Health                HealthSettings        `json:"health"`
+	Targets               []CreateServiceTarget `json:"targets"`
+}
+
+type UserEntryGroup struct {
+	ID             string          `json:"id"`
+	UserID         int64           `json:"user_id"`
+	UserName       string          `json:"user_name,omitempty"`
+	RelayNodeID    string          `json:"relay_node_id"`
+	RelayNodeName  string          `json:"relay_node_name,omitempty"`
+	RelayPublicIP  string          `json:"relay_public_ip,omitempty"`
+	Name           string          `json:"name"`
+	ListenHost     string          `json:"listen_host"`
+	StartPort      int             `json:"start_port"`
+	PortCount      int             `json:"port_count"`
+	Network        string          `json:"network"`
+	Mode           string          `json:"mode"`
+	Enabled        bool            `json:"enabled"`
+	BillingMode    string          `json:"billing_mode"`
+	TrafficLimitGB float64         `json:"traffic_limit_gb"`
+	BillingEpoch   int64           `json:"billing_epoch"`
+	Ports          []UserEntryPort `json:"ports"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+}
+
+type UserEntryPort struct {
+	ID           string     `json:"id"`
+	GroupID      string     `json:"group_id"`
+	ServiceID    string     `json:"service_id"`
+	RelayNodeID  string     `json:"relay_node_id"`
+	Port         int        `json:"port"`
+	Network      string     `json:"network"`
+	Enabled      bool       `json:"enabled"`
+	Quarantined  bool       `json:"quarantined"`
+	ReleaseAfter *time.Time `json:"release_after,omitempty"`
+}
+
+type CreateUserEntryGroupRequest struct {
+	UserID                int64                 `json:"user_id"`
+	RelayNodeID           string                `json:"relay_node_id"`
+	Name                  string                `json:"name"`
+	ListenHost            string                `json:"listen_host"`
+	StartPort             int                   `json:"start_port"`
+	PortCount             int                   `json:"port_count"`
+	Network               string                `json:"network"`
+	Mode                  string                `json:"mode"`
+	Enabled               *bool                 `json:"enabled,omitempty"`
+	BillingMode           string                `json:"billing_mode"`
 	DialTimeoutMillis     int                   `json:"dial_timeout_ms"`
 	UDPIdleTimeoutSeconds int                   `json:"udp_idle_timeout_seconds"`
 	Health                HealthSettings        `json:"health"`
@@ -561,6 +613,8 @@ func (s *Store) migrate(ctx context.Context) error {
 			password_hash TEXT NOT NULL,
 			enabled INTEGER NOT NULL DEFAULT 1,
 			traffic_limit_gb REAL NOT NULL DEFAULT 200,
+			billing_mode TEXT NOT NULL DEFAULT 'both',
+			billing_epoch INTEGER NOT NULL DEFAULT 1,
 			last_login_at TEXT,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
@@ -602,6 +656,29 @@ func (s *Store) migrate(ctx context.Context) error {
 			enabled INTEGER NOT NULL DEFAULT 1,
 			created_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS user_entry_groups (
+			id TEXT PRIMARY KEY,
+			user_id INTEGER NOT NULL REFERENCES console_users(id) ON DELETE CASCADE,
+			relay_node_id TEXT NOT NULL REFERENCES relay_nodes(id) ON DELETE CASCADE,
+			name TEXT NOT NULL,
+			listen_host TEXT NOT NULL DEFAULT '0.0.0.0',
+			start_port INTEGER NOT NULL,
+			port_count INTEGER NOT NULL DEFAULT 10,
+			network TEXT NOT NULL DEFAULT 'tcp',
+			mode TEXT NOT NULL DEFAULT 'failover',
+			enabled INTEGER NOT NULL DEFAULT 1,
+			billing_mode TEXT NOT NULL DEFAULT 'both',
+			dial_timeout_ms INTEGER NOT NULL DEFAULT 2500,
+			udp_idle_timeout_seconds INTEGER NOT NULL DEFAULT 60,
+			health_enabled INTEGER NOT NULL DEFAULT 1,
+			health_interval_seconds INTEGER NOT NULL DEFAULT 4,
+			health_timeout_ms INTEGER NOT NULL DEFAULT 2000,
+			failure_threshold INTEGER NOT NULL DEFAULT 2,
+			success_threshold INTEGER NOT NULL DEFAULT 3,
+			recovery_cooldown_seconds INTEGER NOT NULL DEFAULT 60,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS relay_services (
 			id TEXT PRIMARY KEY,
 			relay_node_id TEXT NOT NULL REFERENCES relay_nodes(id) ON DELETE CASCADE,
@@ -626,7 +703,27 @@ func (s *Store) migrate(ctx context.Context) error {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
 			pool_id TEXT REFERENCES relay_pools(id) ON DELETE SET NULL,
+			entry_group_id TEXT REFERENCES user_entry_groups(id) ON DELETE CASCADE,
 			UNIQUE(relay_node_id, listen_host, listen_port, network)
+		)`,
+		`CREATE TABLE IF NOT EXISTS user_entry_ports (
+			id TEXT PRIMARY KEY,
+			group_id TEXT NOT NULL REFERENCES user_entry_groups(id) ON DELETE CASCADE,
+			service_id TEXT NOT NULL REFERENCES relay_services(id) ON DELETE CASCADE,
+			port INTEGER NOT NULL,
+			created_at TEXT NOT NULL,
+			UNIQUE(group_id,port),
+			UNIQUE(service_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS relay_port_quarantine (
+			id TEXT PRIMARY KEY,
+			relay_node_id TEXT NOT NULL,
+			listen_host TEXT NOT NULL,
+			listen_port INTEGER NOT NULL,
+			network TEXT NOT NULL,
+			release_after TEXT NOT NULL,
+			reason TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS service_targets (
 			id TEXT PRIMARY KEY,
@@ -758,6 +855,15 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.ensureColumn(ctx, "relay_services", "pool_id", "TEXT"); err != nil {
 		return err
 	}
+	if err := s.ensureColumn(ctx, "relay_services", "entry_group_id", "TEXT"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "console_users", "billing_epoch", "INTEGER NOT NULL DEFAULT 1"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "console_users", "billing_mode", "TEXT NOT NULL DEFAULT 'both'"); err != nil {
+		return err
+	}
 	for _, column := range []struct{ name, definition string }{
 		{name: "user_id", definition: "INTEGER REFERENCES console_users(id) ON DELETE SET NULL"},
 		{name: "billing_mode", definition: "TEXT NOT NULL DEFAULT 'both'"},
@@ -768,7 +874,37 @@ func (s *Store) migrate(ctx context.Context) error {
 			return err
 		}
 	}
-	if _, err := s.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_relay_services_user ON relay_services(user_id) WHERE user_id IS NOT NULL`); err != nil {
+	if _, err := s.db.ExecContext(ctx, `DROP INDEX IF EXISTS idx_relay_services_user`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_relay_services_user ON relay_services(user_id) WHERE user_id IS NOT NULL`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_relay_services_entry_group ON relay_services(entry_group_id) WHERE entry_group_id IS NOT NULL`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_relay_port_quarantine_lookup ON relay_port_quarantine(relay_node_id,listen_port,release_after)`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE console_users SET billing_epoch=COALESCE((SELECT MAX(billing_epoch) FROM relay_services WHERE relay_services.user_id=console_users.id),billing_epoch) WHERE billing_epoch<=1`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE console_users SET billing_mode=COALESCE((SELECT billing_mode FROM relay_services WHERE relay_services.user_id=console_users.id ORDER BY created_at LIMIT 1),billing_mode)`); err != nil {
+		return err
+	}
+	// Adopt standalone user-bound listeners into one-port entry groups. This is
+	// lossless and lets existing installations use the new group APIs without
+	// replacing a live listener or resetting its meter.
+	if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO user_entry_groups(id,user_id,relay_node_id,name,listen_host,start_port,port_count,network,mode,enabled,billing_mode,dial_timeout_ms,udp_idle_timeout_seconds,health_enabled,health_interval_seconds,health_timeout_ms,failure_threshold,success_threshold,recovery_cooldown_seconds,created_at,updated_at)
+		SELECT 'group_legacy_'||rs.id,rs.user_id,rs.relay_node_id,rs.name,rs.listen_host,rs.listen_port,1,rs.network,rs.mode,rs.enabled,COALESCE(rs.billing_mode,'both'),rs.dial_timeout_ms,rs.udp_idle_timeout_seconds,rs.health_enabled,rs.health_interval_seconds,rs.health_timeout_ms,rs.failure_threshold,rs.success_threshold,rs.recovery_cooldown_seconds,rs.created_at,rs.updated_at
+		FROM relay_services rs WHERE rs.user_id IS NOT NULL AND rs.pool_id IS NULL AND rs.entry_group_id IS NULL`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE relay_services SET entry_group_id='group_legacy_'||id WHERE user_id IS NOT NULL AND pool_id IS NULL AND entry_group_id IS NULL`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO user_entry_ports(id,group_id,service_id,port,created_at)
+		SELECT 'entryport_legacy_'||rs.id,rs.entry_group_id,rs.id,rs.listen_port,rs.created_at FROM relay_services rs WHERE rs.entry_group_id IS NOT NULL`); err != nil {
 		return err
 	}
 	if err := s.ensureColumn(ctx, "relay_pools", "auto_drain", "INTEGER NOT NULL DEFAULT 1"); err != nil {
@@ -1320,6 +1456,7 @@ func (s *Store) AgentConfig(ctx context.Context, id string) (protocol.AgentConfi
 	for _, service := range services {
 		item := protocol.ServiceConfig{
 			ID:                    service.ID,
+			MeterKey:              service.EntryGroupID,
 			Name:                  service.Name,
 			Listen:                net.JoinHostPort(service.ListenHost, fmt.Sprint(service.ListenPort)),
 			Network:               service.Network,
@@ -1339,6 +1476,9 @@ func (s *Store) AgentConfig(ctx context.Context, id string) (protocol.AgentConfi
 				SuccessThreshold:     service.Health.SuccessThreshold,
 				RecoveryCooldownSecs: service.Health.RecoveryCooldownSecs,
 			},
+		}
+		if service.UserID != nil {
+			item.MeterKey = fmt.Sprintf("user:%d", *service.UserID)
 		}
 		for _, target := range service.Targets {
 			item.Targets = append(item.Targets, protocol.TargetConfig{
@@ -1912,8 +2052,8 @@ func (s *Store) UpdateRelayService(ctx context.Context, id string, request Creat
 }
 
 func (s *Store) ListRelayServices(ctx context.Context, relayNodeID string) ([]RelayService, error) {
-	query := `SELECT rs.id,rs.relay_node_id,COALESCE(rs.pool_id,''),rs.user_id,COALESCE(u.display_name,''),CASE WHEN u.id IS NULL OR u.enabled=1 THEN 1 ELSE 0 END,
-		rs.name,rs.listen_host,rs.listen_port,rs.network,rs.mode,rs.enabled,COALESCE(rs.billing_mode,'both'),COALESCE(rs.traffic_limit_gb,0),COALESCE(rs.billing_epoch,1),
+	query := `SELECT rs.id,rs.relay_node_id,COALESCE(rs.pool_id,''),COALESCE(rs.entry_group_id,''),rs.user_id,COALESCE(u.display_name,''),CASE WHEN u.id IS NULL OR u.enabled=1 THEN 1 ELSE 0 END,
+		rs.name,rs.listen_host,rs.listen_port,rs.network,rs.mode,rs.enabled,CASE WHEN COALESCE(rs.entry_group_id,'')<>'' THEN COALESCE(u.billing_mode,rs.billing_mode,'both') ELSE COALESCE(rs.billing_mode,'both') END,CASE WHEN COALESCE(rs.entry_group_id,'')<>'' THEN COALESCE(u.traffic_limit_gb,rs.traffic_limit_gb,0) ELSE COALESCE(rs.traffic_limit_gb,0) END,CASE WHEN COALESCE(rs.entry_group_id,'')<>'' THEN COALESCE(u.billing_epoch,rs.billing_epoch,1) ELSE COALESCE(rs.billing_epoch,1) END,
 		rs.dial_timeout_ms,rs.udp_idle_timeout_seconds,rs.health_enabled,rs.health_interval_seconds,rs.health_timeout_ms,rs.failure_threshold,rs.success_threshold,rs.recovery_cooldown_seconds,rs.created_at,rs.updated_at
 		FROM relay_services rs LEFT JOIN console_users u ON u.id=rs.user_id`
 	var args []interface{}
@@ -1933,7 +2073,7 @@ func (s *Store) ListRelayServices(ctx context.Context, relayNodeID string) ([]Re
 		var enabled, healthEnabled, userEnabled int
 		var userID sql.NullInt64
 		var created, updated string
-		if err := rows.Scan(&service.ID, &service.RelayNodeID, &service.PoolID, &userID, &service.UserName, &userEnabled, &service.Name, &service.ListenHost, &service.ListenPort, &service.Network, &service.Mode, &enabled,
+		if err := rows.Scan(&service.ID, &service.RelayNodeID, &service.PoolID, &service.EntryGroupID, &userID, &service.UserName, &userEnabled, &service.Name, &service.ListenHost, &service.ListenPort, &service.Network, &service.Mode, &enabled,
 			&service.BillingMode, &service.TrafficLimitGB, &service.BillingEpoch, &service.DialTimeoutMillis, &service.UDPIdleTimeoutSeconds, &healthEnabled, &service.Health.IntervalSeconds, &service.Health.TimeoutMillis,
 			&service.Health.FailureThreshold, &service.Health.SuccessThreshold, &service.Health.RecoveryCooldownSecs, &created, &updated); err != nil {
 			return nil, err
@@ -2006,6 +2146,360 @@ func (s *Store) DeleteRelayService(ctx context.Context, id string) error {
 	return tx.Commit()
 }
 
+const (
+	entryPortPoolMin       = 20000
+	entryPortPoolMax       = 59999
+	entryPortQuarantineAge = 30 * time.Minute
+)
+
+func (s *Store) ListUserEntryGroups(ctx context.Context, userID int64) ([]UserEntryGroup, error) {
+	query := `SELECT g.id,g.user_id,COALESCE(u.username,''),g.relay_node_id,COALESCE(rn.name,''),COALESCE(rn.public_ip,''),g.name,g.listen_host,g.start_port,g.port_count,g.network,g.mode,g.enabled,COALESCE(u.billing_mode,g.billing_mode,'both'),COALESCE(u.traffic_limit_gb,0),COALESCE(u.billing_epoch,1),g.created_at,g.updated_at
+		FROM user_entry_groups g JOIN console_users u ON u.id=g.user_id JOIN relay_nodes rn ON rn.id=g.relay_node_id`
+	args := []interface{}{}
+	if userID > 0 {
+		query += ` WHERE g.user_id=?`
+		args = append(args, userID)
+	}
+	query += ` ORDER BY g.user_id,g.start_port,g.created_at`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	groups := make([]UserEntryGroup, 0)
+	for rows.Next() {
+		var group UserEntryGroup
+		var enabled int
+		var created, updated string
+		if err := rows.Scan(&group.ID, &group.UserID, &group.UserName, &group.RelayNodeID, &group.RelayNodeName, &group.RelayPublicIP, &group.Name, &group.ListenHost, &group.StartPort, &group.PortCount, &group.Network, &group.Mode, &enabled, &group.BillingMode, &group.TrafficLimitGB, &group.BillingEpoch, &created, &updated); err != nil {
+			return nil, err
+		}
+		group.Enabled = enabled != 0
+		group.BillingEpoch = effectiveBillingEpoch(group.BillingEpoch)
+		group.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+		group.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+		group.Ports = make([]UserEntryPort, 0, group.PortCount)
+		groups = append(groups, group)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range groups {
+		portRows, err := s.db.QueryContext(ctx, `SELECT uep.id,uep.group_id,uep.service_id,rs.relay_node_id,uep.port,rs.network,rs.enabled
+			FROM user_entry_ports uep JOIN relay_services rs ON rs.id=uep.service_id WHERE uep.group_id=? ORDER BY uep.port`, groups[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		for portRows.Next() {
+			var port UserEntryPort
+			var enabled int
+			if err := portRows.Scan(&port.ID, &port.GroupID, &port.ServiceID, &port.RelayNodeID, &port.Port, &port.Network, &enabled); err != nil {
+				portRows.Close()
+				return nil, err
+			}
+			port.Enabled = enabled != 0 && groups[i].Enabled
+			groups[i].Ports = append(groups[i].Ports, port)
+		}
+		if err := portRows.Close(); err != nil {
+			return nil, err
+		}
+	}
+	return groups, nil
+}
+
+func (s *Store) UserEntryGroupsForUser(ctx context.Context, userID int64) ([]UserEntryGroup, error) {
+	return s.ListUserEntryGroups(ctx, userID)
+}
+
+func normalizeEntryGroupRequest(request CreateUserEntryGroupRequest) (CreateUserEntryGroupRequest, error) {
+	request.Name = strings.TrimSpace(request.Name)
+	request.ListenHost = strings.TrimSpace(request.ListenHost)
+	if request.ListenHost == "" {
+		request.ListenHost = "0.0.0.0"
+	}
+	if request.UserID <= 0 || request.RelayNodeID == "" || request.Name == "" {
+		return request, errors.New("user, relay node and group name are required")
+	}
+	if request.PortCount == 0 {
+		request.PortCount = 10
+	}
+	if request.PortCount < 1 || request.PortCount > 100 {
+		return request, errors.New("port count must be between 1 and 100")
+	}
+	if request.StartPort < 0 || (request.StartPort > 0 && request.StartPort+request.PortCount-1 > entryPortPoolMax) {
+		return request, fmt.Errorf("ports must stay within %d-%d", entryPortPoolMin, entryPortPoolMax)
+	}
+	if request.StartPort > 0 && request.StartPort < entryPortPoolMin {
+		return request, fmt.Errorf("entry ports must be within %d-%d", entryPortPoolMin, entryPortPoolMax)
+	}
+	request.Network = strings.ToLower(strings.TrimSpace(request.Network))
+	if request.Network == "" {
+		request.Network = "tcp"
+	}
+	request.Mode = strings.ToLower(strings.TrimSpace(request.Mode))
+	if request.Mode == "" {
+		request.Mode = "failover"
+	}
+	if !oneOf(request.Network, "tcp", "udp", "tcp+udp") || !oneOf(request.Mode, "failover", "round_robin", "ip_hash", "weighted") {
+		return request, errors.New("invalid entry group network or mode")
+	}
+	var err error
+	request.BillingMode, err = normalizeBillingMode(request.BillingMode)
+	if err != nil {
+		return request, err
+	}
+	if len(request.Targets) == 0 {
+		return request, errors.New("at least one target is required")
+	}
+	if request.DialTimeoutMillis <= 0 {
+		request.DialTimeoutMillis = 2500
+	}
+	if request.UDPIdleTimeoutSeconds <= 0 {
+		request.UDPIdleTimeoutSeconds = 60
+	}
+	request.Health = normalizeHealth(request.Health)
+	return request, nil
+}
+
+func (s *Store) CreateUserEntryGroup(ctx context.Context, raw CreateUserEntryGroupRequest) (UserEntryGroup, error) {
+	request, err := normalizeEntryGroupRequest(raw)
+	if err != nil {
+		return UserEntryGroup{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return UserEntryGroup{}, err
+	}
+	defer tx.Rollback()
+	var userLimit float64
+	var userBillingMode string
+	var userBillingEpoch int64
+	if err := tx.QueryRowContext(ctx, `SELECT traffic_limit_gb,COALESCE(billing_mode,'both'),COALESCE(billing_epoch,1) FROM console_users WHERE id=?`, request.UserID).Scan(&userLimit, &userBillingMode, &userBillingEpoch); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return UserEntryGroup{}, errors.New("assigned user does not exist")
+		}
+		return UserEntryGroup{}, err
+	}
+	if request.BillingMode != userBillingMode {
+		return UserEntryGroup{}, errors.New("entry group billing mode must match the user's billing mode")
+	}
+	var exists int
+	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM relay_nodes WHERE id=?`, request.RelayNodeID).Scan(&exists); err != nil {
+		return UserEntryGroup{}, errors.New("relay node does not exist")
+	}
+	var otherRelayServices int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM relay_services WHERE user_id=? AND relay_node_id<>?`, request.UserID, request.RelayNodeID).Scan(&otherRelayServices); err != nil {
+		return UserEntryGroup{}, err
+	}
+	if otherRelayServices > 0 {
+		return UserEntryGroup{}, errors.New("a user can use only one relay node until distributed quota leases are enabled")
+	}
+	var standaloneServices int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM relay_services WHERE user_id=? AND entry_group_id IS NULL`, request.UserID).Scan(&standaloneServices); err != nil {
+		return UserEntryGroup{}, err
+	}
+	if standaloneServices > 0 {
+		return UserEntryGroup{}, errors.New("remove the user's standalone relay service before allocating an entry group")
+	}
+	if request.StartPort == 0 {
+		request.StartPort, err = findEntryPortRangeTx(ctx, tx, request.RelayNodeID, request.ListenHost, request.Network, request.PortCount)
+		if err != nil {
+			return UserEntryGroup{}, err
+		}
+	}
+	for port := request.StartPort; port < request.StartPort+request.PortCount; port++ {
+		if err := validateListenConflictTx(ctx, tx, request.RelayNodeID, request.ListenHost, port, request.Network, ""); err != nil {
+			return UserEntryGroup{}, err
+		}
+		quarantined, err := entryPortQuarantinedTx(ctx, tx, request.RelayNodeID, request.ListenHost, port, request.Network)
+		if err != nil {
+			return UserEntryGroup{}, err
+		}
+		if quarantined {
+			return UserEntryGroup{}, fmt.Errorf("port %d is temporarily quarantined after release", port)
+		}
+	}
+	enabled := true
+	if request.Enabled != nil {
+		enabled = *request.Enabled
+	}
+	now := time.Now().UTC()
+	groupID := randomID("entrygroup")
+	if _, err := tx.ExecContext(ctx, `INSERT INTO user_entry_groups(id,user_id,relay_node_id,name,listen_host,start_port,port_count,network,mode,enabled,billing_mode,dial_timeout_ms,udp_idle_timeout_seconds,health_enabled,health_interval_seconds,health_timeout_ms,failure_threshold,success_threshold,recovery_cooldown_seconds,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		groupID, request.UserID, request.RelayNodeID, request.Name, request.ListenHost, request.StartPort, request.PortCount, request.Network, request.Mode, boolInt(enabled), request.BillingMode, request.DialTimeoutMillis, request.UDPIdleTimeoutSeconds, boolInt(request.Health.Enabled), request.Health.IntervalSeconds, request.Health.TimeoutMillis, request.Health.FailureThreshold, request.Health.SuccessThreshold, request.Health.RecoveryCooldownSecs, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		return UserEntryGroup{}, err
+	}
+	for index := 0; index < request.PortCount; index++ {
+		port := request.StartPort + index
+		serviceID := randomID("service")
+		serviceName := fmt.Sprintf("%s · %d", request.Name, port)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO relay_services(id,relay_node_id,user_id,name,listen_host,listen_port,network,mode,enabled,billing_mode,traffic_limit_gb,billing_epoch,dial_timeout_ms,udp_idle_timeout_seconds,health_enabled,health_interval_seconds,health_timeout_ms,failure_threshold,success_threshold,recovery_cooldown_seconds,created_at,updated_at,entry_group_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, serviceID, request.RelayNodeID, request.UserID, serviceName, request.ListenHost, port, request.Network, request.Mode, boolInt(enabled), request.BillingMode, userLimit, effectiveBillingEpoch(userBillingEpoch), request.DialTimeoutMillis, request.UDPIdleTimeoutSeconds, boolInt(request.Health.Enabled), request.Health.IntervalSeconds, request.Health.TimeoutMillis, request.Health.FailureThreshold, request.Health.SuccessThreshold, request.Health.RecoveryCooldownSecs, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), groupID); err != nil {
+			return UserEntryGroup{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO user_entry_ports(id,group_id,service_id,port,created_at) VALUES(?,?,?,?,?)`, randomID("entryport"), groupID, serviceID, port, now.Format(time.RFC3339Nano)); err != nil {
+			return UserEntryGroup{}, err
+		}
+		for _, target := range request.Targets {
+			targetEnabled := true
+			if target.Enabled != nil {
+				targetEnabled = *target.Enabled
+			}
+			weight := target.Weight
+			if weight <= 0 {
+				weight = 1
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO service_targets(id,service_id,landing_node_id,weight,priority,enabled) VALUES(?,?,?,?,?,?)`, randomID("target"), serviceID, target.LandingNodeID, weight, target.Priority, boolInt(targetEnabled)); err != nil {
+				return UserEntryGroup{}, err
+			}
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET desired_revision=desired_revision+1 WHERE id=?`, request.RelayNodeID); err != nil {
+		return UserEntryGroup{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return UserEntryGroup{}, err
+	}
+	groups, err := s.ListUserEntryGroups(ctx, request.UserID)
+	if err != nil {
+		return UserEntryGroup{}, err
+	}
+	for _, group := range groups {
+		if group.ID == groupID {
+			return group, nil
+		}
+	}
+	return UserEntryGroup{}, sql.ErrNoRows
+}
+
+func findEntryPortRangeTx(ctx context.Context, tx *sql.Tx, relayNodeID, host, network string, count int) (int, error) {
+	for start := entryPortPoolMin; start+count-1 <= entryPortPoolMax; start++ {
+		available := true
+		for port := start; port < start+count; port++ {
+			if err := validateListenConflictTx(ctx, tx, relayNodeID, host, port, network, ""); err != nil {
+				available = false
+				break
+			}
+			quarantined, err := entryPortQuarantinedTx(ctx, tx, relayNodeID, host, port, network)
+			if err != nil {
+				return 0, err
+			}
+			if quarantined {
+				available = false
+				break
+			}
+		}
+		if available {
+			return start, nil
+		}
+	}
+	return 0, errors.New("no contiguous entry port range is available")
+}
+
+func entryPortQuarantinedTx(ctx context.Context, tx *sql.Tx, relayNodeID, host string, port int, network string) (bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT listen_host,network FROM relay_port_quarantine WHERE relay_node_id=? AND listen_port=? AND release_after>?`, relayNodeID, port, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var existingHost, existingNetwork string
+		if err := rows.Scan(&existingHost, &existingNetwork); err != nil {
+			return false, err
+		}
+		if listenHostsOverlap(existingHost, host) && networksOverlap(existingNetwork, network) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
+func (s *Store) UpdateUserEntryGroup(ctx context.Context, id string, request CreateUserEntryGroupRequest) (UserEntryGroup, error) {
+	request.Name = strings.TrimSpace(request.Name)
+	if request.Name == "" {
+		return UserEntryGroup{}, errors.New("group name is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return UserEntryGroup{}, err
+	}
+	defer tx.Rollback()
+	var nodeID string
+	if err := tx.QueryRowContext(ctx, `SELECT relay_node_id FROM user_entry_groups WHERE id=?`, id).Scan(&nodeID); err != nil {
+		return UserEntryGroup{}, err
+	}
+	setEnabled := ""
+	args := []interface{}{request.Name, time.Now().UTC().Format(time.RFC3339Nano)}
+	if request.Enabled != nil {
+		setEnabled = ",enabled=?"
+		args = append(args, boolInt(*request.Enabled))
+	}
+	args = append(args, id)
+	if _, err := tx.ExecContext(ctx, `UPDATE user_entry_groups SET name=?,updated_at=?`+setEnabled+` WHERE id=?`, args...); err != nil {
+		return UserEntryGroup{}, err
+	}
+	if request.Enabled != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE relay_services SET enabled=?,updated_at=? WHERE entry_group_id=?`, boolInt(*request.Enabled), time.Now().UTC().Format(time.RFC3339Nano), id); err != nil {
+			return UserEntryGroup{}, err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET desired_revision=desired_revision+1 WHERE id=?`, nodeID); err != nil {
+		return UserEntryGroup{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return UserEntryGroup{}, err
+	}
+	groups, err := s.ListUserEntryGroups(ctx, 0)
+	if err != nil {
+		return UserEntryGroup{}, err
+	}
+	for _, group := range groups {
+		if group.ID == id {
+			return group, nil
+		}
+	}
+	return UserEntryGroup{}, sql.ErrNoRows
+}
+
+func (s *Store) DeleteUserEntryGroup(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var nodeID string
+	if err := tx.QueryRowContext(ctx, `SELECT relay_node_id FROM user_entry_groups WHERE id=?`, id).Scan(&nodeID); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	release := now.Add(entryPortQuarantineAge).Format(time.RFC3339Nano)
+	rows, err := tx.QueryContext(ctx, `SELECT listen_host,listen_port,network FROM relay_services WHERE entry_group_id=?`, id)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var host, network string
+		var port int
+		if err := rows.Scan(&host, &port, &network); err != nil {
+			rows.Close()
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO relay_port_quarantine(id,relay_node_id,listen_host,listen_port,network,release_after,reason,created_at) VALUES(?,?,?,?,?,?,?,?)`, randomID("quarantine"), nodeID, host, port, network, release, "entry group deleted", now.Format(time.RFC3339Nano)); err != nil {
+			rows.Close()
+			return err
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM user_entry_groups WHERE id=?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET desired_revision=desired_revision+1 WHERE id=?`, nodeID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) ResetRelayServiceTraffic(ctx context.Context, id string) (RelayService, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -2014,17 +2508,35 @@ func (s *Store) ResetRelayServiceTraffic(ctx context.Context, id string) (RelayS
 	defer tx.Rollback()
 	var relayNodeID, poolID string
 	var currentEpoch int64
-	if err := tx.QueryRowContext(ctx, `SELECT relay_node_id,COALESCE(pool_id,''),COALESCE(billing_epoch,1) FROM relay_services WHERE id=?`, id).Scan(&relayNodeID, &poolID, &currentEpoch); err != nil {
+	var userID sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT relay_node_id,COALESCE(pool_id,''),COALESCE(billing_epoch,1),user_id FROM relay_services WHERE id=?`, id).Scan(&relayNodeID, &poolID, &currentEpoch, &userID); err != nil {
 		return RelayService{}, err
 	}
 	if poolID != "" {
 		return RelayService{}, errors.New("pool-managed service traffic cannot be reset independently")
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE relay_services SET billing_epoch=?,updated_at=? WHERE id=?`, nextBillingEpoch(currentEpoch), time.Now().UTC().Format(time.RFC3339Nano), id); err != nil {
-		return RelayService{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET desired_revision=desired_revision+1 WHERE id=?`, relayNodeID); err != nil {
-		return RelayService{}, err
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if userID.Valid {
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(billing_epoch,1) FROM console_users WHERE id=?`, userID.Int64).Scan(&currentEpoch); err != nil {
+			return RelayService{}, err
+		}
+		nextEpoch := nextBillingEpoch(currentEpoch)
+		if _, err := tx.ExecContext(ctx, `UPDATE console_users SET billing_epoch=?,updated_at=? WHERE id=?`, nextEpoch, now, userID.Int64); err != nil {
+			return RelayService{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE relay_services SET billing_epoch=?,updated_at=? WHERE user_id=?`, nextEpoch, now, userID.Int64); err != nil {
+			return RelayService{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET desired_revision=desired_revision+1 WHERE id IN (SELECT relay_node_id FROM relay_services WHERE user_id=?)`, userID.Int64); err != nil {
+			return RelayService{}, err
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx, `UPDATE relay_services SET billing_epoch=?,updated_at=? WHERE id=?`, nextBillingEpoch(currentEpoch), now, id); err != nil {
+			return RelayService{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET desired_revision=desired_revision+1 WHERE id=?`, relayNodeID); err != nil {
+			return RelayService{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return RelayService{}, err

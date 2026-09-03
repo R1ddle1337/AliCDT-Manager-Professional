@@ -31,12 +31,12 @@ func TestServiceBillingModesAndExactQuota(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := protocol.ServiceConfig{ID: "meter", BillingMode: test.mode, TrafficLimitGB: bytesToGB(5), BillingEpoch: 7}
-			runner := newServiceRunner(context.Background(), cfg, protocol.ServiceStatus{})
+			runner := newServiceRunner(context.Background(), cfg, newTrafficMeter(cfg, protocol.ServiceStatus{}))
 			var destination bytes.Buffer
 			if written, err := runner.writeCounted(&destination, []byte("abc"), trafficIngress, true); written != 3 || err != nil {
 				t.Fatalf("upload write = %d, %v", written, err)
 			}
-			if got := atomic.LoadUint64(&runner.billedBytes); got != test.wantAfterUp {
+			if got := atomic.LoadUint64(&runner.meter.billedBytes); got != test.wantAfterUp {
 				t.Fatalf("billed after upload = %d, want %d", got, test.wantAfterUp)
 			}
 			written, err := runner.writeCounted(&destination, []byte("WXYZ"), trafficEgress, true)
@@ -46,7 +46,7 @@ func TestServiceBillingModesAndExactQuota(t *testing.T) {
 			if test.mode == protocol.BillingModeBoth && !errors.Is(err, errTrafficQuotaExceeded) {
 				t.Fatalf("both-direction quota error = %v", err)
 			}
-			if got := atomic.LoadUint64(&runner.billedBytes); got != test.wantAfterDown {
+			if got := atomic.LoadUint64(&runner.meter.billedBytes); got != test.wantAfterDown {
 				t.Fatalf("billed after download = %d, want %d", got, test.wantAfterDown)
 			}
 		})
@@ -84,10 +84,11 @@ func TestBillingEpochResetsAndRestoresUsage(t *testing.T) {
 
 func TestConcurrentBidirectionalWritesCannotExceedQuota(t *testing.T) {
 	const limitBytes = uint64(100)
-	runner := newServiceRunner(context.Background(), protocol.ServiceConfig{
+	cfg := protocol.ServiceConfig{
 		ID: "concurrent", BillingMode: protocol.BillingModeBoth,
 		TrafficLimitGB: float64(limitBytes) / (1024 * 1024 * 1024), BillingEpoch: currentBillingEpoch(time.Now()),
-	}, protocol.ServiceStatus{})
+	}
+	runner := newServiceRunner(context.Background(), cfg, newTrafficMeter(cfg, protocol.ServiceStatus{}))
 	var wait sync.WaitGroup
 	for index := 0; index < 100; index++ {
 		wait.Add(1)
@@ -106,12 +107,40 @@ func TestConcurrentBidirectionalWritesCannotExceedQuota(t *testing.T) {
 	}
 }
 
+func TestServicesWithSameMeterKeyShareExactQuota(t *testing.T) {
+	const limitBytes = uint64(10)
+	epoch := currentBillingEpoch(time.Now())
+	base := protocol.ServiceConfig{
+		MeterKey: "user:42", BillingMode: protocol.BillingModeBoth,
+		TrafficLimitGB: float64(limitBytes) / (1024 * 1024 * 1024), BillingEpoch: epoch,
+	}
+	meter := newTrafficMeter(base, protocol.ServiceStatus{})
+	first := base
+	first.ID = "port-20000"
+	second := base
+	second.ID = "port-20001"
+	firstRunner := newServiceRunner(context.Background(), first, meter)
+	secondRunner := newServiceRunner(context.Background(), second, meter)
+	if written, err := firstRunner.writeCounted(io.Discard, []byte("123456"), trafficIngress, true); written != 6 || err != nil {
+		t.Fatalf("first port write = %d, %v", written, err)
+	}
+	written, err := secondRunner.writeCounted(io.Discard, []byte("abcdef"), trafficEgress, true)
+	if written != 4 || !errors.Is(err, errTrafficQuotaExceeded) {
+		t.Fatalf("second port boundary write = %d, %v", written, err)
+	}
+	firstStatus, secondStatus := firstRunner.snapshot(), secondRunner.snapshot()
+	if firstStatus.BilledBytes != limitBytes || secondStatus.BilledBytes != limitBytes || !firstStatus.QuotaExceeded || !secondStatus.QuotaExceeded {
+		t.Fatalf("shared meter was not enforced: first=%+v second=%+v", firstStatus, secondStatus)
+	}
+}
+
 func TestUDPDatagramIsNeverPartiallyForwardedAtQuotaBoundary(t *testing.T) {
 	const limitBytes = uint64(5)
-	runner := newServiceRunner(context.Background(), protocol.ServiceConfig{
+	cfg := protocol.ServiceConfig{
 		ID: "udp-quota", BillingMode: protocol.BillingModeUpload,
 		TrafficLimitGB: float64(limitBytes) / (1024 * 1024 * 1024), BillingEpoch: currentBillingEpoch(time.Now()),
-	}, protocol.ServiceStatus{})
+	}
+	runner := newServiceRunner(context.Background(), cfg, newTrafficMeter(cfg, protocol.ServiceStatus{}))
 	var destination bytes.Buffer
 	if written, err := runner.writeCounted(&destination, []byte("123"), trafficIngress, false); written != 3 || err != nil {
 		t.Fatalf("first datagram = %d, %v", written, err)

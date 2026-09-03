@@ -20,12 +20,15 @@ type AgentConfig struct {
 }
 
 type ServiceConfig struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Listen  string `json:"listen"`
-	Network string `json:"network"` // tcp, udp, tcp+udp
-	Mode    string `json:"mode"`    // failover, round_robin, ip_hash, weighted
-	Enabled bool   `json:"enabled"`
+	ID string `json:"id"`
+	// MeterKey identifies the shared user/entry-group meter. Services without a
+	// group use their own ID, preserving the standalone service behavior.
+	MeterKey string `json:"meter_key,omitempty"`
+	Name     string `json:"name"`
+	Listen   string `json:"listen"`
+	Network  string `json:"network"` // tcp, udp, tcp+udp
+	Mode     string `json:"mode"`    // failover, round_robin, ip_hash, weighted
+	Enabled  bool   `json:"enabled"`
 	// BillingMode controls which side of the transparent relay is charged:
 	// upload is client-to-target, download is target-to-client, and both counts
 	// both directions. It defaults to both to match bytes leaving a relay on
@@ -95,6 +98,7 @@ type AgentRelease struct {
 
 type ServiceStatus struct {
 	ID                string         `json:"id"`
+	MeterKey          string         `json:"meter_key,omitempty"`
 	Name              string         `json:"name"`
 	Listening         bool           `json:"listening"`
 	ActiveConnections int64          `json:"active_connections"`

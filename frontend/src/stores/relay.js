@@ -72,6 +72,23 @@ export const useRelayStore = defineStore('relay-platform', () => {
     await Promise.all([fetchUsers(), fetchCloud()])
   }
 
+  async function createEntryGroup(payload) {
+    const { data } = await api.post('/entry-groups', payload)
+    await Promise.all([fetchUsers(), fetchRelayNodes(), fetchServices()])
+    return data
+  }
+
+  async function updateEntryGroup(id, payload) {
+    const { data } = await api.put(`/entry-groups/${id}`, payload)
+    await Promise.all([fetchUsers(), fetchRelayNodes()])
+    return data
+  }
+
+  async function deleteEntryGroup(id) {
+    await api.delete(`/entry-groups/${id}`)
+    await Promise.all([fetchUsers(), fetchRelayNodes(), fetchServices()])
+  }
+
   async function fetchMyUsage() {
     const { data } = await api.get('/user/overview')
     currentUser.value = data
@@ -304,6 +321,7 @@ export const useRelayStore = defineStore('relay-platform', () => {
   return {
     relayNodes, landingNodes, services, pools, events, dnsProviders, dnsRecords, cloud, users, currentUser, loading, updateStatus,
     login, logout, fetchUsers, createUser, updateUser, deleteUser, fetchMyUsage,
+    createEntryGroup, updateEntryGroup, deleteEntryGroup,
     fetchRelayNodes, fetchLandingNodes, fetchServices, fetchEvents, fetchCloud, fetchAll,
     createEnrollmentToken, createLandingNode, updateLandingNode, deleteLandingNode, fetchLandingRelayLinks,
     createService, updateService, deleteService, resetServiceTraffic,

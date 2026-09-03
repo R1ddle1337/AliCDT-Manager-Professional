@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -160,6 +161,75 @@ func TestAssignedRelayServiceReceivesUserQuotaAndReportsExactUsage(t *testing.T)
 	}
 	if reset.BillingEpoch <= service.BillingEpoch {
 		t.Fatalf("billing epoch = %d, want greater than %d", reset.BillingEpoch, service.BillingEpoch)
+	}
+}
+
+func TestUserEntryGroupAllocatesContiguousPortsWithSharedMeter(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	user, err := store.CreateConsoleUser(ctx, ConsoleUserRequest{Username: "ports-user", Password: "password-123", TrafficLimitGB: 50, BillingMode: protocol.BillingModeBoth})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateEnrollmentToken(ctx, "ports-enroll", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	agent, err := store.EnrollAgent(ctx, protocol.AgentEnrollmentRequest{Token: "ports-enroll", NodeName: "ports-relay"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	landing, err := store.CreateLandingNode(ctx, CreateLandingNodeRequest{Name: "landing", Address: "127.0.0.1", Port: 443, Network: "tcp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	group, err := store.CreateUserEntryGroup(ctx, CreateUserEntryGroupRequest{
+		UserID: user.ID, RelayNodeID: agent.AgentID, Name: "default ports", PortCount: 10, Network: "tcp", Mode: "failover", BillingMode: protocol.BillingModeBoth,
+		Targets: []CreateServiceTarget{{LandingNodeID: landing.ID}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if group.StartPort != entryPortPoolMin || group.PortCount != 10 || len(group.Ports) != 10 || group.Ports[9].Port != entryPortPoolMin+9 {
+		t.Fatalf("unexpected allocated group: %+v", group)
+	}
+	config, err := store.AgentConfig(ctx, agent.AgentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Services) != 10 {
+		t.Fatalf("service count = %d, want 10", len(config.Services))
+	}
+	for index, service := range config.Services {
+		if service.MeterKey != "user:1" || service.TrafficLimitGB != 50 || service.Listen != fmt.Sprintf("0.0.0.0:%d", entryPortPoolMin+index) {
+			t.Fatalf("service %d does not share user quota: %+v", index, service)
+		}
+	}
+	secondUser, err := store.CreateConsoleUser(ctx, ConsoleUserRequest{Username: "ports-user-2", Password: "password-123", TrafficLimitGB: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.CreateUserEntryGroup(ctx, CreateUserEntryGroupRequest{
+		UserID: secondUser.ID, RelayNodeID: agent.AgentID, Name: "auto after first", PortCount: 10, Network: "tcp", Mode: "failover", BillingMode: protocol.BillingModeBoth,
+		Targets: []CreateServiceTarget{{LandingNodeID: landing.ID}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.StartPort != entryPortPoolMin+10 {
+		t.Fatalf("second range starts at %d, want %d", second.StartPort, entryPortPoolMin+10)
+	}
+	if err := store.DeleteUserEntryGroup(ctx, group.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateUserEntryGroup(ctx, CreateUserEntryGroupRequest{
+		UserID: user.ID, RelayNodeID: agent.AgentID, Name: "quarantine check", StartPort: entryPortPoolMin, PortCount: 1, Network: "tcp", Mode: "failover", BillingMode: protocol.BillingModeBoth,
+		Targets: []CreateServiceTarget{{LandingNodeID: landing.ID}},
+	}); err == nil {
+		t.Fatal("expected a released port to remain quarantined")
 	}
 }
 
