@@ -2,7 +2,7 @@
   <div class="space-y-5 fade-in">
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div><div class="eyebrow">L4 SERVICES</div><h1 class="page-title">转发服务</h1><p class="page-subtitle">独立入口支持 Agent 字节级计量和流量额度熔断</p></div>
-      <button class="btn-primary" :disabled="!canCreate" @click="openCreate">创建转发服务</button>
+      <div class="flex flex-wrap gap-2"><button class="btn-ghost border border-blue-200 text-blue-700" :disabled="!canCreate" @click="openMinecraft">Minecraft 快速转发</button><button class="btn-primary" :disabled="!canCreate" @click="openCreate">创建转发服务</button></div>
     </header>
     <div v-if="!canCreate" class="notice notice-info">创建服务前至少需要一个在线中转节点和一个落地节点。</div>
     <div v-if="message" class="notice" :class="messageType === 'error' ? 'notice-error' : 'notice-success'">{{ message }}</div>
@@ -62,6 +62,22 @@
         <div class="flex gap-3 border-t border-slate-100 pt-4"><button type="button" class="btn-ghost flex-1 border border-slate-200" @click="showForm = false">取消</button><button class="btn-primary flex-1" :disabled="saving">{{ saving ? '发布中...' : '保存并发布' }}</button></div>
       </form>
     </Modal>
+
+    <Modal v-if="showMinecraft" @close="showMinecraft = false">
+      <form class="space-y-5 modal-form" @submit.prevent="saveMinecraft">
+        <div><div class="eyebrow">MINECRAFT FORWARD</div><h2 class="mt-1 text-lg font-bold text-slate-900">Minecraft 快速转发</h2><p class="mt-2 text-xs leading-5 text-slate-500">填写服务器 IP 和端口即可创建透明转发。Java 版使用 TCP，基岩版使用 UDP。</p></div>
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div class="sm:col-span-2"><label class="field-label">游戏版本</label><select v-model="minecraftForm.edition" class="input"><option value="java">Java Edition（TCP）</option><option value="bedrock">Bedrock Edition（UDP）</option></select></div>
+          <div><label class="field-label">目标服务器 IP / 域名</label><input v-model.trim="minecraftForm.target_address" class="input" placeholder="例如 10.0.0.12" required /></div>
+          <div><label class="field-label">目标服务器端口</label><input v-model.number="minecraftForm.target_port" type="number" min="1" max="65535" class="input" required /></div>
+          <div><label class="field-label">对外监听端口</label><input v-model.number="minecraftForm.listen_port" type="number" min="1" max="65535" class="input" required /><p class="field-hint">用户将连接“中转节点公网 IP:此端口”。</p></div>
+          <div><label class="field-label">中转节点</label><select v-model="minecraftForm.relay_node_id" class="input" required><option v-for="node in store.relayNodes" :key="node.id" :value="node.id">{{ node.name }} · {{ maskedIP(node.public_ip, '未设置 IP') }}</option></select></div>
+          <div class="sm:col-span-2"><label class="field-label">归属用户（可选）</label><select v-model.number="minecraftForm.user_id" class="input"><option :value="0">不绑定用户</option><option v-for="user in store.users" :key="user.id" :value="user.id">{{ user.display_name || user.username }}</option></select><p v-if="minecraftForm.user_id" class="field-hint">绑定用户后使用该用户额度，并按 Agent 精确计量。</p></div>
+        </div>
+        <div v-if="minecraftError" class="notice notice-error">{{ minecraftError }}</div>
+        <div class="flex gap-3 border-t border-slate-100 pt-4"><button type="button" class="btn-ghost flex-1 border border-slate-200" @click="showMinecraft = false">取消</button><button class="btn-primary flex-1" :disabled="minecraftSaving">{{ minecraftSaving ? '创建中...' : '创建 Minecraft 转发' }}</button></div>
+      </form>
+    </Modal>
   </div>
 </template>
 
@@ -74,6 +90,7 @@ import { maskIP } from '../utils/ip'
 
 const store = useRelayStore()
 const showForm = ref(false)
+const showMinecraft = ref(false)
 const editTarget = ref(null)
 const saving = ref(false)
 const formError = ref('')
@@ -81,6 +98,9 @@ const message = ref('')
 const messageType = ref('success')
 const selectedTargets = ref([])
 const targetOptions = reactive({})
+const minecraftSaving = ref(false)
+const minecraftError = ref('')
+const minecraftForm = ref({ edition: 'java', target_address: '', target_port: 25565, listen_port: 25565, relay_node_id: '', user_id: 0 })
 
 const blank = () => ({ relay_node_id: store.relayNodes[0]?.id || '', user_id: 0, name: '', listen_host: '0.0.0.0', listen_port: 443, network: 'tcp', mode: 'failover', enabled: true, billing_mode: 'both', traffic_limit_gb: 0 })
 const form = ref(blank())
@@ -89,6 +109,7 @@ const assignableUsers = computed(() => store.users.filter(user => !user.relay_se
 
 function ensureOptions() { store.landingNodes.forEach((node, index) => { if (!targetOptions[node.id]) targetOptions[node.id] = { priority: index * 10, weight: 1 } }) }
 function openCreate() { ensureOptions(); editTarget.value = null; form.value = blank(); selectedTargets.value = []; formError.value = ''; showForm.value = true }
+function openMinecraft() { minecraftError.value = ''; minecraftForm.value = { edition: 'java', target_address: '', target_port: 25565, listen_port: 25565, relay_node_id: store.relayNodes[0]?.id || '', user_id: 0 }; showMinecraft.value = true }
 function openEdit(service) { ensureOptions(); editTarget.value = service; form.value = { relay_node_id: service.relay_node_id, user_id: service.user_id || 0, name: service.name, listen_host: service.listen_host, listen_port: service.listen_port, network: service.network, mode: service.mode, enabled: service.enabled, billing_mode: service.billing_mode || 'both', traffic_limit_gb: service.traffic_limit_gb || 0 }; selectedTargets.value = service.targets.map(target => target.landing_node_id); service.targets.forEach(target => { targetOptions[target.landing_node_id] = { priority: target.priority, weight: target.weight } }); formError.value = ''; showForm.value = true }
 
 async function save() {
@@ -98,6 +119,23 @@ async function save() {
   const user = store.users.find(item => item.id === form.value.user_id)
   const payload = { ...form.value, traffic_limit_gb: user ? user.traffic_limit_gb : Number(form.value.traffic_limit_gb || 0), dial_timeout_ms: 2500, udp_idle_timeout_seconds: 60, health: { enabled: true, interval_seconds: 4, timeout_ms: 2000, failure_threshold: 2, success_threshold: 3, recovery_cooldown_seconds: 60 }, targets: selectedTargets.value.map(id => ({ landing_node_id: id, priority: Number(targetOptions[id].priority || 0), weight: Number(targetOptions[id].weight || 1), enabled: true })) }
   try { if (editTarget.value) await store.updateService(editTarget.value.id, payload); else await store.createService(payload); showForm.value = false; showMessage('配置已发布，Agent 将自动热更新') } catch (error) { formError.value = error.response?.data?.error || '发布失败' } finally { saving.value = false }
+}
+
+async function saveMinecraft() {
+  minecraftSaving.value = true
+  minecraftError.value = ''
+  const network = minecraftForm.value.edition === 'bedrock' ? 'udp' : 'tcp'
+  const user = store.users.find(item => item.id === minecraftForm.value.user_id)
+  let landing = null
+  try {
+    landing = await store.createLandingNode({ name: `Minecraft · ${minecraftForm.value.target_address}:${minecraftForm.value.target_port}`, address: minecraftForm.value.target_address, port: Number(minecraftForm.value.target_port), network, protocol: 'minecraft', share_uri: '', enabled: true })
+    await store.createService({ relay_node_id: minecraftForm.value.relay_node_id, user_id: minecraftForm.value.user_id || 0, name: `Minecraft ${minecraftForm.value.edition === 'bedrock' ? 'Bedrock' : 'Java'} · ${minecraftForm.value.listen_port}`, listen_host: '0.0.0.0', listen_port: Number(minecraftForm.value.listen_port), network, mode: 'failover', enabled: true, billing_mode: user?.billing_mode || 'both', traffic_limit_gb: user?.traffic_limit_gb || 0, dial_timeout_ms: 2500, udp_idle_timeout_seconds: 120, health: { enabled: network === 'tcp', interval_seconds: 4, timeout_ms: 2000, failure_threshold: 2, success_threshold: 3, recovery_cooldown_seconds: 60 }, targets: [{ landing_node_id: landing.id, priority: 0, weight: 1, enabled: true }] })
+    showMinecraft.value = false
+    showMessage('Minecraft 转发已创建，等待 Agent 发布')
+  } catch (error) {
+    if (landing?.id) { try { await store.deleteLandingNode(landing.id) } catch (_) { /* keep the original creation error */ } }
+    minecraftError.value = error.response?.data?.error || 'Minecraft 转发创建失败'
+  } finally { minecraftSaving.value = false }
 }
 
 async function resetTraffic(service) { if (!window.confirm(`确认将“${service.name}”的 Agent 计量清零？`)) return; try { await store.resetServiceTraffic(service.id); showMessage('流量已清零，Agent 正在应用新计量周期') } catch (error) { showMessage(error.response?.data?.error || '清零失败', 'error') } }
