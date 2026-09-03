@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -79,6 +80,44 @@ func TestFrontendCachingAndCompression(t *testing.T) {
 	}
 	if !bytes.Equal(decompressed, javascript) {
 		t.Fatal("compressed asset content changed")
+	}
+}
+
+func TestHealthChecksStorageAndInternalErrorsAreRedacted(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := NewServer(store, ServerOptions{AdminToken: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	healthRecorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(healthRecorder, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if healthRecorder.Code != http.StatusOK {
+		t.Fatalf("healthy storage returned %d: %s", healthRecorder.Code, healthRecorder.Body.String())
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	healthRecorder = httptest.NewRecorder()
+	server.Handler().ServeHTTP(healthRecorder, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if healthRecorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("closed storage returned %d: %s", healthRecorder.Code, healthRecorder.Body.String())
+	}
+
+	errorRecorder := httptest.NewRecorder()
+	writeStoreError(errorRecorder, errors.New("secret database path /private/controller.db"))
+	if errorRecorder.Code != http.StatusInternalServerError {
+		t.Fatalf("storage error returned %d", errorRecorder.Code)
+	}
+	if bytes.Contains(errorRecorder.Body.Bytes(), []byte("/private/controller.db")) {
+		t.Fatalf("storage error leaked internal details: %s", errorRecorder.Body.String())
+	}
+	if !bytes.Contains(errorRecorder.Body.Bytes(), []byte("internal server error")) {
+		t.Fatalf("storage error response was not normalized: %s", errorRecorder.Body.String())
 	}
 }
 

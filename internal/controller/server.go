@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -148,7 +149,13 @@ func (s *Server) routes() chi.Router {
 	router.Use(middleware.Timeout(30 * time.Second))
 	router.Use(securityHeaders)
 	router.Use(middleware.Compress(5))
-	router.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+	router.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := s.store.db.PingContext(ctx); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{"status": "unavailable", "service": "alicdt-controller"})
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "service": "alicdt-controller"})
 	})
 	if s.agentInstallerPath != "" {
@@ -1171,7 +1178,8 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, errors.New("resource not found"))
 		return
 	}
-	writeError(w, http.StatusInternalServerError, err)
+	log.Printf("controller storage error: %v", err)
+	writeError(w, http.StatusInternalServerError, errors.New("internal server error"))
 }
 
 func WithContext(ctx context.Context, handler http.Handler) http.Handler {
