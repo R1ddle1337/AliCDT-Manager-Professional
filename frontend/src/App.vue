@@ -37,7 +37,7 @@
             </div>
           </section>
 
-          <section class="nav-section nav-section-advanced">
+          <section v-if="isAdmin" class="nav-section nav-section-advanced">
             <button
               type="button"
               class="nav-group-toggle"
@@ -68,7 +68,7 @@
         <div class="sidebar-footer">
           <div class="flex items-center gap-2 px-3 pb-3 text-xs text-text-muted">
             <span class="status-dot status-dot-success"></span>
-            <span>服务运行正常</span>
+            <span>{{ localDisplayName }}</span>
           </div>
           <button type="button" @click="logout" class="nav-item nav-item-muted">
             <span>退出登录</span>
@@ -83,9 +83,9 @@
             <strong>{{ activeItem.label }}</strong>
           </div>
           <div class="topbar-actions">
-            <CardLayoutToggle />
-            <span v-if="updateState.status !== 'idle'" class="update-status" :class="`update-status-${updateState.status}`" aria-live="polite">{{ updateStatusLabel }}</span>
-            <button type="button" class="update-button" :disabled="updateBusy" @click="requestUpdate">
+            <CardLayoutToggle v-if="isAdmin" />
+            <span v-if="isAdmin && updateState.status !== 'idle'" class="update-status" :class="`update-status-${updateState.status}`" aria-live="polite">{{ updateStatusLabel }}</span>
+            <button v-if="isAdmin" type="button" class="update-button" :disabled="updateBusy" @click="requestUpdate">
               <span class="update-code">UPD</span>
               <span>{{ updateButtonLabel }}</span>
             </button>
@@ -119,13 +119,17 @@ const relayStore = useRelayStore()
 const ui = useUIStore()
 const isLogin = computed(() => route.path === '/login')
 
-const primaryNavItems = [
+const role = ref(localStorage.getItem('role') || 'admin')
+const isAdmin = computed(() => role.value !== 'user')
+const localDisplayName = computed(() => localStorage.getItem('displayName') || (isAdmin.value ? '管理员' : '用户'))
+const primaryNavItems = computed(() => isAdmin.value ? [
   { path: '/', label: '运行总览' },
   { path: '/relay-pools', label: '统一入口', recommended: true },
   { path: '/relay-nodes', label: '中转节点' },
   { path: '/landing-nodes', label: '落地节点' },
   { path: '/cloud-resources', label: '资源概览' },
-]
+  { path: '/users', label: '用户管理' },
+] : [{ path: '/usage', label: '我的用量' }])
 
 const advancedNavItems = [
   { path: '/dns', label: 'DNS 托管' },
@@ -138,8 +142,9 @@ const advancedNavItems = [
 
 // Keep every existing URL represented so bookmarks and older workflows remain
 // discoverable, while the default view focuses on the unified entry flow.
-const allNavItems = [...primaryNavItems, ...advancedNavItems]
+const allNavItems = computed(() => [...primaryNavItems.value, ...advancedNavItems.filter(() => isAdmin.value)])
 const advancedOpen = ref(false)
+watch(() => route.path, () => { role.value = localStorage.getItem('role') || 'admin' }, { immediate: true })
 
 function isActive(path) {
   return path === '/' ? route.path === '/' : route.path === path || route.path.startsWith(`${path}/`)
@@ -147,7 +152,7 @@ function isActive(path) {
 
 const advancedActive = computed(() => advancedNavItems.some(item => isActive(item.path)))
 const activeItem = computed(() => {
-  return allNavItems.find(item => isActive(item.path)) || primaryNavItems[0]
+  return allNavItems.value.find(item => isActive(item.path)) || primaryNavItems.value[0]
 })
 watch(advancedActive, active => {
   if (active) advancedOpen.value = true
@@ -167,13 +172,13 @@ function navigate(path) {
   router.push(path)
 }
 
-function logout() {
-  localStorage.removeItem('token')
+async function logout() {
+  await relayStore.logout()
   router.push('/login')
 }
 
 async function refreshUpdateStatus() {
-  if (isLogin.value || !localStorage.getItem('token')) return
+  if (isLogin.value || !isAdmin.value || !localStorage.getItem('token')) return
   try {
     updateState.value = await relayStore.fetchUpdateStatus()
   } catch (_) {

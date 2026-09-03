@@ -383,5 +383,10 @@ managed A/AAAA row per selected Agent, reads each Agent's latest public IP,
 follows IP changes, and disables that row while the Agent is offline or its
 account is draining.
 
-Admin APIs require `Authorization: Bearer $CDT_ADMIN_TOKEN`. Agent APIs use the
-per-node secret returned during one-time enrollment.
+Admin APIs require `Authorization: Bearer $CDT_ADMIN_TOKEN` (or an administrator
+session returned by `/api/v2/auth/login`). Agent APIs use the per-node secret
+returned during one-time enrollment. Administrators can create console users
+through `/api/v2/users`; user sessions may only access `/api/v2/auth/me` and
+`/api/v2/user/overview`. A user's usage is the sum of the account-level CDT
+snapshots for the cloud accounts assigned to that user, because Alibaba Cloud
+does not expose a per-ECS or per-terminal CDT counter.

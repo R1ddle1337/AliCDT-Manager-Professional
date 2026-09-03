@@ -19,7 +19,7 @@
         </div>
         <div class="mb-7">
           <h2 class="text-2xl font-bold tracking-tight text-slate-900">{{ isInit ? '创建管理员账号' : '登录控制台' }}</h2>
-          <p class="mt-2 text-sm text-slate-500">{{ isInit ? '首次使用，请设置管理员凭据' : '使用管理员凭据继续' }}</p>
+          <p class="mt-2 text-sm text-slate-500">{{ isInit ? '首次使用，请设置管理员凭据' : '使用管理员或用户凭据继续' }}</p>
         </div>
 
         <form class="space-y-4" @submit.prevent="submit">
@@ -91,10 +91,14 @@ async function submit() {
     if (isInit.value) {
       const { data } = await axios.post('/api/v2/auth/init', { username: form.value.username, password: form.value.password })
       localStorage.setItem('token', data.token)
+      localStorage.setItem('role', 'admin')
+      localStorage.setItem('username', data.username || form.value.username)
+      localStorage.setItem('displayName', data.display_name || data.username || form.value.username)
+      router.push('/')
     } else {
-      await store.login(form.value.username, form.value.password)
+      const data = await store.login(form.value.username, form.value.password)
+      router.push(data.role === 'user' ? '/usage' : '/')
     }
-    router.push('/')
   } catch (e) {
     error.value = e.response?.data?.error || e.response?.data?.detail || '操作失败，请稍后重试'
   } finally {

@@ -92,6 +92,8 @@ type RelayEvent struct {
 
 type CloudAccount struct {
 	ID                   int64   `json:"id"`
+	UserID               *int64  `json:"user_id,omitempty"`
+	UserName             string  `json:"user_name,omitempty"`
 	Name                 string  `json:"name"`
 	AccessKeyID          string  `json:"access_key_id"`
 	AccessKeySecret      string  `json:"-"`
@@ -125,6 +127,7 @@ type CloudAccount struct {
 }
 
 type CloudAccountRequest struct {
+	UserID               *int64  `json:"user_id,omitempty"`
 	Name                 string  `json:"name"`
 	AccessKeyID          string  `json:"access_key_id"`
 	AccessKeySecret      string  `json:"access_key_secret"`
@@ -542,6 +545,30 @@ func (s *Store) migrate(ctx context.Context) error {
 			last_error TEXT NOT NULL DEFAULT '',
 			updated_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS console_users (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			username TEXT NOT NULL COLLATE NOCASE UNIQUE,
+			display_name TEXT NOT NULL DEFAULT '',
+			password_hash TEXT NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			traffic_limit_gb REAL NOT NULL DEFAULT 200,
+			last_login_at TEXT,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS user_cloud_accounts (
+			user_id INTEGER NOT NULL REFERENCES console_users(id) ON DELETE CASCADE,
+			account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+			created_at TEXT NOT NULL,
+			PRIMARY KEY(user_id,account_id),
+			UNIQUE(account_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS user_sessions (
+			token_hash TEXT PRIMARY KEY,
+			user_id INTEGER NOT NULL REFERENCES console_users(id) ON DELETE CASCADE,
+			expires_at TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS admin_sessions (
 			token_hash TEXT PRIMARY KEY,
 			username TEXT NOT NULL,
@@ -710,6 +737,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 	}
 	if err := s.ensureColumn(ctx, "enrollment_tokens", "account_id", "INTEGER"); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_user_cloud_accounts_account ON user_cloud_accounts(account_id)`); err != nil {
 		return err
 	}
 	if err := s.ensureColumn(ctx, "relay_services", "pool_id", "TEXT"); err != nil {
@@ -897,6 +927,14 @@ func (s *Store) InitAdmin(ctx context.Context, username, password string) (strin
 		return "", err
 	}
 	defer tx.Rollback()
+	var existingUserID int64
+	err = tx.QueryRowContext(ctx, `SELECT id FROM console_users WHERE username=? COLLATE NOCASE`, username).Scan(&existingUserID)
+	if err == nil {
+		return "", errors.New("username is already used by a console user")
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES('admin_username',?),('admin_password_hash',?)`, username, string(hash)); err != nil {
 		return "", err
 	}
@@ -931,19 +969,8 @@ func (s *Store) LoginAdmin(ctx context.Context, username, password string) (stri
 }
 
 func (s *Store) AuthenticateAdminSession(ctx context.Context, token string) error {
-	if token == "" {
-		return errors.New("missing session")
-	}
-	var expires string
-	if err := s.db.QueryRowContext(ctx, `SELECT expires_at FROM admin_sessions WHERE token_hash=?`, hashSecret(token)).Scan(&expires); err != nil {
-		return errors.New("invalid session")
-	}
-	expiresAt, err := time.Parse(time.RFC3339Nano, expires)
-	if err != nil || time.Now().UTC().After(expiresAt) {
-		_, _ = s.db.ExecContext(ctx, `DELETE FROM admin_sessions WHERE token_hash=?`, hashSecret(token))
-		return errors.New("session expired")
-	}
-	return nil
+	_, err := s.AdminSessionUsername(ctx, token)
+	return err
 }
 
 func createAdminSession(ctx context.Context, tx *sql.Tx, username string) (string, error) {
@@ -1876,6 +1903,8 @@ func (s *Store) ListCloudAccounts(ctx context.Context, enabledOnly bool) ([]Clou
 		COALESCE(keep_alive,0),COALESCE(auto_start_time,''),COALESCE(auto_stop_time,''),COALESCE(manual_stopped,0),COALESCE(nostock_notified,0),
 		COALESCE(protection_mode,'alert_only'),COALESCE(protection_triggered,0),COALESCE(protection_predictive,0),protection_triggered_at,
 		COALESCE(protection_action_completed,0),COALESCE(a.protection_last_error,''),COALESCE(a.protection_drain_published,0),COALESCE(a.enabled,1),a.created_at,
+		(SELECT user_id FROM user_cloud_accounts WHERE account_id=a.id),
+		COALESCE((SELECT display_name FROM console_users WHERE id=(SELECT user_id FROM user_cloud_accounts WHERE account_id=a.id)),''),
 		(SELECT COUNT(*) FROM relay_nodes rn LEFT JOIN instances ri ON ri.instance_id=rn.ecs_instance_id
 		 WHERE rn.cloud_account_id=a.id OR (rn.cloud_account_id IS NULL AND ri.account_id=a.id)),
 		(SELECT COUNT(*) FROM relay_nodes rn LEFT JOIN instances ri ON ri.instance_id=rn.ecs_instance_id
@@ -1897,11 +1926,15 @@ func (s *Store) ListCloudAccounts(ctx context.Context, enabledOnly bool) ([]Clou
 		var enabled, keepAlive, manualStopped, noStockNotified, triggered, predictive, actionCompleted, drainPublished int
 		var agentCount, onlineAgentCount int
 		var triggeredAt, createdAt sql.NullString
+		var userID sql.NullInt64
 		if err := rows.Scan(&account.ID, &account.Name, &account.AccessKeyID, &account.AccessKeySecret, &account.RegionID, &account.SiteType,
 			&account.ProtectedInstanceID, &account.TrafficLimitGB, &account.ThresholdPercent, &account.OutstandingThreshold, &account.ShutdownMode,
 			&keepAlive, &account.AutoStartTime, &account.AutoStopTime, &manualStopped, &noStockNotified,
-			&account.ProtectionMode, &triggered, &predictive, &triggeredAt, &actionCompleted, &account.ProtectionLastError, &drainPublished, &enabled, &createdAt, &agentCount, &onlineAgentCount); err != nil {
+			&account.ProtectionMode, &triggered, &predictive, &triggeredAt, &actionCompleted, &account.ProtectionLastError, &drainPublished, &enabled, &createdAt, &userID, &account.UserName, &agentCount, &onlineAgentCount); err != nil {
 			return nil, err
+		}
+		if userID.Valid {
+			account.UserID = &userID.Int64
 		}
 		account.Enabled = enabled != 0
 		account.KeepAlive = keepAlive != 0
@@ -1932,7 +1965,12 @@ func (s *Store) CreateCloudAccount(ctx context.Context, request CloudAccountRequ
 	if err != nil {
 		return CloudAccount{}, err
 	}
-	result, err := s.db.ExecContext(ctx, `INSERT INTO accounts(name,access_key_id,access_key_secret,region_id,site_type,instance_id,traffic_limit_gb,threshold_percent,outstanding_threshold,shutdown_mode,keep_alive,auto_start_time,auto_stop_time,protection_mode,enabled,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return CloudAccount{}, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `INSERT INTO accounts(name,access_key_id,access_key_secret,region_id,site_type,instance_id,traffic_limit_gb,threshold_percent,outstanding_threshold,shutdown_mode,keep_alive,auto_start_time,auto_stop_time,protection_mode,enabled,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		request.Name, request.AccessKeyID, request.AccessKeySecret, request.RegionID, request.SiteType, request.ProtectedInstanceID,
 		request.TrafficLimitGB, request.ThresholdPercent, request.OutstandingThreshold, request.ShutdownMode, boolInt(request.KeepAlive), nullIfEmpty(request.AutoStartTime), nullIfEmpty(request.AutoStopTime), request.ProtectionMode,
 		boolInt(enabled), time.Now().UTC().Format(time.RFC3339Nano))
@@ -1941,6 +1979,14 @@ func (s *Store) CreateCloudAccount(ctx context.Context, request CloudAccountRequ
 	}
 	id, err := result.LastInsertId()
 	if err != nil {
+		return CloudAccount{}, err
+	}
+	if request.UserID != nil {
+		if err := assignCloudAccountUser(ctx, tx, id, request.UserID); err != nil {
+			return CloudAccount{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return CloudAccount{}, err
 	}
 	return CloudAccount{
@@ -1977,6 +2023,11 @@ func (s *Store) UpdateCloudAccount(ctx context.Context, id int64, request CloudA
 	}
 	if err != nil {
 		return CloudAccount{}, err
+	}
+	if request.UserID != nil {
+		if err := assignCloudAccountUser(ctx, tx, id, request.UserID); err != nil {
+			return CloudAccount{}, err
+		}
 	}
 	autoDrain, err := accountHasAutoDrainPoolTx(ctx, tx, id)
 	if err != nil {

@@ -44,6 +44,7 @@
             <p>{{ maskAccessKey(account.access_key_id) }} · {{ account.region_id }}</p>
           </div>
           <div class="account-badges">
+            <span v-if="account.user_name" class="site-tag">用户：{{ account.user_name }}</span>
             <span v-if="account.protection_triggered" class="protection-tag protection-tag-active">{{ account.protection_predictive ? '预测排空' : '保护已触发' }}</span>
             <span class="site-tag" :class="account.agent_installed ? 'agent-tag-installed' : 'agent-tag-missing'">
               {{ account.agent_installed ? `Agent 已安装 · ${account.online_agent_count || 0}/${account.agent_count || 0} 在线` : 'Agent 未安装' }}
@@ -151,6 +152,7 @@
           <div><label class="field-label">地域 ID</label><input v-model.trim="form.region_id" class="input" placeholder="cn-hongkong" required /></div>
           <div><label class="field-label">站点</label><select v-model="form.site_type" class="input"><option value="china">中国站</option><option value="international">国际站</option></select></div>
           <div class="field-wide"><label class="field-label">绑定实例 ID <span class="font-normal text-slate-400">（保活与停机保护共用）</span></label><input v-model.trim="form.instance_id" class="input" list="cloud-instance-options" placeholder="可选，输入 i-..." /><datalist id="cloud-instance-options"><option v-for="instance in store.cloud.instances" :key="instance.instance_id" :value="instance.instance_id">{{ instance.instance_name || instance.instance_id }}</option></datalist></div>
+          <div class="field-wide"><label class="field-label">归属用户</label><select v-model.number="form.user_id" class="input"><option :value="0">不分配（仅管理员）</option><option v-for="user in store.users" :key="user.id" :value="user.id">{{ user.display_name }} (@{{ user.username }})</option></select><p class="field-hint">分配后，用户可看到该账户的名称和账户级 CDT 用量，但无法读取密钥或执行云操作。</p></div>
           <div><label class="field-label">账户 CDT 流量限额（GB）</label><input v-model.number="form.traffic_limit_gb" type="number" min="1" class="input" required /><p class="field-hint">按阿里云账号统计，不是每台 ECS 的独立额度。</p></div>
           <div><label class="field-label">保护阈值（%）</label><input v-model.number="form.threshold_percent" type="number" min="1" max="100" class="input" required /></div>
           <div class="field-wide">
@@ -203,7 +205,7 @@ const totalTraffic = computed(() => store.cloud.traffic.reduce((sum, snapshot) =
 const activeProtectionCount = computed(() => store.cloud.accounts.filter(account => account.protection_triggered).length)
 const blank = () => ({
   name: '', access_key_id: '', access_key_secret: '', region_id: 'cn-hongkong', site_type: 'china',
-  instance_id: '', traffic_limit_gb: 200, threshold_percent: 95, outstanding_threshold: 0,
+  instance_id: '', user_id: 0, traffic_limit_gb: 200, threshold_percent: 95, outstanding_threshold: 0,
   shutdown_mode: 'StopCharging', keep_alive: false, auto_start_time: '', auto_stop_time: '', protection_mode: 'drain_relay', enabled: true,
 })
 const form = ref(blank())
@@ -265,7 +267,7 @@ function openEdit(account) {
   form.value = {
     name: account.name || '', access_key_id: account.access_key_id || '', access_key_secret: '',
     region_id: account.region_id || '', site_type: account.site_type || 'international',
-    instance_id: account.instance_id || '', traffic_limit_gb: account.traffic_limit_gb || 200,
+    instance_id: account.instance_id || '', user_id: account.user_id || 0, traffic_limit_gb: account.traffic_limit_gb || 200,
     threshold_percent: account.threshold_percent || 95, outstanding_threshold: account.outstanding_threshold || 0,
     shutdown_mode: account.shutdown_mode || 'StopCharging', keep_alive: !!account.keep_alive,
     auto_start_time: account.auto_start_time || '', auto_stop_time: account.auto_stop_time || '',
@@ -331,7 +333,7 @@ function showMessage(text, type = 'success') {
   messageTimer = setTimeout(() => { message.value = '' }, 5000)
 }
 
-onMounted(() => store.fetchCloud())
+onMounted(() => Promise.all([store.fetchCloud(), store.fetchUsers()]))
 </script>
 
 <style scoped>

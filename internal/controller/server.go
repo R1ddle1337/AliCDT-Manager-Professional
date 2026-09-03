@@ -58,6 +58,28 @@ type Server struct {
 	router                chi.Router
 }
 
+const (
+	consoleRoleAdmin = "admin"
+	consoleRoleUser  = "user"
+)
+
+type consolePrincipal struct {
+	Role     string
+	Username string
+	User     *ConsoleUser
+}
+
+type consolePrincipalContextKey struct{}
+
+func withConsolePrincipal(ctx context.Context, principal consolePrincipal) context.Context {
+	return context.WithValue(ctx, consolePrincipalContextKey{}, principal)
+}
+
+func consolePrincipalFromContext(ctx context.Context) (consolePrincipal, bool) {
+	principal, ok := ctx.Value(consolePrincipalContextKey{}).(consolePrincipal)
+	return principal, ok
+}
+
 func NewServer(store *Store, opts ServerOptions) (*Server, error) {
 	if store == nil {
 		return nil, errors.New("store is required")
@@ -136,6 +158,12 @@ func (s *Server) routes() chi.Router {
 	router.Get("/api/auth/initialized", s.adminInitialized)
 	router.Post("/api/auth/init", s.initAdmin)
 	router.Post("/api/auth/login", s.loginAdmin)
+	router.Group(func(router chi.Router) {
+		router.Use(s.consoleAuth)
+		router.Get("/api/v2/auth/me", s.currentIdentity)
+		router.Post("/api/v2/auth/logout", s.logoutConsole)
+		router.Get("/api/v2/user/overview", s.currentUserOverview)
+	})
 
 	router.Route("/api/v2/agents", func(router chi.Router) {
 		router.Post("/enroll", s.enrollAgent)
@@ -151,6 +179,10 @@ func (s *Server) routes() chi.Router {
 
 	router.Group(func(router chi.Router) {
 		router.Use(s.adminAuth)
+		router.Get("/api/v2/users", s.listConsoleUsers)
+		router.Post("/api/v2/users", s.createConsoleUser)
+		router.Put("/api/v2/users/{userID}", s.updateConsoleUser)
+		router.Delete("/api/v2/users/{userID}", s.deleteConsoleUser)
 		router.Post("/api/v2/enrollment-tokens", s.createEnrollmentToken)
 		router.Get("/api/v2/relay-nodes", s.listRelayNodes)
 		router.Get("/api/v2/landing-nodes", s.listLandingNodes)
@@ -354,14 +386,137 @@ func (s *Server) serveFrontend(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) adminAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token := bearerToken(r)
-		staticValid := subtle.ConstantTimeCompare([]byte(token), []byte(s.adminToken)) == 1
-		if !staticValid && s.store.AuthenticateAdminSession(r.Context(), token) != nil {
+		principal, err := s.authenticateConsoleRequest(r)
+		if err != nil {
 			writeError(w, http.StatusUnauthorized, errors.New("invalid admin token"))
 			return
 		}
-		next.ServeHTTP(w, r)
+		if principal.Role != consoleRoleAdmin {
+			writeError(w, http.StatusForbidden, errors.New("administrator access is required"))
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(withConsolePrincipal(r.Context(), principal)))
 	})
+}
+
+func (s *Server) consoleAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, err := s.authenticateConsoleRequest(r)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, errors.New("invalid console token"))
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(withConsolePrincipal(r.Context(), principal)))
+	})
+}
+
+func (s *Server) authenticateConsoleRequest(r *http.Request) (consolePrincipal, error) {
+	token := bearerToken(r)
+	if subtle.ConstantTimeCompare([]byte(token), []byte(s.adminToken)) == 1 {
+		username, _ := s.store.GetSetting(r.Context(), "admin_username")
+		return consolePrincipal{Role: consoleRoleAdmin, Username: username}, nil
+	}
+	if username, err := s.store.AdminSessionUsername(r.Context(), token); err == nil {
+		return consolePrincipal{Role: consoleRoleAdmin, Username: username}, nil
+	}
+	user, err := s.store.AuthenticateUserSession(r.Context(), token)
+	if err != nil {
+		return consolePrincipal{}, err
+	}
+	return consolePrincipal{Role: consoleRoleUser, Username: user.Username, User: &user}, nil
+}
+
+func (s *Server) currentIdentity(w http.ResponseWriter, r *http.Request) {
+	principal, ok := consolePrincipalFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, errors.New("invalid console token"))
+		return
+	}
+	payload := map[string]interface{}{"role": principal.Role, "username": principal.Username}
+	if principal.User != nil {
+		payload["display_name"] = principal.User.DisplayName
+		payload["user"] = principal.User
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (s *Server) currentUserOverview(w http.ResponseWriter, r *http.Request) {
+	principal, ok := consolePrincipalFromContext(r.Context())
+	if !ok || principal.Role != consoleRoleUser || principal.User == nil {
+		writeError(w, http.StatusForbidden, errors.New("user access is required"))
+		return
+	}
+	writeJSON(w, http.StatusOK, principal.User)
+}
+
+func (s *Server) logoutConsole(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.DeleteConsoleSession(r.Context(), bearerToken(r)); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) listConsoleUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := s.store.ListConsoleUsers(r.Context())
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, users)
+}
+
+func (s *Server) createConsoleUser(w http.ResponseWriter, r *http.Request) {
+	var request ConsoleUserRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	user, err := s.store.CreateConsoleUser(r.Context(), request)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	_ = s.store.AddSystemLog(r.Context(), "info", "user_management", fmt.Sprintf("创建控制台用户：%s", user.Username))
+	writeJSON(w, http.StatusCreated, user)
+}
+
+func (s *Server) updateConsoleUser(w http.ResponseWriter, r *http.Request) {
+	userID, err := strconv.ParseInt(chi.URLParam(r, "userID"), 10, 64)
+	if err != nil || userID <= 0 {
+		writeError(w, http.StatusBadRequest, errors.New("invalid user id"))
+		return
+	}
+	var request ConsoleUserRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	user, err := s.store.UpdateConsoleUser(r.Context(), userID, request)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeStoreError(w, err)
+		} else {
+			writeError(w, http.StatusBadRequest, err)
+		}
+		return
+	}
+	_ = s.store.AddSystemLog(r.Context(), "info", "user_management", fmt.Sprintf("更新控制台用户：%s", user.Username))
+	writeJSON(w, http.StatusOK, user)
+}
+
+func (s *Server) deleteConsoleUser(w http.ResponseWriter, r *http.Request) {
+	userID, err := strconv.ParseInt(chi.URLParam(r, "userID"), 10, 64)
+	if err != nil || userID <= 0 {
+		writeError(w, http.StatusBadRequest, errors.New("invalid user id"))
+		return
+	}
+	if err := s.store.DeleteConsoleUser(r.Context(), userID); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	_ = s.store.AddSystemLog(r.Context(), "info", "user_management", fmt.Sprintf("删除控制台用户 ID：%d", userID))
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) adminInitialized(w http.ResponseWriter, r *http.Request) {
@@ -387,7 +542,7 @@ func (s *Server) initAdmin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]string{"token": token, "username": request.Username})
+	writeJSON(w, http.StatusCreated, map[string]string{"token": token, "username": request.Username, "display_name": request.Username, "role": consoleRoleAdmin})
 }
 
 func (s *Server) loginAdmin(w http.ResponseWriter, r *http.Request) {
@@ -399,12 +554,16 @@ func (s *Server) loginAdmin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	token, err := s.store.LoginAdmin(r.Context(), request.Username, request.Password)
+	if token, err := s.store.LoginAdmin(r.Context(), request.Username, request.Password); err == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"token": token, "username": request.Username, "display_name": request.Username, "role": consoleRoleAdmin})
+		return
+	}
+	token, user, err := s.store.LoginConsoleUser(r.Context(), request.Username, request.Password)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"token": token, "username": request.Username})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"token": token, "username": user.Username, "display_name": user.DisplayName, "role": consoleRoleUser})
 }
 
 func (s *Server) agentAuth(next http.Handler) http.Handler {

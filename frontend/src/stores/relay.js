@@ -11,6 +11,9 @@ api.interceptors.request.use(config => {
 api.interceptors.response.use(response => response, error => {
   if (error.response?.status === 401 && !error.config?.url?.startsWith('/auth/')) {
     localStorage.removeItem('token')
+    localStorage.removeItem('role')
+    localStorage.removeItem('username')
+    localStorage.removeItem('displayName')
     window.location.href = '/login'
   }
   return Promise.reject(error)
@@ -25,12 +28,53 @@ export const useRelayStore = defineStore('relay-platform', () => {
   const dnsProviders = ref([])
   const dnsRecords = ref([])
   const cloud = ref({ accounts: [], instances: [], traffic: [] })
+  const users = ref([])
+  const currentUser = ref(null)
   const loading = ref(false)
   const updateStatus = ref({ status: 'idle', message: '暂无更新任务' })
 
   async function login(username, password) {
     const { data } = await api.post('/auth/login', { username, password })
     localStorage.setItem('token', data.token)
+    localStorage.setItem('role', data.role || 'admin')
+    localStorage.setItem('username', data.username || username)
+    localStorage.setItem('displayName', data.display_name || data.username || username)
+    return data
+  }
+
+  async function logout() {
+    try { await api.post('/auth/logout') } catch (_) { /* local logout still proceeds */ }
+    localStorage.removeItem('token')
+    localStorage.removeItem('role')
+    localStorage.removeItem('username')
+    localStorage.removeItem('displayName')
+  }
+
+  async function fetchUsers() {
+    const { data } = await api.get('/users')
+    users.value = data || []
+  }
+
+  async function createUser(payload) {
+    const { data } = await api.post('/users', payload)
+    await Promise.all([fetchUsers(), fetchCloud()])
+    return data
+  }
+
+  async function updateUser(id, payload) {
+    const { data } = await api.put(`/users/${id}`, payload)
+    await Promise.all([fetchUsers(), fetchCloud()])
+    return data
+  }
+
+  async function deleteUser(id) {
+    await api.delete(`/users/${id}`)
+    await Promise.all([fetchUsers(), fetchCloud()])
+  }
+
+  async function fetchMyUsage() {
+    const { data } = await api.get('/user/overview')
+    currentUser.value = data
     return data
   }
 
@@ -252,8 +296,9 @@ export const useRelayStore = defineStore('relay-platform', () => {
   }
 
   return {
-    relayNodes, landingNodes, services, pools, events, dnsProviders, dnsRecords, cloud, loading, updateStatus,
-    login, fetchRelayNodes, fetchLandingNodes, fetchServices, fetchEvents, fetchCloud, fetchAll,
+    relayNodes, landingNodes, services, pools, events, dnsProviders, dnsRecords, cloud, users, currentUser, loading, updateStatus,
+    login, logout, fetchUsers, createUser, updateUser, deleteUser, fetchMyUsage,
+    fetchRelayNodes, fetchLandingNodes, fetchServices, fetchEvents, fetchCloud, fetchAll,
     createEnrollmentToken, createLandingNode, updateLandingNode, deleteLandingNode, fetchLandingRelayLinks,
     createService, updateService, deleteService,
     fetchPools, createPool, updatePool, deletePool, fetchPoolRelayLinks,
