@@ -45,9 +45,9 @@ jobs:
         run: |
           mkdir -p release
           for arch in amd64 arm64; do
-            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w -X main.version=${RELEASE_VERSION}" -o "release/cdt-relay-agent-linux-${arch}" ./cmd/relay-agent
-            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w -X main.version=${RELEASE_VERSION}" -o "release/cdt-dispatcher-linux-${arch}" ./cmd/dispatcher
-            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "release/alicdt-controller-linux-${arch}" ./cmd/controller
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -buildvcs=false -trimpath -ldflags="-s -w -X main.version=${RELEASE_VERSION}" -o "release/cdt-relay-agent-linux-${arch}" ./cmd/relay-agent
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -buildvcs=false -trimpath -ldflags="-s -w -X main.version=${RELEASE_VERSION}" -o "release/cdt-dispatcher-linux-${arch}" ./cmd/dispatcher
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -buildvcs=false -trimpath -ldflags="-s -w" -o "release/alicdt-controller-linux-${arch}" ./cmd/controller
           done
           cd release
           sha256sum alicdt-controller-linux-* cdt-dispatcher-linux-* cdt-relay-agent-linux-* > checksums.txt

@@ -16,11 +16,11 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.version=${BUILD_VERSION} -X main.agentVersion=${AGENT_BUILD_VERSION}" -o /out/alicdt-controller ./cmd/controller && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=${AGENT_BUILD_VERSION}" -o /out/cdt-relay-agent-linux-amd64 ./cmd/relay-agent && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w -X main.version=${AGENT_BUILD_VERSION}" -o /out/cdt-relay-agent-linux-arm64 ./cmd/relay-agent && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=${DISPATCHER_BUILD_VERSION}" -o /out/cdt-dispatcher-linux-amd64 ./cmd/dispatcher && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w -X main.version=${DISPATCHER_BUILD_VERSION}" -o /out/cdt-dispatcher-linux-arm64 ./cmd/dispatcher && \
+RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -trimpath -ldflags="-s -w -X main.version=${BUILD_VERSION} -X main.agentVersion=${AGENT_BUILD_VERSION}" -o /out/alicdt-controller ./cmd/controller && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -trimpath -ldflags="-s -w -X main.version=${AGENT_BUILD_VERSION}" -o /out/cdt-relay-agent-linux-amd64 ./cmd/relay-agent && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -buildvcs=false -trimpath -ldflags="-s -w -X main.version=${AGENT_BUILD_VERSION}" -o /out/cdt-relay-agent-linux-arm64 ./cmd/relay-agent && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -trimpath -ldflags="-s -w -X main.version=${DISPATCHER_BUILD_VERSION}" -o /out/cdt-dispatcher-linux-amd64 ./cmd/dispatcher && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -buildvcs=false -trimpath -ldflags="-s -w -X main.version=${DISPATCHER_BUILD_VERSION}" -o /out/cdt-dispatcher-linux-arm64 ./cmd/dispatcher && \
     cd /out && sha256sum cdt-dispatcher-linux-* cdt-relay-agent-linux-* > checksums.txt
 
 FROM alpine:3.22

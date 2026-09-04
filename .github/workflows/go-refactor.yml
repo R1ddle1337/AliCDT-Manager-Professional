@@ -36,9 +36,13 @@ jobs:
           npm run build
       - name: Build controller and agent
         run: |
-          CGO_ENABLED=0 go build -o /tmp/alicdt-controller ./cmd/controller
-          CGO_ENABLED=0 go build -o /tmp/cdt-relay-agent ./cmd/relay-agent
-          CGO_ENABLED=0 go build -o /tmp/cdt-dispatcher ./cmd/dispatcher
+          CGO_ENABLED=0 go build -buildvcs=false -o /tmp/alicdt-controller ./cmd/controller
+          CGO_ENABLED=0 go build -buildvcs=false -o /tmp/cdt-relay-agent ./cmd/relay-agent
+          CGO_ENABLED=0 go build -buildvcs=false -o /tmp/cdt-dispatcher ./cmd/dispatcher
+          if go version -m /tmp/cdt-relay-agent /tmp/cdt-dispatcher | grep -q 'vcs.revision'; then
+            echo 'runtime binary unexpectedly contains a Git revision' >&2
+            exit 1
+          fi
       - name: Controller API smoke test
         run: |
           /tmp/alicdt-controller -listen 127.0.0.1:18080 -database "$RUNNER_TEMP/smoke.db" -admin-token ci-admin >"$RUNNER_TEMP/controller.log" 2>&1 &
