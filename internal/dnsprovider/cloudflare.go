@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 )
 
 type cloudflareProvider struct {
@@ -21,10 +20,7 @@ func NewCloudflare(cfg Config) Provider {
 	if cfg.Endpoint == "" {
 		cfg.Endpoint = "https://api.cloudflare.com/client/v4"
 	}
-	client := cfg.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 15 * time.Second}
-	}
+	client := providerHTTPClient(cfg.HTTPClient, cfg.Endpoint)
 	return &cloudflareProvider{cfg: cfg, client: client}
 }
 
@@ -37,31 +33,41 @@ func (p *cloudflareProvider) ListRecords(ctx context.Context, zone, name, record
 	if err != nil {
 		return nil, err
 	}
-	path := fmt.Sprintf("%s/zones/%s/dns_records?per_page=100", strings.TrimRight(p.cfg.Endpoint, "/"), zid)
-	if name != "" {
-		path += "&name=" + urlQuery(name)
+	result := make([]Record, 0)
+	for page := 1; page <= maxProviderListPages; page++ {
+		query := url.Values{}
+		query.Set("page", fmt.Sprint(page))
+		query.Set("per_page", "100")
+		if name != "" {
+			query.Set("name", name)
+		}
+		if recordType != "" {
+			query.Set("type", strings.ToUpper(recordType))
+		}
+		path := fmt.Sprintf("%s/zones/%s/dns_records?%s", strings.TrimRight(p.cfg.Endpoint, "/"), url.PathEscape(zid), query.Encode())
+		var response struct {
+			Result []struct {
+				ID, Name, Type, Content string
+				TTL                     int
+			} `json:"result"`
+			ResultInfo struct {
+				TotalPages int `json:"total_pages"`
+			} `json:"result_info"`
+		}
+		if err := p.request(ctx, http.MethodGet, path, nil, &response); err != nil {
+			return nil, err
+		}
+		for _, item := range response.Result {
+			result = append(result, Record{ID: item.ID, Name: item.Name, Type: item.Type, Value: item.Content, TTL: item.TTL})
+		}
+		if response.ResultInfo.TotalPages > maxProviderListPages {
+			return nil, errors.New("cloudflare DNS record list exceeds the supported page limit")
+		}
+		if (response.ResultInfo.TotalPages > 0 && page >= response.ResultInfo.TotalPages) || len(response.Result) < 100 {
+			return result, nil
+		}
 	}
-	if recordType != "" {
-		path += "&type=" + urlQuery(strings.ToUpper(recordType))
-	}
-	var response struct {
-		Success bool `json:"success"`
-		Errors  []struct {
-			Message string `json:"message"`
-		} `json:"errors"`
-		Result []struct {
-			ID, Name, Type, Content string
-			TTL                     int
-		} `json:"result"`
-	}
-	if err := p.request(ctx, http.MethodGet, path, nil, &response); err != nil {
-		return nil, err
-	}
-	result := make([]Record, 0, len(response.Result))
-	for _, item := range response.Result {
-		result = append(result, Record{ID: item.ID, Name: item.Name, Type: item.Type, Value: item.Content, TTL: item.TTL})
-	}
-	return result, nil
+	return nil, errors.New("cloudflare DNS record list did not terminate")
 }
 
 func (p *cloudflareProvider) EnsureRecords(ctx context.Context, zone string, scopes []RecordScope, desired []DesiredRecord) (SyncResult, error) {
@@ -133,7 +139,7 @@ func (p *cloudflareProvider) DeleteRecord(ctx context.Context, id, _ string) err
 	if err != nil {
 		return err
 	}
-	err = p.request(ctx, http.MethodDelete, fmt.Sprintf("%s/zones/%s/dns_records/%s", strings.TrimRight(p.cfg.Endpoint, "/"), zid, id), nil, &struct {
+	err = p.request(ctx, http.MethodDelete, fmt.Sprintf("%s/zones/%s/dns_records/%s", strings.TrimRight(p.cfg.Endpoint, "/"), url.PathEscape(zid), url.PathEscape(id)), nil, &struct {
 		Success bool `json:"success"`
 	}{})
 	// A managed record may have been removed out-of-band (or by a previous
@@ -148,6 +154,10 @@ func (p *cloudflareProvider) DeleteRecord(ctx context.Context, id, _ string) err
 func isCloudflareRecordNotFound(err error) bool {
 	if err == nil {
 		return false
+	}
+	var apiErr *cloudflareAPIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode == http.StatusNotFound && (apiErr.Code == 81044 || strings.Contains(strings.ToLower(apiErr.Message), "record does not exist"))
 	}
 	message := strings.ToLower(err.Error())
 	return strings.Contains(message, "cloudflare dns http status 404") &&
@@ -165,7 +175,8 @@ func (p *cloudflareProvider) zoneID(ctx context.Context) (string, error) {
 		} `json:"errors"`
 		Result []struct{ ID, Name string } `json:"result"`
 	}
-	path := strings.TrimRight(p.cfg.Endpoint, "/") + "/zones?name=" + urlQuery(p.cfg.Zone) + "&per_page=1"
+	query := url.Values{"name": {p.cfg.Zone}, "per_page": {"1"}}
+	path := strings.TrimRight(p.cfg.Endpoint, "/") + "/zones?" + query.Encode()
 	if err := p.request(ctx, http.MethodGet, path, nil, &response); err != nil {
 		return "", err
 	}
@@ -182,7 +193,7 @@ func (p *cloudflareProvider) create(ctx context.Context, zid string, item Desire
 		} `json:"result"`
 	}
 	payload := map[string]interface{}{"type": item.Type, "name": item.Name, "content": item.Value, "ttl": item.TTL, "proxied": false}
-	path := fmt.Sprintf("%s/zones/%s/dns_records", strings.TrimRight(p.cfg.Endpoint, "/"), zid)
+	path := fmt.Sprintf("%s/zones/%s/dns_records", strings.TrimRight(p.cfg.Endpoint, "/"), url.PathEscape(zid))
 	if err := p.request(ctx, http.MethodPost, path, payload, &response); err != nil {
 		return Record{}, err
 	}
@@ -194,7 +205,7 @@ func (p *cloudflareProvider) update(ctx context.Context, id string, item Desired
 		return err
 	}
 	payload := map[string]interface{}{"type": item.Type, "name": fqdn(item.Name, p.cfg.Zone), "content": item.Value, "ttl": item.TTL, "proxied": false}
-	return p.request(ctx, http.MethodPut, fmt.Sprintf("%s/zones/%s/dns_records/%s", strings.TrimRight(p.cfg.Endpoint, "/"), zid, id), payload, &struct {
+	return p.request(ctx, http.MethodPut, fmt.Sprintf("%s/zones/%s/dns_records/%s", strings.TrimRight(p.cfg.Endpoint, "/"), url.PathEscape(zid), url.PathEscape(id)), payload, &struct {
 		Success bool `json:"success"`
 	}{})
 }
@@ -218,34 +229,53 @@ func (p *cloudflareProvider) request(ctx context.Context, method, path string, p
 		return err
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	raw, err := readProviderResponse(resp.Body)
 	if err != nil {
 		return err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("cloudflare DNS HTTP status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	var envelope struct {
 		Success bool `json:"success"`
 		Errors  []struct {
+			Code    int    `json:"code"`
 			Message string `json:"message"`
 		} `json:"errors"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return &cloudflareAPIError{StatusCode: resp.StatusCode}
+		}
 		return err
 	}
-	if !envelope.Success {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !envelope.Success {
 		if len(envelope.Errors) > 0 {
-			return errors.New(envelope.Errors[0].Message)
+			return &cloudflareAPIError{StatusCode: resp.StatusCode, Code: envelope.Errors[0].Code, Message: boundedProviderMessage(envelope.Errors[0].Message)}
 		}
-		return errors.New("cloudflare DNS API request failed")
+		return &cloudflareAPIError{StatusCode: resp.StatusCode}
 	}
 	if out != nil {
 		return json.Unmarshal(raw, out)
 	}
 	return nil
 }
-func urlQuery(value string) string { return url.QueryEscape(value) }
+
+type cloudflareAPIError struct {
+	StatusCode int
+	Code       int
+	Message    string
+}
+
+func (e *cloudflareAPIError) Error() string {
+	if e.Code != 0 && e.Message != "" {
+		return fmt.Sprintf("cloudflare DNS API [%d]: %s", e.Code, e.Message)
+	}
+	if e.Message != "" {
+		return "cloudflare DNS API: " + e.Message
+	}
+	if e.StatusCode != 0 {
+		return fmt.Sprintf("cloudflare DNS HTTP status %d", e.StatusCode)
+	}
+	return "cloudflare DNS API request failed"
+}
 
 func inScopes(record Record, zone string, scopes []RecordScope) bool {
 	for _, scope := range scopes {

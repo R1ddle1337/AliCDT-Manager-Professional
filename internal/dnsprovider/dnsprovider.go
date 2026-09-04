@@ -94,8 +94,18 @@ func New(cfg Config) (Provider, error) {
 	}
 	switch cfg.Type {
 	case "aliyun", "alibaba", "alidns":
+		endpoint, err := normalizeProviderEndpoint(cfg.Endpoint, "https://alidns.aliyuncs.com/")
+		if err != nil {
+			return nil, err
+		}
+		cfg.Endpoint = endpoint
 		return NewAliyun(cfg), nil
 	case "cloudflare":
+		endpoint, err := normalizeProviderEndpoint(cfg.Endpoint, "https://api.cloudflare.com/client/v4")
+		if err != nil {
+			return nil, err
+		}
+		cfg.Endpoint = endpoint
 		return NewCloudflare(cfg), nil
 	default:
 		return nil, fmt.Errorf("unsupported DNS provider %q", cfg.Type)

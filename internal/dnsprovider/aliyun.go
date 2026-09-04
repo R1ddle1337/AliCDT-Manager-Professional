@@ -9,10 +9,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -26,10 +26,7 @@ func NewAliyun(cfg Config) Provider {
 	if cfg.Endpoint == "" {
 		cfg.Endpoint = "https://alidns.aliyuncs.com/"
 	}
-	client := cfg.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 15 * time.Second}
-	}
+	client := providerHTTPClient(cfg.HTTPClient, cfg.Endpoint)
 	return &aliyunProvider{cfg: cfg, client: client}
 }
 
@@ -45,18 +42,30 @@ func (p *aliyunProvider) ListRecords(ctx context.Context, zone, name, recordType
 	if strings.TrimSpace(zone) == "" {
 		zone = p.cfg.Zone
 	}
-	params := map[string]string{"DomainName": zone, "PageSize": "500", "PageNumber": "1"}
-	if name != "" {
-		params["RRKeyWord"] = relativeName(name, zone)
+	result := make([]Record, 0)
+	for page := 1; page <= maxProviderListPages; page++ {
+		params := map[string]string{"DomainName": zone, "PageSize": "500", "PageNumber": fmt.Sprint(page)}
+		if name != "" {
+			params["RRKeyWord"] = relativeName(name, zone)
+		}
+		if recordType != "" {
+			params["TypeKeyWord"] = strings.ToUpper(recordType)
+		}
+		raw, err := p.call(ctx, "DescribeDomainRecords", params)
+		if err != nil {
+			return nil, err
+		}
+		pageRecords := parseAliyunRecords(raw)
+		result = append(result, pageRecords...)
+		total := integerValue(raw["TotalCount"])
+		if total > maxProviderListPages*500 {
+			return nil, errors.New("aliyun DNS record list exceeds the supported page limit")
+		}
+		if (total > 0 && len(result) >= total) || len(pageRecords) < 500 {
+			return result, nil
+		}
 	}
-	if recordType != "" {
-		params["TypeKeyWord"] = strings.ToUpper(recordType)
-	}
-	raw, err := p.call(ctx, "DescribeDomainRecords", params)
-	if err != nil {
-		return nil, err
-	}
-	return parseAliyunRecords(raw), nil
+	return nil, errors.New("aliyun DNS record list did not terminate")
 }
 
 func (p *aliyunProvider) EnsureRecords(ctx context.Context, zone string, scopes []RecordScope, desired []DesiredRecord) (SyncResult, error) {
@@ -172,7 +181,7 @@ func (p *aliyunProvider) call(ctx context.Context, action string, extra map[stri
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	body, err := readProviderResponse(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -184,9 +193,24 @@ func (p *aliyunProvider) call(ctx context.Context, action string, extra map[stri
 		return nil, err
 	}
 	if code, ok := raw["Code"].(string); ok && code != "" {
-		return nil, fmt.Errorf("aliyun DNS API [%s]: %v", code, raw["Message"])
+		return nil, fmt.Errorf("aliyun DNS API [%s]: %s", code, boundedProviderMessage(fmt.Sprint(raw["Message"])))
 	}
 	return raw, nil
+}
+
+func integerValue(value interface{}) int {
+	switch typed := value.(type) {
+	case float64:
+		return int(typed)
+	case json.Number:
+		parsed, _ := typed.Int64()
+		return int(parsed)
+	case string:
+		parsed, _ := strconv.Atoi(typed)
+		return parsed
+	default:
+		return 0
+	}
 }
 
 func parseAliyunRecords(raw map[string]interface{}) []Record {

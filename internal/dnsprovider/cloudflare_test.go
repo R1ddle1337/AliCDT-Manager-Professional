@@ -3,8 +3,10 @@ package dnsprovider
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -129,6 +131,66 @@ func TestCloudflareDeleteRecordTreatsMissingRecordAsSuccess(t *testing.T) {
 	provider := NewCloudflare(Config{Zone: "example.com", Endpoint: server.URL, APIToken: "test-token", HTTPClient: server.Client()})
 	if err := provider.DeleteRecord(context.Background(), "missing", "relay"); err != nil {
 		t.Fatalf("missing record should be treated as already deleted: %v", err)
+	}
+}
+
+func TestCloudflareListRecordsPaginatesCompleteZone(t *testing.T) {
+	var pages []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pages = append(pages, r.URL.Query().Get("page"))
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		count := 100
+		if page == 2 {
+			count = 1
+		}
+		records := make([]map[string]interface{}, 0, count)
+		for index := 0; index < count; index++ {
+			number := (page-1)*100 + index
+			records = append(records, map[string]interface{}{"id": fmt.Sprint(number), "name": fmt.Sprintf("relay-%d.example.com", number), "type": "A", "content": "192.0.2.1", "ttl": 60})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "result": records, "result_info": map[string]int{"total_pages": 2}})
+	}))
+	defer server.Close()
+
+	provider := NewCloudflare(Config{Zone: "example.com", ZoneID: "zone-1", Endpoint: server.URL, APIToken: "test-token", HTTPClient: server.Client()})
+	records, err := provider.ListRecords(context.Background(), "example.com", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 101 || strings.Join(pages, ",") != "1,2" {
+		t.Fatalf("zone pagination was incomplete: records=%d pages=%v", len(records), pages)
+	}
+}
+
+func TestCloudflareRejectsCrossOriginRedirect(t *testing.T) {
+	targetReached := false
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		targetReached = true
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "result": []interface{}{}})
+	}))
+	defer target.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusFound)
+	}))
+	defer source.Close()
+
+	provider := NewCloudflare(Config{Zone: "example.com", ZoneID: "zone-1", Endpoint: source.URL, APIToken: "secret", HTTPClient: source.Client()})
+	if _, err := provider.ListRecords(context.Background(), "example.com", "", ""); err == nil || !strings.Contains(err.Error(), "redirect changed origin") {
+		t.Fatalf("expected redirect rejection, got %v", err)
+	}
+	if targetReached {
+		t.Fatal("cross-origin DNS endpoint was contacted")
+	}
+}
+
+func TestCloudflareRejectsOversizedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(strings.Repeat("x", maxProviderResponseBytes+1)))
+	}))
+	defer server.Close()
+	provider := NewCloudflare(Config{Zone: "example.com", ZoneID: "zone-1", Endpoint: server.URL, APIToken: "test-token", HTTPClient: server.Client()})
+	if _, err := provider.ListRecords(context.Background(), "example.com", "", ""); err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("expected oversized response rejection, got %v", err)
 	}
 }
 

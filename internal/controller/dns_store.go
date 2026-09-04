@@ -141,6 +141,9 @@ func normalizeDNSProviderRequest(request CreateDNSProviderRequest, secretOptiona
 	if request.Type == "cloudflare" && request.APIToken == "" && !secretOptional {
 		return request, false, errors.New("cloudflare API token is required")
 	}
+	if _, err := dnsprovider.New(dnsprovider.Config{Type: request.Type, Zone: request.Zone, Endpoint: request.Endpoint}); err != nil {
+		return request, false, err
+	}
 	enabled := true
 	if request.Enabled != nil {
 		enabled = *request.Enabled
@@ -229,10 +232,7 @@ func (s *Store) DeleteDNSProvider(ctx context.Context, id string) error {
 }
 
 func (s *Store) MarkDNSProviderTest(ctx context.Context, id string, testErr error) error {
-	message := ""
-	if testErr != nil {
-		message = testErr.Error()
-	}
+	message := dnsErrorMessage(testErr)
 	_, err := s.db.ExecContext(ctx, `UPDATE dns_providers SET last_test_at=?,last_error=?,updated_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339Nano), message, time.Now().UTC().Format(time.RFC3339Nano), id)
 	return err
 }
@@ -463,12 +463,29 @@ func (s *Store) GetDNSRecord(ctx context.Context, id string) (DNSManagedRecord, 
 
 func (s *Store) UpdateDNSRecordSync(ctx context.Context, id, providerRecordID, status, lastError string, synced bool) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	lastError = boundedDNSError(lastError)
 	if synced {
 		_, err := s.db.ExecContext(ctx, `UPDATE dns_managed_records SET provider_record_id=?,status=?,last_error=?,last_synced_at=?,updated_at=? WHERE id=?`, providerRecordID, status, lastError, now, now, id)
 		return err
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE dns_managed_records SET status=?,last_error=?,updated_at=? WHERE id=?`, status, lastError, now, id)
 	return err
+}
+
+func dnsErrorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	return boundedDNSError(err.Error())
+}
+
+func boundedDNSError(value string) string {
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if len(runes) > 500 {
+		value = string(runes[:500])
+	}
+	return value
 }
 
 func (s *Store) DNSProvider(ctx context.Context, id string) (dnsprovider.Provider, error) {
