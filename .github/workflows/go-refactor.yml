@@ -31,11 +31,7 @@ jobs:
         working-directory: frontend
         run: |
           npm ci --no-audit --no-fund
-          for attempt in 1 2 3; do
-            if timeout 60s npm audit --audit-level=high; then break; fi
-            if [ "$attempt" -eq 3 ]; then exit 1; fi
-            sleep $((attempt * 5))
-          done
+          CDT_NPM_AUDIT_ATTEMPTS=3 CDT_NPM_AUDIT_TIMEOUT_SECONDS=20 CDT_NPM_AUDIT_ALLOW_UNAVAILABLE=1 ../scripts/npm-audit.sh
           npm test
           npm run build
       - name: Build controller and agent
