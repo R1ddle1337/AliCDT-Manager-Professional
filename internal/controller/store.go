@@ -1251,7 +1251,7 @@ func (s *Store) LoginAdmin(ctx context.Context, username, password string) (stri
 	if err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key='admin_password_hash'`).Scan(&passwordHash); err != nil {
 		return "", errors.New("administrator is not initialized")
 	}
-	if subtleStringCompare(username, storedUsername) == false || bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)) != nil {
+	if !subtleStringCompare(username, storedUsername) || bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)) != nil {
 		return "", errors.New("invalid username or password")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)

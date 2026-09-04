@@ -1,6 +1,7 @@
 package dispatcher
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -23,7 +24,7 @@ func TestClientFetchesDedicatedSnapshotAndBuildsConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := client.Fetch(nil)
+	cfg, err := client.Fetch(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,10 +55,10 @@ func TestClientRejectsStaleAndMismatchedSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Fetch(nil); err == nil || !strings.Contains(err.Error(), "pool ID") {
+	if _, err := client.Fetch(context.Background()); err == nil || !strings.Contains(err.Error(), "pool ID") {
 		t.Fatalf("expected pool mismatch, got %v", err)
 	}
-	if _, err := client.Fetch(nil); err == nil || !strings.Contains(err.Error(), "stale") {
+	if _, err := client.Fetch(context.Background()); err == nil || !strings.Contains(err.Error(), "stale") {
 		t.Fatalf("expected stale snapshot, got %v", err)
 	}
 }
@@ -77,11 +78,11 @@ func TestClientRejectsHTTPErrorsAndTrailingJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Fetch(nil); err == nil || strings.Contains(err.Error(), "do not expose") {
+	if _, err := client.Fetch(context.Background()); err == nil || strings.Contains(err.Error(), "do not expose") {
 		t.Fatalf("HTTP error leaked body or was accepted: %v", err)
 	}
 	mode = "trailing"
-	if _, err := client.Fetch(nil); err == nil || !strings.Contains(err.Error(), "trailing") {
+	if _, err := client.Fetch(context.Background()); err == nil || !strings.Contains(err.Error(), "trailing") {
 		t.Fatalf("expected trailing JSON rejection, got %v", err)
 	}
 }

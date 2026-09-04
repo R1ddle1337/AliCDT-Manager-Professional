@@ -8,6 +8,7 @@ test:
 
 .PHONY: audit
 audit:
+	go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
 	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 	cd frontend && npm audit --audit-level=high
 

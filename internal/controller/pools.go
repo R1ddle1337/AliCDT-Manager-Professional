@@ -16,11 +16,6 @@ import (
 // before its address is published to managed DNS.
 const relayPoolHeartbeatFreshness = 45 * time.Second
 
-func normalizeRelayPoolRequest(request CreateRelayPoolRequest) (CreateRelayPoolRequest, bool, error) {
-	normalized, enabled, _, err := normalizeRelayPoolRequestWithDrain(request)
-	return normalized, enabled, err
-}
-
 func normalizeRelayPoolRequestWithDrain(request CreateRelayPoolRequest) (CreateRelayPoolRequest, bool, bool, error) {
 	request.Name = strings.TrimSpace(request.Name)
 	request.Hostname = strings.TrimSuffix(strings.TrimSpace(request.Hostname), ".")

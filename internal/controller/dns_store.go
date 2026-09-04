@@ -133,13 +133,13 @@ func normalizeDNSProviderRequest(request CreateDNSProviderRequest, secretOptiona
 		return request, false, errors.New("DNS provider must be aliyun or cloudflare")
 	}
 	if request.Type == "aliyun" && request.AccessKeyID == "" && !secretOptional {
-		return request, false, errors.New("Aliyun AccessKey ID is required")
+		return request, false, errors.New("aliyun AccessKey ID is required")
 	}
 	if request.Type == "aliyun" && strings.TrimSpace(request.AccessKeySecret) == "" && !secretOptional {
-		return request, false, errors.New("Aliyun AccessKey Secret is required")
+		return request, false, errors.New("aliyun AccessKey Secret is required")
 	}
 	if request.Type == "cloudflare" && request.APIToken == "" && !secretOptional {
-		return request, false, errors.New("Cloudflare API token is required")
+		return request, false, errors.New("cloudflare API token is required")
 	}
 	enabled := true
 	if request.Enabled != nil {
@@ -188,10 +188,10 @@ func (s *Store) UpdateDNSProvider(ctx context.Context, id string, request Create
 		return DNSProvider{}, err
 	}
 	if request.Type == "aliyun" && (request.AccessKeyID == "" || request.AccessKeySecret == "") {
-		return DNSProvider{}, errors.New("Aliyun Access Key ID and Secret are required")
+		return DNSProvider{}, errors.New("aliyun Access Key ID and Secret are required")
 	}
 	if request.Type == "cloudflare" && request.APIToken == "" {
-		return DNSProvider{}, errors.New("Cloudflare API token is required")
+		return DNSProvider{}, errors.New("cloudflare API token is required")
 	}
 	if request.Type != oldType || request.Zone != oldZone {
 		var managedCount int

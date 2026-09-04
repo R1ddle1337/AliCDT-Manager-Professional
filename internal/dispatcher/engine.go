@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -318,7 +319,7 @@ func (e *Engine) ServeTCP(ctx context.Context, listener net.Listener) error {
 			if ctx.Err() != nil || atomic.LoadInt32(&e.closed) != 0 {
 				return nil
 			}
-			if ne, ok := err.(net.Error); ok && ne.Temporary() {
+			if temporaryAcceptError(err) {
 				time.Sleep(5 * time.Millisecond)
 				continue
 			}
@@ -326,6 +327,14 @@ func (e *Engine) ServeTCP(ctx context.Context, listener net.Listener) error {
 		}
 		go e.handleTCP(client)
 	}
+}
+
+func temporaryAcceptError(err error) bool {
+	return errors.Is(err, syscall.ECONNABORTED) ||
+		errors.Is(err, syscall.EMFILE) ||
+		errors.Is(err, syscall.ENFILE) ||
+		errors.Is(err, syscall.ENOBUFS) ||
+		errors.Is(err, syscall.ENOMEM)
 }
 
 func (e *Engine) handleTCP(client net.Conn) {

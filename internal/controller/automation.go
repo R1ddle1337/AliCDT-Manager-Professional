@@ -131,12 +131,6 @@ func (s *CloudService) Billing(ctx context.Context, accountID int64) (BillingRes
 	return response, nil
 }
 
-func (s *CloudService) runAutomationCycle(ctx context.Context, now time.Time) {
-	s.automationMu.Lock()
-	defer s.automationMu.Unlock()
-	s.runAutomationCycleLocked(ctx, now)
-}
-
 func (s *CloudService) tryAutomationCycle(ctx context.Context, now time.Time) bool {
 	if !s.automationMu.TryLock() {
 		return false
@@ -376,7 +370,7 @@ func (s *CloudService) sendTelegram(ctx context.Context, message string) error {
 		return err
 	}
 	if token == "" || chatID == "" {
-		return errors.New("Telegram Bot Token and Chat ID are required")
+		return errors.New("telegram Bot Token and Chat ID are required")
 	}
 	form := url.Values{"chat_id": {chatID}, "text": {message}}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.telegram.org/bot"+token+"/sendMessage", strings.NewReader(form.Encode()))
@@ -390,7 +384,7 @@ func (s *CloudService) sendTelegram(ctx context.Context, message string) error {
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("Telegram returned HTTP %d", response.StatusCode)
+		return fmt.Errorf("telegram returned HTTP %d", response.StatusCode)
 	}
 	return nil
 }

@@ -24,7 +24,6 @@ func TestTrafficLeasesShardQuotaAcrossRelayNodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	agents := make([]protocol.AgentEnrollmentResponse, 0, 2)
 	for index := 0; index < 2; index++ {
 		token := fmt.Sprintf("lease-enroll-%d", index)
 		if err := store.CreateEnrollmentToken(ctx, token, time.Hour); err != nil {
@@ -37,7 +36,6 @@ func TestTrafficLeasesShardQuotaAcrossRelayNodes(t *testing.T) {
 		if err := store.UpdateHeartbeat(ctx, agent.AgentID, protocol.AgentHeartbeat{Capabilities: []string{"shared_meters_v1", "quota_leases_v1"}}); err != nil {
 			t.Fatal(err)
 		}
-		agents = append(agents, agent)
 		if _, err := store.CreateUserEntryGroup(ctx, CreateUserEntryGroupRequest{
 			UserID: user.ID, RelayNodeID: agent.AgentID, Name: fmt.Sprintf("relay %d", index), StartPort: 21000 + index, PortCount: 1, Network: "tcp", Mode: "failover", BillingMode: protocol.BillingModeBoth,
 			Targets: []CreateServiceTarget{{LandingNodeID: landing.ID}},

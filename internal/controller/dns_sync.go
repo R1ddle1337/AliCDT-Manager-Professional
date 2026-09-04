@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -272,8 +271,4 @@ func (s *Server) RunDNSScheduler(ctx context.Context, interval time.Duration) {
 			cancel()
 		}
 	}
-}
-
-func formatDNSSyncResult(result dnsprovider.SyncResult) string {
-	return fmt.Sprintf("created=%d updated=%d deleted=%d skipped=%d", result.Created, result.Updated, result.Deleted, result.Skipped)
 }

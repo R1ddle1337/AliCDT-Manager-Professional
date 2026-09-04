@@ -393,7 +393,7 @@ func (c *Client) call(ctx context.Context, endpoint, action, version string, ext
 		return nil, &APIError{Code: code, Message: stringValue(payload["Message"]), RequestID: stringValue(payload["RequestId"])}
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("Aliyun endpoint returned HTTP %d", response.StatusCode)
+		return nil, fmt.Errorf("aliyun endpoint returned HTTP %d", response.StatusCode)
 	}
 	return payload, nil
 }

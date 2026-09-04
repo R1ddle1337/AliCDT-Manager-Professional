@@ -1,6 +1,7 @@
 package dispatcher
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -30,7 +31,7 @@ func TestPollerRetainsThenDrainsStaleConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := poller.Sync(nil); err != nil {
+	if err := poller.Sync(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if len(engine.Config().Backends) != 1 || poller.State().Stale {
@@ -38,14 +39,14 @@ func TestPollerRetainsThenDrainsStaleConfiguration(t *testing.T) {
 	}
 	serveError = true
 	now = now.Add(5 * time.Second)
-	if err := poller.Sync(nil); err == nil {
+	if err := poller.Sync(context.Background()); err == nil {
 		t.Fatal("expected transient sync error")
 	}
 	if len(engine.Config().Backends) != 1 || poller.State().Stale {
 		t.Fatalf("transient error should retain config: config=%+v state=%+v", engine.Config(), poller.State())
 	}
 	now = now.Add(6 * time.Second)
-	if err := poller.Sync(nil); err == nil {
+	if err := poller.Sync(context.Background()); err == nil {
 		t.Fatal("expected stale sync error")
 	}
 	if len(engine.Config().Backends) != 0 || !poller.State().Stale {
@@ -72,7 +73,7 @@ func TestPollerSuccessfulEmptyPoolIsNotMarkedStale(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := poller.Sync(nil); err != nil {
+	if err := poller.Sync(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	state := poller.State()
@@ -97,7 +98,7 @@ func TestPollerRejectsSnapshotWithUnboundTransport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := poller.Sync(nil); err == nil {
+	if err := poller.Sync(context.Background()); err == nil {
 		t.Fatal("expected transport mismatch")
 	}
 	if len(engine.Config().Backends) != 0 || poller.State().LastError == "" {

@@ -525,15 +525,6 @@ func (s *Server) disableAdminTwoFA(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": "双因素认证已关闭，全部会话已撤销，请重新登录"})
 }
 
-// Keep the login limiter independent of request handling locks. Cleanup is
-// rate-limited on the request path and the hard entry cap prevents a flood of
-// unique source addresses from causing unbounded memory use.
-func (s *Server) cleanupLoginFailures() {
-	s.loginMu.Lock()
-	defer s.loginMu.Unlock()
-	s.pruneLoginFailuresLocked(time.Now(), true)
-}
-
 func (s *Server) pruneLoginFailuresLocked(now time.Time, force bool) {
 	if !force && !s.loginFailuresPrunedAt.IsZero() && now.Sub(s.loginFailuresPrunedAt) < loginFailurePruneEvery {
 		return

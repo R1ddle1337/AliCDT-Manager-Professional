@@ -6,9 +6,29 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
+
+func TestTemporaryAcceptError(t *testing.T) {
+	temporary := []error{
+		syscall.ECONNABORTED,
+		syscall.EMFILE,
+		syscall.ENFILE,
+		syscall.ENOBUFS,
+		syscall.ENOMEM,
+		&net.OpError{Op: "accept", Net: "tcp", Err: syscall.EMFILE},
+	}
+	for _, err := range temporary {
+		if !temporaryAcceptError(err) {
+			t.Errorf("expected %v to be retryable", err)
+		}
+	}
+	if temporaryAcceptError(context.Canceled) {
+		t.Fatal("context cancellation must not be treated as retryable")
+	}
+}
 
 func TestEngineTCPFailoverAndCounters(t *testing.T) {
 	backend, err := net.Listen("tcp", "127.0.0.1:0")
