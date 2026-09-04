@@ -212,7 +212,7 @@ export const useRelayStore = defineStore('relay-platform', () => {
 
   async function createDNSRecord(payload) {
     const { data } = await api.post('/dns/records', payload)
-    await fetchDNSRecords()
+    await Promise.allSettled([fetchDNSRecords()])
     return data
   }
 
@@ -224,7 +224,7 @@ export const useRelayStore = defineStore('relay-platform', () => {
 
   async function deleteDNSRecord(id) {
     await api.delete(`/dns/records/${id}`)
-    await fetchDNSRecords()
+    await Promise.allSettled([fetchDNSRecords()])
   }
 
   async function fetchCloud() {
@@ -250,7 +250,7 @@ export const useRelayStore = defineStore('relay-platform', () => {
 
   async function createLandingNode(payload) {
     const { data } = await api.post('/landing-nodes', payload)
-    await fetchLandingNodes()
+    await Promise.allSettled([fetchLandingNodes()])
     return data
   }
 
@@ -275,7 +275,7 @@ export const useRelayStore = defineStore('relay-platform', () => {
 
   async function createService(payload) {
     const { data } = await api.post('/relay-services', payload)
-    await Promise.all([fetchServices(), fetchRelayNodes()])
+    await Promise.allSettled([fetchServices(), fetchRelayNodes()])
     return data
   }
 
@@ -287,7 +287,7 @@ export const useRelayStore = defineStore('relay-platform', () => {
 
   async function deleteService(id) {
     await api.delete(`/relay-services/${id}`)
-    await Promise.all([fetchServices(), fetchRelayNodes()])
+    await Promise.allSettled([fetchServices(), fetchRelayNodes()])
   }
 
   async function resetServiceTraffic(id) {

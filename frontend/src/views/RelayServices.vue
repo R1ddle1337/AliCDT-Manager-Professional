@@ -10,7 +10,7 @@
     <div class="grid grid-cols-1 gap-4 xl:grid-cols-2 layout-collection layout-collection--row">
       <article v-for="service in store.services" :key="service.id" class="card p-5 layout-card">
         <div class="service-row-head flex items-start justify-between gap-4">
-          <div class="min-w-0"><h2 class="truncate font-bold text-slate-800">{{ service.name }}</h2><p class="mt-1 truncate text-xs text-slate-400"><MaskedIP :value="entryHost(service)" :suffix="`:${service.listen_port}`" placeholder="未设置入口地址" /></p></div>
+          <div class="min-w-0"><h2 class="truncate font-bold text-slate-800">{{ service.name }}</h2><p class="mt-1 truncate text-xs text-slate-400"><MaskedIP :value="entryHost(service)" :suffix="`:${service.listen_port}`" placeholder="未设置入口地址" /></p><p v-if="serviceDomains(service).length" class="mt-1 truncate font-mono text-[10px] text-blue-600">DNS · {{ serviceDomains(service)[0] }}:{{ service.listen_port }}</p></div>
           <span class="state-tag" :class="service.enabled && service.user_enabled !== false ? 'state-online' : ''">{{ service.user_enabled === false ? '用户已禁用' : (service.enabled ? '运行中' : '已停用') }}</span>
         </div>
         <div class="service-row-body mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -65,13 +65,20 @@
 
     <Modal v-if="showMinecraft" @close="showMinecraft = false">
       <form class="space-y-5 modal-form" @submit.prevent="saveMinecraft">
-        <div><div class="eyebrow">MINECRAFT FORWARD</div><h2 class="mt-1 text-lg font-bold text-slate-900">Minecraft 快速转发</h2><p class="mt-2 text-xs leading-5 text-slate-500">填写服务器 IP 和端口即可创建透明转发。Java 版使用 TCP，基岩版使用 UDP。</p></div>
+        <div><div class="eyebrow">MINECRAFT FORWARD</div><h2 class="mt-1 text-lg font-bold text-slate-900">Minecraft 快速转发</h2><p class="mt-2 text-xs leading-5 text-slate-500">填写服务器 IP 和端口即可创建透明转发，并可选择 DNS Provider 自动发布专属域名。</p></div>
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div class="sm:col-span-2"><label class="field-label">游戏版本</label><select v-model="minecraftForm.edition" class="input"><option value="java">Java Edition（TCP）</option><option value="bedrock">Bedrock Edition（UDP）</option></select></div>
           <div><label class="field-label">目标服务器 IP / 域名</label><input v-model.trim="minecraftForm.target_address" class="input" placeholder="例如 10.0.0.12" required /></div>
           <div><label class="field-label">目标服务器端口</label><input v-model.number="minecraftForm.target_port" type="number" min="1" max="65535" class="input" required /></div>
-          <div><label class="field-label">对外监听端口</label><input v-model.number="minecraftForm.listen_port" type="number" min="1" max="65535" class="input" required /><p class="field-hint">用户将连接“中转节点公网 IP:此端口”。</p></div>
+          <div><label class="field-label">对外监听端口</label><input v-model.number="minecraftForm.listen_port" type="number" min="1" max="65535" class="input" required /><p class="field-hint">{{ minecraftForm.entry_mode === 'dns' ? '域名会指向所选 Relay；Java 默认 25565 时无需填写端口。' : '用户将连接“中转节点公网 IP:此端口”。' }}</p></div>
           <div><label class="field-label">中转节点</label><select v-model="minecraftForm.relay_node_id" class="input" required><option v-for="node in store.relayNodes" :key="node.id" :value="node.id">{{ node.name }} · {{ maskedIP(node.public_ip, '未设置 IP') }}</option></select></div>
+          <div class="sm:col-span-2"><label class="field-label">公网连接方式</label><select v-model="minecraftForm.entry_mode" class="input"><option value="ip">中转节点 IP + 端口</option><option value="dns" :disabled="!enabledDNSProviders.length">DNS 托管域名</option></select><p v-if="!enabledDNSProviders.length" class="field-hint">尚无已启用的 DNS Provider，请先到 DNS 托管页面添加。</p></div>
+          <template v-if="minecraftForm.entry_mode === 'dns'">
+            <div><label class="field-label">DNS Provider</label><select v-model="minecraftForm.dns_provider_id" class="input" required @change="normalizeMinecraftDNSSettings"><option v-for="provider in enabledDNSProviders" :key="provider.id" :value="provider.id">{{ provider.name }} · {{ provider.zone }}</option></select></div>
+            <div><label class="field-label">专属记录名</label><input v-model.trim="minecraftForm.dns_record_name" class="input" placeholder="例如 mc" required /><p class="field-hint">请使用未被多节点入口占用的新记录名。</p></div>
+            <div><label class="field-label">DNS TTL</label><select v-model.number="minecraftForm.dns_ttl" class="input"><option v-for="option in minecraftDNSTTLOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></div>
+            <div class="minecraft-dns-preview"><span>玩家连接地址</span><code>{{ minecraftConnectionPreview || '填写记录名后自动生成' }}</code></div>
+          </template>
           <div class="sm:col-span-2"><label class="field-label">归属用户（可选）</label><select v-model.number="minecraftForm.user_id" class="input"><option :value="0">不绑定用户</option><option v-for="user in store.users" :key="user.id" :value="user.id">{{ user.display_name || user.username }}</option></select><p v-if="minecraftForm.user_id" class="field-hint">绑定用户后使用该用户额度，并按 Agent 精确计量。</p></div>
         </div>
         <div v-if="minecraftError" class="notice notice-error">{{ minecraftError }}</div>
@@ -87,7 +94,8 @@ import { useRoute } from 'vue-router'
 import { useRelayStore } from '../stores/relay'
 import Modal from '../components/Modal.vue'
 import MaskedIP from '../components/MaskedIP.vue'
-import { maskIP } from '../utils/ip'
+import { composeDNSHostname, dnsRecordsForHostname, isValidDNSRecordName, normalizeDNSRecordName, normalizeTTLForProvider, reusableRelayDNSRecord, safeRelayDNSHostnames, ttlOptions } from '../utils/dns'
+import { isIPv6, maskIP } from '../utils/ip'
 
 const store = useRelayStore()
 const route = useRoute()
@@ -102,16 +110,22 @@ const selectedTargets = ref([])
 const targetOptions = reactive({})
 const minecraftSaving = ref(false)
 const minecraftError = ref('')
-const minecraftForm = ref({ edition: 'java', target_address: '', target_port: 25565, listen_port: 25565, relay_node_id: '', user_id: 0 })
+const minecraftForm = ref({ edition: 'java', target_address: '', target_port: 25565, listen_port: 25565, relay_node_id: '', user_id: 0, entry_mode: 'ip', dns_provider_id: '', dns_record_name: 'mc', dns_ttl: 60 })
 
 const blank = () => ({ relay_node_id: store.relayNodes[0]?.id || '', user_id: 0, name: '', listen_host: '0.0.0.0', listen_port: 443, network: 'tcp', mode: 'failover', enabled: true, billing_mode: 'both', traffic_limit_gb: 0 })
 const form = ref(blank())
 const canCreate = computed(() => store.relayNodes.length > 0 && store.landingNodes.length > 0)
 const assignableUsers = computed(() => store.users.filter(user => !user.relay_service || user.id === editTarget.value?.user_id))
+const enabledDNSProviders = computed(() => store.dnsProviders.filter(provider => provider.enabled !== false))
+const selectedMinecraftDNSProvider = computed(() => enabledDNSProviders.value.find(provider => String(provider.id) === String(minecraftForm.value.dns_provider_id)))
+const minecraftDNSTTLOptions = computed(() => ttlOptions(selectedMinecraftDNSProvider.value, minecraftForm.value.dns_ttl))
+const minecraftHostname = computed(() => selectedMinecraftDNSProvider.value ? composeDNSHostname(minecraftForm.value.dns_record_name, selectedMinecraftDNSProvider.value.zone) : '')
+const minecraftConnectionPreview = computed(() => formatMinecraftAddress(minecraftHostname.value, minecraftForm.value.listen_port, minecraftForm.value.edition))
 
 function ensureOptions() { store.landingNodes.forEach((node, index) => { if (!targetOptions[node.id]) targetOptions[node.id] = { priority: index * 10, weight: 1 } }) }
 function openCreate() { ensureOptions(); editTarget.value = null; form.value = blank(); selectedTargets.value = []; formError.value = ''; showForm.value = true }
-function openMinecraft() { minecraftError.value = ''; minecraftForm.value = { edition: 'java', target_address: '', target_port: 25565, listen_port: 25565, relay_node_id: store.relayNodes[0]?.id || '', user_id: 0 }; showMinecraft.value = true }
+function openMinecraft() { const provider = enabledDNSProviders.value[0]; minecraftError.value = ''; minecraftForm.value = { edition: 'java', target_address: '', target_port: 25565, listen_port: 25565, relay_node_id: store.relayNodes.find(node => node.status === 'online')?.id || store.relayNodes[0]?.id || '', user_id: 0, entry_mode: provider ? 'dns' : 'ip', dns_provider_id: provider?.id || '', dns_record_name: 'mc', dns_ttl: normalizeTTLForProvider(60, provider) }; showMinecraft.value = true }
+function normalizeMinecraftDNSSettings() { minecraftForm.value.dns_ttl = normalizeTTLForProvider(minecraftForm.value.dns_ttl, selectedMinecraftDNSProvider.value) }
 function openEdit(service) { ensureOptions(); editTarget.value = service; form.value = { relay_node_id: service.relay_node_id, user_id: service.user_id || 0, name: service.name, listen_host: service.listen_host, listen_port: service.listen_port, network: service.network, mode: service.mode, enabled: service.enabled, billing_mode: service.billing_mode || 'both', traffic_limit_gb: service.traffic_limit_gb || 0 }; selectedTargets.value = service.targets.map(target => target.landing_node_id); service.targets.forEach(target => { targetOptions[target.landing_node_id] = { priority: target.priority, weight: target.weight } }); formError.value = ''; showForm.value = true }
 
 async function save() {
@@ -128,26 +142,61 @@ async function saveMinecraft() {
   minecraftError.value = ''
   const network = minecraftForm.value.edition === 'bedrock' ? 'udp' : 'tcp'
   const user = store.users.find(item => item.id === minecraftForm.value.user_id)
+  const relayNode = store.relayNodes.find(item => item.id === minecraftForm.value.relay_node_id)
   let landing = null
+  let service = null
+  let dnsRecord = null
+  let dnsProvider = null
+  let dnsRecordName = ''
+  let reuseDNSRecord = null
   try {
+    if (!relayNode?.public_ip) throw new Error('所选中转节点尚未上报公网 IP')
+    if (minecraftForm.value.entry_mode === 'dns') {
+      dnsProvider = selectedMinecraftDNSProvider.value
+      if (!dnsProvider) throw new Error('请选择可用的 DNS Provider')
+      dnsRecordName = normalizeDNSRecordName(minecraftForm.value.dns_record_name, dnsProvider.zone)
+      if (!isValidDNSRecordName(dnsRecordName, dnsProvider.zone)) throw new Error('DNS 记录名格式无效，请使用字母、数字、短横线或多级子域名')
+      const recordType = isIPv6(relayNode.public_ip) ? 'AAAA' : 'A'
+      const conflicts = dnsRecordsForHostname(store.dnsRecords, dnsProvider, dnsRecordName, recordType)
+      reuseDNSRecord = reusableRelayDNSRecord(store.dnsRecords, dnsProvider, dnsRecordName, recordType, relayNode.id)
+      if (conflicts.length && !reuseDNSRecord) throw new Error(`域名 ${minecraftHostname.value} 已被其他或多台 Relay 使用，请换一个专属记录名`)
+    }
     landing = await store.createLandingNode({ name: `Minecraft · ${minecraftForm.value.target_address}:${minecraftForm.value.target_port}`, address: minecraftForm.value.target_address, port: Number(minecraftForm.value.target_port), network, protocol: 'minecraft', share_uri: '', enabled: true })
-    await store.createService({ relay_node_id: minecraftForm.value.relay_node_id, user_id: minecraftForm.value.user_id || 0, name: `Minecraft ${minecraftForm.value.edition === 'bedrock' ? 'Bedrock' : 'Java'} · ${minecraftForm.value.listen_port}`, listen_host: '0.0.0.0', listen_port: Number(minecraftForm.value.listen_port), network, mode: 'failover', enabled: true, billing_mode: user?.billing_mode || 'both', traffic_limit_gb: user?.traffic_limit_gb || 0, dial_timeout_ms: 2500, udp_idle_timeout_seconds: 120, health: { enabled: network === 'tcp', interval_seconds: 4, timeout_ms: 2000, failure_threshold: 2, success_threshold: 3, recovery_cooldown_seconds: 60 }, targets: [{ landing_node_id: landing.id, priority: 0, weight: 1, enabled: true }] })
-    showMinecraft.value = false
-    showMessage('Minecraft 转发已创建，等待 Agent 发布')
+    service = await store.createService({ relay_node_id: minecraftForm.value.relay_node_id, user_id: minecraftForm.value.user_id || 0, name: `Minecraft ${minecraftForm.value.edition === 'bedrock' ? 'Bedrock' : 'Java'} · ${minecraftForm.value.listen_port}`, listen_host: '0.0.0.0', listen_port: Number(minecraftForm.value.listen_port), network, mode: 'failover', enabled: true, billing_mode: user?.billing_mode || 'both', traffic_limit_gb: user?.traffic_limit_gb || 0, dial_timeout_ms: 2500, udp_idle_timeout_seconds: 120, health: { enabled: network === 'tcp', interval_seconds: 4, timeout_ms: 2000, failure_threshold: 2, success_threshold: 3, recovery_cooldown_seconds: 60 }, targets: [{ landing_node_id: landing.id, priority: 0, weight: 1, enabled: true }] })
+    if (dnsProvider && !reuseDNSRecord) dnsRecord = await store.createDNSRecord({ provider_id: dnsProvider.id, relay_node_id: relayNode.id, name: dnsRecordName, type: isIPv6(relayNode.public_ip) ? 'AAAA' : 'A', value: '', ttl: normalizeTTLForProvider(minecraftForm.value.dns_ttl, dnsProvider), enabled: true })
   } catch (error) {
-    if (landing?.id) { try { await store.deleteLandingNode(landing.id) } catch (_) { /* keep the original creation error */ } }
-    minecraftError.value = error.response?.data?.error || 'Minecraft 转发创建失败'
-  } finally { minecraftSaving.value = false }
+    if (dnsRecord?.id) { try { await store.deleteDNSRecord(dnsRecord.id) } catch (_) { /* preserve the creation error */ } }
+    if (service?.id) { try { await store.deleteService(service.id) } catch (_) { /* preserve the creation error */ } }
+    if (landing?.id) { try { await store.deleteLandingNode(landing.id) } catch (_) { /* preserve the creation error */ } }
+    minecraftError.value = error.response?.data?.error || error.message || 'Minecraft 转发创建失败'
+    minecraftSaving.value = false
+    return
+  }
+  showMinecraft.value = false
+  if (dnsProvider) {
+    try {
+      await store.syncDNSProvider(dnsProvider.id)
+      showMessage(`Minecraft 转发已创建，玩家可连接 ${minecraftConnectionPreview.value}`)
+    } catch (_) {
+      await Promise.allSettled([store.fetchDNSRecords()])
+      showMessage(`转发已创建，但域名 ${minecraftHostname.value} 暂未同步，请到 DNS 托管页面重试`, 'error')
+    }
+  } else {
+    showMessage('Minecraft 转发已创建，等待 Agent 发布')
+  }
+  minecraftSaving.value = false
 }
 
 async function resetTraffic(service) { if (!window.confirm(`确认将“${service.name}”的 Agent 计量清零？`)) return; try { await store.resetServiceTraffic(service.id); showMessage('流量已清零，Agent 正在应用新计量周期') } catch (error) { showMessage(error.response?.data?.error || '清零失败', 'error') } }
 async function remove(service) { if (!window.confirm(`确认删除转发服务“${service.name}”？新连接将不再进入该端口。`)) return; try { await store.deleteService(service.id); showMessage('服务已删除') } catch (error) { showMessage(error.response?.data?.error || '删除失败', 'error') } }
 function entryHost(service) { return store.relayNodes.find(node => node.id === service.relay_node_id)?.public_ip || service.listen_host }
+function serviceDomains(service) { return safeRelayDNSHostnames(store.dnsRecords, store.dnsProviders, service.relay_node_id) }
 function serviceStatus(service) { const node = store.relayNodes.find(item => item.id === service.relay_node_id); return Array.isArray(node?.service_status) ? node.service_status.find(item => item.id === service.id) : null }
 function agentMeterLabel(service) { const status = serviceStatus(service); return status?.billing_mode ? `${(Number(status.billed_bytes || 0) / 1073741824).toFixed(3)} GB` : '等待 Agent 升级' }
 function maskedIP(value, fallback = '未设置 IP') { return maskIP(value) || fallback }
 function modeLabel(mode) { return { failover: '主备', ip_hash: 'IP Hash', weighted: '加权', round_robin: '轮询' }[mode] || mode }
 function billingModeLabel(mode) { return { download: '仅下载', upload: '仅上传', both: '双向' }[mode] || '双向' }
+function formatMinecraftAddress(host, port, edition) { if (!host) return ''; const numericPort = Number(port); if (edition === 'java' && numericPort === 25565) return host; const displayHost = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host; return `${displayHost}:${numericPort}` }
 function showMessage(text, type = 'success') { message.value = text; messageType.value = type; window.setTimeout(() => { message.value = '' }, 5000) }
 onMounted(async () => {
   await Promise.all([store.fetchAll(), store.fetchUsers()])
@@ -157,5 +206,5 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.eyebrow{color:#2563eb;font-size:10px;font-weight:800;letter-spacing:.16em}.page-title{margin-top:5px;color:#172033;font-size:27px;font-weight:750;letter-spacing:-.03em}.page-subtitle{margin-top:5px;color:#64748b;font-size:12px}.state-tag{border-radius:999px;background:#f1f5f9;padding:5px 9px;color:#64748b;font-size:10px;font-weight:700}.state-online{background:#ecfdf3;color:#15803d}.info-box{min-width:0;border-radius:8px;background:#f8fafc;padding:9px}.info-box span{display:block;color:#94a3b8;font-size:9px}.info-box strong{display:block;overflow:hidden;margin-top:4px;color:#475569;text-overflow:ellipsis;white-space:nowrap;font-size:10px}.meter-box{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px;border:1px solid #dbeafe;border-radius:9px;background:#f8fbff;padding:10px 12px}.meter-box span,.meter-box strong{display:block}.meter-box span{color:#64748b;font-size:9px}.meter-box strong{margin-top:3px;color:#1e40af;font-size:11px}.meter-box .quota-tag{border-radius:999px;background:#fee2e2;padding:4px 7px;color:#b91c1c;font-weight:700}.target-line{display:flex;align-items:center;gap:8px;border-radius:7px;background:#f8fafc;padding:7px 9px;color:#64748b;font-size:10px}.target-picker{max-height:260px;overflow:auto;border:1px solid #e5eaf1;border-radius:9px}.target-option{display:flex;align-items:center;gap:9px;padding:10px 12px;border-bottom:1px solid #f1f5f9}.target-option:last-child{border:0}.target-option strong,.target-option small{display:block}.target-option strong{color:#475569;font-size:11px}.target-option small{margin-top:2px;color:#94a3b8;font-size:9px}.mini-input{width:52px;min-width:0;border:1px solid #d8e0eb;border-radius:6px;padding:5px;color:#475569;font-size:10px}.field-hint{color:#94a3b8;font-size:10px;line-height:1.55}.empty-panel{padding:52px;text-align:center;color:#94a3b8;font-size:12px}@media(max-width:480px){.target-line{flex-wrap:wrap}.target-option{flex-wrap:wrap}.target-option span{min-width:0;flex:1 1 100%}.target-option .mini-input{flex:0 0 52px}}
+.eyebrow{color:#2563eb;font-size:10px;font-weight:800;letter-spacing:.16em}.page-title{margin-top:5px;color:#172033;font-size:27px;font-weight:750;letter-spacing:-.03em}.page-subtitle{margin-top:5px;color:#64748b;font-size:12px}.state-tag{border-radius:999px;background:#f1f5f9;padding:5px 9px;color:#64748b;font-size:10px;font-weight:700}.state-online{background:#ecfdf3;color:#15803d}.info-box{min-width:0;border-radius:8px;background:#f8fafc;padding:9px}.info-box span{display:block;color:#94a3b8;font-size:9px}.info-box strong{display:block;overflow:hidden;margin-top:4px;color:#475569;text-overflow:ellipsis;white-space:nowrap;font-size:10px}.meter-box{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px;border:1px solid #dbeafe;border-radius:9px;background:#f8fbff;padding:10px 12px}.meter-box span,.meter-box strong{display:block}.meter-box span{color:#64748b;font-size:9px}.meter-box strong{margin-top:3px;color:#1e40af;font-size:11px}.meter-box .quota-tag{border-radius:999px;background:#fee2e2;padding:4px 7px;color:#b91c1c;font-weight:700}.target-line{display:flex;align-items:center;gap:8px;border-radius:7px;background:#f8fafc;padding:7px 9px;color:#64748b;font-size:10px}.target-picker{max-height:260px;overflow:auto;border:1px solid #e5eaf1;border-radius:9px}.target-option{display:flex;align-items:center;gap:9px;padding:10px 12px;border-bottom:1px solid #f1f5f9}.target-option:last-child{border:0}.target-option strong,.target-option small{display:block}.target-option strong{color:#475569;font-size:11px}.target-option small{margin-top:2px;color:#94a3b8;font-size:9px}.mini-input{width:52px;min-width:0;border:1px solid #d8e0eb;border-radius:6px;padding:5px;color:#475569;font-size:10px}.field-hint{color:#94a3b8;font-size:10px;line-height:1.55}.minecraft-dns-preview{display:grid;align-content:center;gap:4px;border:1px solid #dbeafe;border-radius:9px;background:#f8fbff;padding:9px 11px}.minecraft-dns-preview span{color:#64748b;font-size:9px}.minecraft-dns-preview code{color:#1e3a8a;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;overflow-wrap:anywhere}.empty-panel{padding:52px;text-align:center;color:#94a3b8;font-size:12px}@media(max-width:480px){.target-line{flex-wrap:wrap}.target-option{flex-wrap:wrap}.target-option span{min-width:0;flex:1 1 100%}.target-option .mini-input{flex:0 0 52px}}
 </style>
