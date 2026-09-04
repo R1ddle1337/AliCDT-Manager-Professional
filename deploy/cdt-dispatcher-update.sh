@@ -46,10 +46,11 @@ if docker image inspect alicdt-dispatcher:production >/dev/null 2>&1; then
   docker tag alicdt-dispatcher:production "$ROLLBACK_IMAGE"
 fi
 source_fingerprint() {
-  local path
-  for path in "$@"; do
-    git -C "$REPO_DIR" rev-parse "HEAD:$path"
-  done | sha256sum | cut -c1-12
+  # Keep the deployed version tied to runtime inputs, not to test-only edits.
+  git -C "$REPO_DIR" ls-tree -r --full-tree HEAD -- "$@" \
+    | grep -Ev '_test\.go$' \
+    | sha256sum \
+    | cut -c1-12
 }
 dispatcher_build_version="dispatcher-$(source_fingerprint cmd/dispatcher internal/dispatcher internal/protocol go.mod go.sum Dockerfile.dispatcher)"
 CDT_DISPATCHER_BUILD_VERSION="$dispatcher_build_version" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build --pull dispatcher

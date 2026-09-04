@@ -118,10 +118,12 @@ fi
 target_commit="$(git -C "$REPO_DIR" rev-parse HEAD)"
 
 source_fingerprint() {
-  local path
-  for path in "$@"; do
-    git -C "$REPO_DIR" rev-parse "HEAD:$path"
-  done | sha256sum | cut -c1-12
+  # Hash only runtime inputs. Test-only edits still rebuild and validate the
+  # controller, but must not make every remote Agent appear outdated.
+  git -C "$REPO_DIR" ls-tree -r --full-tree HEAD -- "$@" \
+    | grep -Ev '_test\.go$' \
+    | sha256sum \
+    | cut -c1-12
 }
 
 controller_build_version="$(git -C "$REPO_DIR" rev-parse --short=12 HEAD)"

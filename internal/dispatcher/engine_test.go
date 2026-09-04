@@ -88,7 +88,15 @@ func TestEngineTCPFailoverAndCounters(t *testing.T) {
 	}
 	_ = client.Close()
 	accepted.Wait()
+	// Reading the echoed payload proves the copy in each direction succeeded,
+	// but the relay goroutine may still be unwinding and publishing its final
+	// counters. Wait for that observable state instead of racing the scheduler.
+	deadline := time.Now().Add(time.Second)
 	stats := engine.Stats()
+	for (stats.ActiveConnections != 0 || stats.BytesDown != uint64(len(message))) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+		stats = engine.Stats()
+	}
 	if stats.TotalConnections != 1 || stats.BytesUp != uint64(len(message)) || stats.BytesDown != uint64(len(message)) {
 		t.Fatalf("unexpected counters: %+v", stats)
 	}
