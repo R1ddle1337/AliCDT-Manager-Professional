@@ -20,7 +20,7 @@
       <article class="card workspace-stat stat-blue"><span>Relay Agent</span><strong>{{ onlineNodes }}<small>/ {{ store.relayNodes.length }}</small></strong><em>{{ upgradeNodes.length ? `${upgradeNodes.length} 台待升级` : '全部为最新版本' }}</em></article>
       <article class="card workspace-stat stat-indigo"><span>运行入口</span><strong>{{ enabledEntries }}<small>/ {{ entries.length }}</small></strong><em>{{ unhealthyEntries ? `${unhealthyEntries} 个入口需要关注` : '入口状态正常' }}</em></article>
       <article class="card workspace-stat stat-emerald"><span>落地目标</span><strong>{{ enabledLandingNodes }}<small>/ {{ store.landingNodes.length }}</small></strong><em>{{ store.landingNodes.length ? '可用于故障切换' : '请先添加落地目标' }}</em></article>
-      <article class="card workspace-stat stat-amber"><span>本月已计量</span><strong>{{ usageGB.toFixed(2) }}<small>GB</small></strong><em>{{ quotaExceededCount ? `${quotaExceededCount} 个入口已达额度` : '暂无额度熔断' }}</em></article>
+      <article class="card workspace-stat stat-amber"><span>本月已计量</span><strong :title="`${usageGB.toFixed(6)} GB`">{{ usageDisplay.value }}<small>{{ usageDisplay.unit }}</small></strong><em>{{ quotaCaption }}</em></article>
     </section>
 
     <section v-if="attentionItems.length" class="attention-strip card">
@@ -110,6 +110,7 @@ import { useRelayStore } from '../stores/relay'
 import MaskedIP from '../components/MaskedIP.vue'
 import MaskedText from '../components/MaskedText.vue'
 import { usePolling } from '../utils/polling'
+import { aggregateRelayUsage, formatTrafficAmount } from '../utils/traffic'
 
 const router = useRouter()
 const store = useRelayStore()
@@ -140,11 +141,15 @@ const enabledEntries = computed(() => entries.value.filter(entry => entry.enable
 const unhealthyEntries = computed(() => entries.value.filter(entry => entry.enabled && !entry.healthy).length)
 const enabledLandingNodes = computed(() => store.landingNodes.filter(node => node.enabled !== false).length)
 const serviceStatuses = computed(() => store.relayNodes.flatMap(node => Array.isArray(node.service_status) ? node.service_status : []))
-const usageGB = computed(() => {
-  if (store.users.length) return store.users.reduce((sum, user) => sum + Number(user.traffic_used_gb || 0), 0)
-  return serviceStatuses.value.reduce((sum, status) => sum + Number(status.billed_bytes || 0), 0) / 1073741824
-})
+const usageGB = computed(() => aggregateRelayUsage(store.users, store.services, serviceStatuses.value))
+const usageDisplay = computed(() => formatTrafficAmount(usageGB.value))
 const quotaExceededCount = computed(() => serviceStatuses.value.filter(status => status.quota_exceeded).length)
+const quotaConfiguredCount = computed(() => store.services.filter(service => Number(service.traffic_limit_gb || 0) > 0).length)
+const quotaCaption = computed(() => quotaExceededCount.value
+  ? `${quotaExceededCount.value} 个入口已达额度`
+  : quotaConfiguredCount.value
+    ? `已配置 ${quotaConfiguredCount.value} 个入口额度`
+    : '独立入口未设置额度')
 const filteredEntries = computed(() => {
   const query = entrySearch.value.toLowerCase()
   if (!query) return entries.value
