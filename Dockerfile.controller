@@ -1,0 +1,43 @@
+FROM node:24-alpine AS frontend-build
+
+WORKDIR /src/frontend
+COPY frontend/package*.json ./
+RUN npm ci --no-audit --no-fund
+COPY frontend/ ./
+RUN npm run build
+
+FROM golang:1.25.13-alpine AS build
+
+WORKDIR /src
+ARG BUILD_VERSION=dev
+ARG AGENT_BUILD_VERSION=dev
+ARG DISPATCHER_BUILD_VERSION=dev
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd ./cmd
+COPY internal ./internal
+RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -trimpath -ldflags="-s -w -X main.version=${BUILD_VERSION} -X main.agentVersion=${AGENT_BUILD_VERSION}" -o /out/alicdt-controller ./cmd/controller && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -trimpath -ldflags="-s -w -X main.version=${AGENT_BUILD_VERSION}" -o /out/cdt-relay-agent-linux-amd64 ./cmd/relay-agent && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -buildvcs=false -trimpath -ldflags="-s -w -X main.version=${AGENT_BUILD_VERSION}" -o /out/cdt-relay-agent-linux-arm64 ./cmd/relay-agent && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -trimpath -ldflags="-s -w -X main.version=${DISPATCHER_BUILD_VERSION}" -o /out/cdt-dispatcher-linux-amd64 ./cmd/dispatcher && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -buildvcs=false -trimpath -ldflags="-s -w -X main.version=${DISPATCHER_BUILD_VERSION}" -o /out/cdt-dispatcher-linux-arm64 ./cmd/dispatcher && \
+    cd /out && sha256sum cdt-dispatcher-linux-* cdt-relay-agent-linux-* > checksums.txt
+
+FROM alpine:3.22
+RUN apk add --no-cache ca-certificates tzdata
+COPY --from=build /out/alicdt-controller /usr/local/bin/alicdt-controller
+COPY --from=frontend-build /src/frontend/dist /app/frontend
+COPY scripts/install-agent.sh /app/assets/install-agent.sh
+COPY scripts/upgrade-agent.sh /app/assets/upgrade-agent.sh
+COPY scripts/cdt-sing-box-log-cleanup.sh /app/assets/cdt-sing-box-log-cleanup.sh
+COPY scripts/install-dispatcher.sh /app/assets/install-dispatcher.sh
+COPY --from=build /out/cdt-relay-agent-linux-amd64 /app/assets/cdt-relay-agent-linux-amd64
+COPY --from=build /out/cdt-relay-agent-linux-arm64 /app/assets/cdt-relay-agent-linux-arm64
+COPY --from=build /out/cdt-dispatcher-linux-amd64 /app/assets/cdt-dispatcher-linux-amd64
+COPY --from=build /out/cdt-dispatcher-linux-arm64 /app/assets/cdt-dispatcher-linux-arm64
+COPY --from=build /out/checksums.txt /app/assets/checksums.txt
+VOLUME ["/app/data"]
+EXPOSE 8080
+ENV CDT_FRONTEND_DIR=/app/frontend
+ENV CDT_AGENT_INSTALLER=/app/assets/install-agent.sh
+ENTRYPOINT ["/usr/local/bin/alicdt-controller"]

@@ -19,7 +19,7 @@
         </div>
         <div class="mb-7">
           <h2 class="text-2xl font-bold tracking-tight text-slate-900">{{ isInit ? '创建管理员账号' : '登录控制台' }}</h2>
-          <p class="mt-2 text-sm text-slate-500">{{ isInit ? '首次使用，请设置管理员凭据' : '使用管理员凭据继续' }}</p>
+          <p class="mt-2 text-sm text-slate-500">{{ isInit ? '首次使用，请设置管理员凭据' : '使用管理员或用户凭据继续' }}</p>
         </div>
 
         <form class="space-y-4" @submit.prevent="submit">
@@ -29,7 +29,12 @@
           </div>
           <div>
             <label class="field-label" for="password">密码</label>
-            <input id="password" v-model="form.password" type="password" class="input" autocomplete="current-password" :placeholder="isInit ? '至少 6 位字符' : '请输入密码'" />
+            <input id="password" v-model="form.password" type="password" class="input" autocomplete="current-password" :placeholder="isInit ? '至少 8 位字符' : '请输入密码'" />
+          </div>
+          <div v-if="requiresTwoFactor">
+            <label class="field-label" for="two-factor-code">双因素认证验证码</label>
+            <input id="two-factor-code" v-model.trim="form.two_factor_code" class="input" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="输入身份验证器中的 6 位验证码" />
+            <p class="field-hint">管理员已启用双因素认证，请打开 Google Authenticator、Microsoft Authenticator 或 1Password 获取验证码。</p>
           </div>
           <div v-if="isInit">
             <label class="field-label" for="confirm">确认密码</label>
@@ -51,19 +56,23 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { useStore } from '../stores'
+import { useRelayStore } from '../stores/relay'
 import axios from 'axios'
+import { apiErrorMessage, saveSession } from '../utils/session'
+
+const publicApi = axios.create({ baseURL: '/api/v2', timeout: 20000 })
 
 const router = useRouter()
-const store = useStore()
+const store = useRelayStore()
 const isInit = ref(false)
 const loading = ref(false)
 const error = ref('')
-const form = ref({ username: '', password: '', confirm: '' })
+const requiresTwoFactor = ref(false)
+const form = ref({ username: '', password: '', confirm: '', two_factor_code: '' })
 
 onMounted(async () => {
   try {
-    const { data } = await axios.get('/api/auth/initialized')
+    const { data } = await publicApi.get('/auth/initialized')
     isInit.value = !data.initialized
   } catch (e) {
     error.value = '无法连接服务，请稍后重试'
@@ -72,13 +81,17 @@ onMounted(async () => {
 
 async function submit() {
   error.value = ''
+  if (!isInit.value && requiresTwoFactor.value && !/^\d{6}$/.test(form.value.two_factor_code)) {
+    error.value = '请输入 6 位双因素认证验证码'
+    return
+  }
   if (!form.value.username || !form.value.password) {
     error.value = '请填写用户名和密码'
     return
   }
   if (isInit.value) {
-    if (form.value.password.length < 6) {
-      error.value = '密码至少需要 6 位字符'
+    if (form.value.password.length < 8) {
+      error.value = '密码至少需要 8 位字符'
       return
     }
     if (form.value.password !== form.value.confirm) {
@@ -89,14 +102,16 @@ async function submit() {
   loading.value = true
   try {
     if (isInit.value) {
-      const { data } = await axios.post('/api/auth/init', { username: form.value.username, password: form.value.password })
-      localStorage.setItem('token', data.token)
+      const { data } = await publicApi.post('/auth/init', { username: form.value.username, password: form.value.password })
+      saveSession(data, form.value.username)
+      router.push('/')
     } else {
-      await store.login(form.value.username, form.value.password)
+      const data = await store.login(form.value.username, form.value.password, form.value.two_factor_code)
+      router.push(data.role === 'user' ? '/usage' : '/')
     }
-    router.push('/')
   } catch (e) {
-    error.value = e.response?.data?.detail || '操作失败，请稍后重试'
+    if (e.response?.data?.code === 'two_factor_required') requiresTwoFactor.value = true
+    error.value = apiErrorMessage(e, '操作失败，请稍后重试')
   } finally {
     loading.value = false
   }

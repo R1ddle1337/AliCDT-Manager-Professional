@@ -1,0 +1,24 @@
+#!/sbin/openrc-run
+
+[ -r /etc/cdt-dispatcher.env ] && . /etc/cdt-dispatcher.env
+
+name="cdt-dispatcher"
+description="AliCDT fixed front-door L4 dispatcher"
+command="/usr/local/bin/cdt-dispatcher"
+command_user="cdt-dispatcher:cdt-dispatcher"
+command_background="yes"
+pidfile="/run/${RC_SVCNAME}.pid"
+supervisor="supervise-daemon"
+supervise_daemon_args="--respawn --respawn-delay 3"
+output_log="/var/log/${RC_SVCNAME}/${RC_SVCNAME}.log"
+error_log="/var/log/${RC_SVCNAME}/${RC_SVCNAME}.err"
+
+depend() {
+	need net
+	after firewall
+}
+
+start_pre() {
+	checkpath --directory --mode 0750 --owner cdt-dispatcher:cdt-dispatcher "/var/log/${RC_SVCNAME}"
+	checkpath --file --mode 0600 --owner root:root /etc/cdt-dispatcher.env
+}

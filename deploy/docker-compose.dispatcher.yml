@@ -1,0 +1,52 @@
+name: alicdt-dispatcher
+
+# Run this file independently on each non-CDT gateway host. Keep the same
+# controller URL, pool ID and dispatch token on both hosts, but publish each
+# host's own public IP in DNS. The container listens on 8443 internally so it
+# can run without root; Docker maps the public 443 TCP/UDP port.
+services:
+  dispatcher:
+    build:
+      context: ..
+      dockerfile: Dockerfile.dispatcher
+      args:
+        DISPATCHER_BUILD_VERSION: ${CDT_DISPATCHER_BUILD_VERSION:-dev}
+    image: alicdt-dispatcher:production
+    container_name: alicdt-dispatcher
+    restart: unless-stopped
+    init: true
+    read_only: true
+    stop_grace_period: 15s
+    ports:
+      - "${CDT_DISPATCH_PUBLIC_PORT:-443}:8443/tcp"
+      - "${CDT_DISPATCH_PUBLIC_PORT:-443}:8443/udp"
+      - "127.0.0.1:${CDT_DISPATCH_HEALTH_PORT:-9091}:9091/tcp"
+    environment:
+      CDT_DISPATCH_CONTROLLER_URL: ${CDT_DISPATCH_CONTROLLER_URL:?set CDT_DISPATCH_CONTROLLER_URL}
+      CDT_DISPATCH_POOL_ID: ${CDT_DISPATCH_POOL_ID:?set CDT_DISPATCH_POOL_ID}
+      CDT_DISPATCH_TOKEN: ${CDT_DISPATCH_TOKEN:?set CDT_DISPATCH_TOKEN}
+      CDT_DISPATCH_LISTEN: :8443
+      CDT_DISPATCH_NETWORK: ${CDT_DISPATCH_NETWORK:-tcp+udp}
+      CDT_DISPATCH_HEALTH_LISTEN: 0.0.0.0:9091
+      CDT_DISPATCH_POLL_INTERVAL: ${CDT_DISPATCH_POLL_INTERVAL:-15s}
+      CDT_DISPATCH_STALE_AFTER: ${CDT_DISPATCH_STALE_AFTER:-2m}
+      CDT_DISPATCH_REQUEST_TIMEOUT: ${CDT_DISPATCH_REQUEST_TIMEOUT:-10s}
+      CDT_DISPATCH_MAX_SNAPSHOT_AGE: ${CDT_DISPATCH_MAX_SNAPSHOT_AGE:-2m}
+      TZ: Asia/Shanghai
+    expose:
+      - "9091"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9091/readyz"]
+      interval: 15s
+      timeout: 3s
+      retries: 4
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

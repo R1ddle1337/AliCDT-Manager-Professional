@@ -1,0 +1,48 @@
+name: alicdt-go-staging
+
+services:
+  controller:
+    build:
+      context: ..
+      dockerfile: Dockerfile.controller
+      args:
+        BUILD_VERSION: ${CDT_BUILD_VERSION:-dev}
+        AGENT_BUILD_VERSION: ${CDT_AGENT_BUILD_VERSION:-dev}
+        DISPATCHER_BUILD_VERSION: ${CDT_DISPATCHER_BUILD_VERSION:-dev}
+    image: alicdt-controller:staging
+    container_name: alicdt-controller-staging
+    restart: unless-stopped
+    read_only: true
+    stop_grace_period: 15s
+    ports:
+      - "127.0.0.1:18010:8080"
+    volumes:
+      - ../data-go-staging:/app/data
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    environment:
+      CDT_ADMIN_TOKEN: ${CDT_ADMIN_TOKEN:?set CDT_ADMIN_TOKEN}
+      CDT_DATABASE: /app/data/guard.db
+      CDT_TRAFFIC_SAFETY_WINDOW: ${CDT_TRAFFIC_SAFETY_WINDOW:-4m}
+      CDT_DISPATCH_TOKEN: ${CDT_DISPATCH_TOKEN:-}
+      TZ: Asia/Shanghai
+    command:
+      - -listen
+      - :8080
+      - -cloud-sync-interval
+      - 2m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 4
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
