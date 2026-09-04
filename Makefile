@@ -10,7 +10,8 @@ test:
 audit:
 	go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
 	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
-	cd frontend && npm audit --audit-level=high
+	shellcheck -x scripts/*.sh deploy/*.sh
+	cd frontend && timeout 60s npm audit --audit-level=high
 
 build: controller agent dispatcher frontend
 

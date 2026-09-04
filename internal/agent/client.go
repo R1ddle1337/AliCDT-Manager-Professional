@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -70,6 +71,22 @@ func New(opts Options, engine *relay.Engine) (*Client, error) {
 	if opts.ControllerURL == "" {
 		return nil, errors.New("controller URL is required")
 	}
+	controllerURL, err := url.Parse(opts.ControllerURL)
+	if err != nil || controllerURL.Scheme == "" || controllerURL.Host == "" {
+		return nil, errors.New("controller URL must include a scheme and host")
+	}
+	if controllerURL.Scheme != "http" && controllerURL.Scheme != "https" {
+		return nil, fmt.Errorf("unsupported controller URL scheme %q", controllerURL.Scheme)
+	}
+	if controllerURL.User != nil {
+		return nil, errors.New("controller URL must not contain user credentials")
+	}
+	if controllerURL.RawQuery != "" || controllerURL.Fragment != "" {
+		return nil, errors.New("controller URL must not contain a query or fragment")
+	}
+	controllerURL.Path = strings.TrimRight(controllerURL.Path, "/")
+	controllerURL.RawPath = ""
+	opts.ControllerURL = controllerURL.String()
 	if opts.NodeName == "" {
 		hostname, _ := os.Hostname()
 		opts.NodeName = hostname
@@ -104,10 +121,20 @@ func New(opts Options, engine *relay.Engine) (*Client, error) {
 	if engine == nil {
 		return nil, errors.New("relay engine is required")
 	}
+	origin := controllerURL.Scheme + "://" + controllerURL.Host
 	return &Client{
 		opts: opts,
 		httpClient: &http.Client{
 			Timeout: 15 * time.Second,
+			CheckRedirect: func(request *http.Request, via []*http.Request) error {
+				if len(via) >= 10 {
+					return errors.New("controller redirected too many times")
+				}
+				if !strings.EqualFold(request.URL.Scheme+"://"+request.URL.Host, origin) {
+					return errors.New("controller redirect changed origin")
+				}
+				return nil
+			},
 		},
 		engine:       engine,
 		updateStatus: "idle",

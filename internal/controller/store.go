@@ -1494,12 +1494,12 @@ func (s *Store) UpdateHeartbeat(ctx context.Context, id string, heartbeat protoc
 		return err
 	}
 	now := time.Now().UTC()
-	updateStatus := strings.TrimSpace(heartbeat.UpdateStatus)
-	if updateStatus == "" {
-		updateStatus = "idle"
+	updateStatus, updateError, err := normalizeAgentUpdateState(heartbeat.UpdateStatus, heartbeat.UpdateError)
+	if err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET status='online', last_seen_at=?, agent_version=?, binary_sha256=?, update_status=?, update_error=?, update_at=?, current_revision=?, service_status_json=?,capabilities_json=? WHERE id=?`,
-		now.Format(time.RFC3339Nano), heartbeat.AgentVersion, strings.TrimSpace(heartbeat.BinarySHA256), updateStatus, strings.TrimSpace(heartbeat.UpdateError), now.Format(time.RFC3339Nano), heartbeat.CurrentRevision, string(encoded), string(capabilities), id); err != nil {
+		now.Format(time.RFC3339Nano), heartbeat.AgentVersion, strings.TrimSpace(heartbeat.BinarySHA256), updateStatus, updateError, now.Format(time.RFC3339Nano), heartbeat.CurrentRevision, string(encoded), string(capabilities), id); err != nil {
 		return err
 	}
 	if oldRevision != heartbeat.CurrentRevision {

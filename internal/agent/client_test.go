@@ -91,6 +91,24 @@ func TestDailyUpdateScheduleUsesBeijingTime(t *testing.T) {
 	}
 }
 
+func TestNewRejectsUnsafeControllerURLs(t *testing.T) {
+	cases := []string{
+		"controller.invalid",
+		"ftp://controller.invalid",
+		"https://user:password@controller.invalid",
+		"https://controller.invalid?token=secret",
+		"https://controller.invalid#fragment",
+	}
+	for _, raw := range cases {
+		engine := relay.NewEngine()
+		_, err := New(Options{ControllerURL: raw}, engine)
+		engine.Close()
+		if err == nil {
+			t.Errorf("unsafe controller URL %q was accepted", raw)
+		}
+	}
+}
+
 func TestDailyUpdateScheduleFallsBackForUnavailableTimezone(t *testing.T) {
 	client, err := New(Options{
 		ControllerURL:  "https://controller.invalid",

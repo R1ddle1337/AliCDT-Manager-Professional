@@ -7,8 +7,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/R1ddle1337/AliCDT-Manager-Professional/internal/protocol"
 )
@@ -162,5 +164,42 @@ func TestBatchAgentUpgradeIsAtomic(t *testing.T) {
 	}
 	if config.ForceUpdate {
 		t.Fatal("valid agent was queued despite atomic batch failure")
+	}
+}
+
+func TestAgentUpdateStateIsValidatedAndBounded(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	if err := store.CreateEnrollmentToken(ctx, "state-enroll", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	agent, err := store.EnrollAgent(ctx, protocol.AgentEnrollmentRequest{Token: "state-enroll", NodeName: "state-relay"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	longError := strings.Repeat("错", maxAgentUpdateErrorRunes+100)
+	if err := store.SetAgentUpdateState(ctx, agent.AgentID, "FAILED", longError); err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := store.ListRelayNodes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || nodes[0].UpdateStatus != "failed" || len([]rune(nodes[0].UpdateError)) != maxAgentUpdateErrorRunes || !utf8.ValidString(nodes[0].UpdateError) {
+		t.Fatalf("update error was not safely normalized: %+v", nodes)
+	}
+	if err := store.UpdateHeartbeat(ctx, agent.AgentID, protocol.AgentHeartbeat{UpdateStatus: "unknown"}); err == nil {
+		t.Fatal("invalid heartbeat update status was accepted")
+	}
+	nodes, err = store.ListRelayNodes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nodes[0].UpdateStatus != "failed" || nodes[0].UpdateError == "" {
+		t.Fatalf("invalid heartbeat changed the last valid state: %+v", nodes[0])
 	}
 }

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -18,6 +19,12 @@ import (
 	"time"
 
 	"github.com/R1ddle1337/AliCDT-Manager-Professional/internal/protocol"
+)
+
+const (
+	maxAgentReleaseResponseBytes = 1 << 20
+	maxAgentAssetBytes           = 128 << 20
+	maxAgentUpdateErrorRunes     = 500
 )
 
 var ErrRestartRequested = errors.New("agent update installed; restart requested")
@@ -46,8 +53,17 @@ func (c *Client) currentUpdateState() (string, string) {
 func (c *Client) setUpdateState(status, updateErr string) {
 	c.updateMu.Lock()
 	c.updateStatus = status
-	c.updateError = updateErr
+	c.updateError = boundedAgentUpdateError(updateErr)
 	c.updateMu.Unlock()
+}
+
+func boundedAgentUpdateError(value string) string {
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if len(runes) > maxAgentUpdateErrorRunes {
+		value = string(runes[:maxAgentUpdateErrorRunes])
+	}
+	return value
 }
 
 func (c *Client) checkForUpdate(ctx context.Context) error {
@@ -70,18 +86,24 @@ func (c *Client) checkForUpdate(ctx context.Context) error {
 		return nil
 	}
 	if response.StatusCode != http.StatusOK {
-		message, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		return fmt.Errorf("release endpoint returned %s: %s", response.Status, strings.TrimSpace(string(message)))
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+		return fmt.Errorf("release endpoint returned HTTP %d", response.StatusCode)
 	}
-	var release protocol.AgentRelease
-	if err := json.NewDecoder(response.Body).Decode(&release); err != nil {
+	release, err := decodeAgentRelease(response.Body)
+	if err != nil {
 		return err
 	}
 	if !release.Available || release.SHA256 == "" || strings.EqualFold(release.SHA256, currentHash) {
 		return nil
 	}
+	if !strings.EqualFold(strings.TrimSpace(release.Architecture), runtime.GOARCH) {
+		return errors.New("controller returned an agent release for a different architecture")
+	}
 	if !validSHA256(release.SHA256) {
 		return errors.New("controller returned an invalid agent checksum")
+	}
+	if release.Size <= 0 || release.Size > maxAgentAssetBytes {
+		return errors.New("controller returned an invalid agent release size")
 	}
 	if err := c.setRemoteUpdateState(ctx, "draining", ""); err != nil {
 		return fmt.Errorf("prepare agent drain: %w", err)
@@ -124,7 +146,7 @@ func (c *Client) updateFailure(ctx context.Context, err error) error {
 
 func (c *Client) setRemoteUpdateState(ctx context.Context, status, updateErr string) error {
 	path := fmt.Sprintf("/api/v2/agents/%s/update/state", url.PathEscape(c.creds.AgentID))
-	return c.requestJSON(ctx, http.MethodPost, path, c.creds.Secret, map[string]string{"status": status, "error": updateErr}, nil)
+	return c.requestJSON(ctx, http.MethodPost, path, c.creds.Secret, map[string]string{"status": status, "error": boundedAgentUpdateError(updateErr)}, nil)
 }
 
 func (c *Client) resolveReleaseURL(raw string) (string, error) {
@@ -136,16 +158,18 @@ func (c *Client) resolveReleaseURL(raw string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if parsed.IsAbs() {
-		if !strings.EqualFold(parsed.Scheme, base.Scheme) || !strings.EqualFold(parsed.Host, base.Host) {
-			return "", errors.New("agent release URL is outside the configured controller")
-		}
-		return parsed.String(), nil
-	}
-	if !strings.HasPrefix(parsed.Path, "/agent/") {
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return "", errors.New("agent release URL is invalid")
 	}
-	return base.ResolveReference(parsed).String(), nil
+	resolved := base.ResolveReference(parsed)
+	if !strings.EqualFold(resolved.Scheme, base.Scheme) || !strings.EqualFold(resolved.Host, base.Host) {
+		return "", errors.New("agent release URL is outside the configured controller")
+	}
+	expectedPath := "/agent/cdt-relay-agent-linux-" + runtime.GOARCH
+	if resolved.Path != expectedPath || resolved.EscapedPath() != expectedPath {
+		return "", errors.New("agent release URL is invalid")
+	}
+	return resolved.String(), nil
 }
 
 func (c *Client) downloadRelease(ctx context.Context, assetURL string, size int64) ([]byte, error) {
@@ -162,7 +186,7 @@ func (c *Client) downloadRelease(ctx context.Context, assetURL string, size int6
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("agent asset download returned %s", response.Status)
 	}
-	maxSize := int64(128 << 20)
+	maxSize := int64(maxAgentAssetBytes)
 	if size > 0 && size < maxSize {
 		maxSize = size + 1
 	}
@@ -174,6 +198,29 @@ func (c *Client) downloadRelease(ctx context.Context, assetURL string, size int6
 		return nil, errors.New("agent asset is too large")
 	}
 	return data, nil
+}
+
+func decodeAgentRelease(reader io.Reader) (protocol.AgentRelease, error) {
+	data, err := io.ReadAll(io.LimitReader(reader, maxAgentReleaseResponseBytes+1))
+	if err != nil {
+		return protocol.AgentRelease{}, err
+	}
+	if len(data) > maxAgentReleaseResponseBytes {
+		return protocol.AgentRelease{}, errors.New("agent release response is too large")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	var release protocol.AgentRelease
+	if err := decoder.Decode(&release); err != nil {
+		return protocol.AgentRelease{}, fmt.Errorf("decode agent release: %w", err)
+	}
+	var trailing interface{}
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return protocol.AgentRelease{}, errors.New("agent release response contains trailing JSON")
+		}
+		return protocol.AgentRelease{}, fmt.Errorf("decode agent release trailer: %w", err)
+	}
+	return release, nil
 }
 
 func (c *Client) installUpdate(data []byte, targetHash string) error {

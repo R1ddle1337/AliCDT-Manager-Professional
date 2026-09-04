@@ -14,8 +14,10 @@ SSH_USER="${CDT_AGENT_UPGRADE_SSH_USER:-root}"
 WAIT_SECONDS="${CDT_AGENT_UPGRADE_WAIT_SECONDS:-120}"
 
 if [ -z "$CONTROLLER_URL" ] && [ -f /root/.config/alicdt-manager/production.env ]; then
-  # shellcheck disable=SC1091
-  set -a; . /root/.config/alicdt-manager/production.env; set +a
+  set -a
+  # shellcheck source=/dev/null
+  . /root/.config/alicdt-manager/production.env
+  set +a
   CONTROLLER_URL="${CDT_AGENT_UPGRADE_CONTROLLER_URL:-}"
 fi
 

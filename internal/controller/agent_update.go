@@ -8,15 +8,30 @@ import (
 	"time"
 )
 
-func (s *Store) SetAgentUpdateState(ctx context.Context, id, status, updateErr string) error {
+const maxAgentUpdateErrorRunes = 500
+
+func normalizeAgentUpdateState(status, updateErr string) (string, string, error) {
 	status = strings.ToLower(strings.TrimSpace(status))
 	if status == "" {
 		status = "idle"
 	}
 	if !oneOf(status, "idle", "draining", "updating", "failed") {
-		return errors.New("invalid agent update status")
+		return "", "", errors.New("invalid agent update status")
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE relay_nodes SET update_status=?,update_error=?,update_at=? WHERE id=?`, status, strings.TrimSpace(updateErr), time.Now().UTC().Format(time.RFC3339Nano), id)
+	updateErr = strings.TrimSpace(updateErr)
+	runes := []rune(updateErr)
+	if len(runes) > maxAgentUpdateErrorRunes {
+		updateErr = string(runes[:maxAgentUpdateErrorRunes])
+	}
+	return status, updateErr, nil
+}
+
+func (s *Store) SetAgentUpdateState(ctx context.Context, id, status, updateErr string) error {
+	status, updateErr, err := normalizeAgentUpdateState(status, updateErr)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE relay_nodes SET update_status=?,update_error=?,update_at=? WHERE id=?`, status, updateErr, time.Now().UTC().Format(time.RFC3339Nano), id)
 	return err
 }
 
@@ -111,12 +126,9 @@ func (s *Store) RequestAgentUpgrades(ctx context.Context, ids []string, eventMes
 }
 
 func (s *Store) MarkAgentUpgradeFailed(ctx context.Context, id, message string) error {
-	message = strings.TrimSpace(message)
+	_, message, _ = normalizeAgentUpdateState("failed", message)
 	if message == "" {
 		message = "宿主机 Agent 升级失败"
-	}
-	if len(message) > 500 {
-		message = message[:500]
 	}
 	result, err := s.db.ExecContext(ctx, `UPDATE relay_nodes SET update_status='failed',update_error=?,update_at=? WHERE id=?`, message, time.Now().UTC().Format(time.RFC3339Nano), id)
 	if err != nil {

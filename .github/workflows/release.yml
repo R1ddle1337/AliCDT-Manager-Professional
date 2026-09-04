@@ -29,13 +29,18 @@ jobs:
         run: |
           go vet ./...
           go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
+          shellcheck -x scripts/*.sh deploy/*.sh
       - name: Scan Go dependencies
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
       - name: Build frontend
         working-directory: frontend
         run: |
           npm ci --no-audit --no-fund
-          npm audit --audit-level=high
+          for attempt in 1 2 3; do
+            if timeout 60s npm audit --audit-level=high; then break; fi
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            sleep $((attempt * 5))
+          done
           npm test
           npm run build
       - name: Build release binaries

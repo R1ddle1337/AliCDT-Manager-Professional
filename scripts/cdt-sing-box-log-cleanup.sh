@@ -17,6 +17,7 @@ load_config() {
     # The file is installed root-only by this script.  It is deliberately a
     # shell-compatible file so operators can change the path/limit without
     # replacing the timer.
+    # shellcheck source=/dev/null
     . "$CONFIG"
   fi
   LOG_PATH=${CDT_SINGBOX_ACCESS_LOG:-$DEFAULT_LOG}

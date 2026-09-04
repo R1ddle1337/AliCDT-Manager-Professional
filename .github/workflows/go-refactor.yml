@@ -31,7 +31,11 @@ jobs:
         working-directory: frontend
         run: |
           npm ci --no-audit --no-fund
-          npm audit --audit-level=high
+          for attempt in 1 2 3; do
+            if timeout 60s npm audit --audit-level=high; then break; fi
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            sleep $((attempt * 5))
+          done
           npm test
           npm run build
       - name: Build controller and agent
@@ -54,6 +58,7 @@ jobs:
           trap - ERR
       - name: Validate deployment assets
         run: |
+          shellcheck -x scripts/*.sh deploy/*.sh
           sh -n scripts/install-agent.sh scripts/upgrade-agent.sh scripts/cdt-sing-box-log-cleanup.sh scripts/smoke-controller.sh
           bash -n scripts/install-dispatcher.sh deploy/cdt-dispatcher-update.sh deploy/alicdt-manager-update.sh deploy/alicdt-agent-upgrade.sh
           CDT_ADMIN_TOKEN=ci-admin CDT_BOOTSTRAP_ENROLL_TOKEN=ci-enroll \
