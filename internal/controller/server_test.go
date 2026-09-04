@@ -131,6 +131,43 @@ func TestHealthChecksStorageAndInternalErrorsAreRedacted(t *testing.T) {
 	}
 }
 
+func TestEmptyListEndpointsReturnJSONArrays(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	server, err := NewServer(store, ServerOptions{AdminToken: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, endpoint := range []string{
+		"/api/v2/relay-nodes",
+		"/api/v2/landing-nodes",
+		"/api/v2/relay-services",
+		"/api/v2/relay-pools",
+		"/api/v2/dns/providers",
+		"/api/v2/dns/records",
+		"/api/v2/users",
+		"/api/v2/events?limit=1",
+	} {
+		request := httptest.NewRequest(http.MethodGet, endpoint, nil)
+		request.Header.Set("Authorization", "Bearer admin")
+		recorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s returned %d: %s", endpoint, recorder.Code, recorder.Body.String())
+		}
+		var payload []json.RawMessage
+		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("%s did not return a JSON array: %s (%v)", endpoint, recorder.Body.String(), err)
+		}
+		if len(payload) != 0 {
+			t.Fatalf("%s returned unexpected items: %s", endpoint, recorder.Body.String())
+		}
+	}
+}
+
 func TestControllerAgentLifecycle(t *testing.T) {
 	store, err := OpenStore(":memory:")
 	if err != nil {

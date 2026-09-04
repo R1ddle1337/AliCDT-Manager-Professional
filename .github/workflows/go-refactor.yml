@@ -39,7 +39,7 @@ jobs:
         run: |
           /tmp/alicdt-controller -listen 127.0.0.1:18080 -database "$RUNNER_TEMP/smoke.db" -admin-token ci-admin >"$RUNNER_TEMP/controller.log" 2>&1 &
           controller_pid=$!
-          trap 'kill "$controller_pid" 2>/dev/null || true' EXIT
+          trap 'cat "$RUNNER_TEMP/controller.log"; kill "$controller_pid" 2>/dev/null || true' ERR
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
             curl -fsS http://127.0.0.1:18080/healthz >/dev/null && break
             sleep 1
@@ -47,7 +47,7 @@ jobs:
           CDT_SMOKE_BASE_URL=http://127.0.0.1:18080 CDT_SMOKE_ADMIN_TOKEN=ci-admin scripts/smoke-controller.sh
           kill "$controller_pid"
           wait "$controller_pid" || true
-          trap - EXIT
+          trap - ERR
       - name: Validate deployment assets
         run: |
           sh -n scripts/install-agent.sh scripts/upgrade-agent.sh scripts/cdt-sing-box-log-cleanup.sh scripts/smoke-controller.sh

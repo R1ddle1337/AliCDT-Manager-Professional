@@ -1566,7 +1566,7 @@ func (s *Store) ListEvents(ctx context.Context, limit int) ([]RelayEvent, error)
 		return nil, err
 	}
 	defer rows.Close()
-	var events []RelayEvent
+	events := make([]RelayEvent, 0)
 	for rows.Next() {
 		var event RelayEvent
 		var created string
@@ -1670,7 +1670,7 @@ func (s *Store) ListRelayNodes(ctx context.Context) ([]RelayNode, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var nodes []RelayNode
+	nodes := make([]RelayNode, 0)
 	for rows.Next() {
 		var node RelayNode
 		var lastSeen, updateAt sql.NullString
@@ -2240,7 +2240,7 @@ func (s *Store) ListRelayServices(ctx context.Context, relayNodeID string) ([]Re
 		return nil, err
 	}
 	defer rows.Close()
-	var services []RelayService
+	services := make([]RelayService, 0)
 	for rows.Next() {
 		var service RelayService
 		var enabled, healthEnabled, userEnabled int
@@ -2284,7 +2284,7 @@ func (s *Store) listServiceTargets(ctx context.Context, serviceID string) ([]Ser
 		return nil, err
 	}
 	defer rows.Close()
-	var targets []ServiceTarget
+	targets := make([]ServiceTarget, 0)
 	for rows.Next() {
 		var target ServiceTarget
 		var enabled, landingEnabled int
