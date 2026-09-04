@@ -38,10 +38,12 @@ type AdminSession struct {
 }
 
 const (
-	loginFailureWindow     = 15 * time.Minute
-	loginFailureLimit      = 8
-	loginFailureMaxEntries = 4096
-	loginFailurePruneEvery = time.Minute
+	loginFailureWindow       = 15 * time.Minute
+	loginFailureLimit        = 8
+	loginFailureMaxEntries   = 4096
+	loginFailurePruneEvery   = time.Minute
+	maxSessionIPRunes        = 128
+	maxSessionUserAgentRunes = 512
 )
 
 var ErrAdminTwoFactorRequired = errors.New("two-factor authentication code is required")
@@ -55,14 +57,31 @@ type loginFailureState struct {
 // clientAddress uses the client IP selected by the configured proxy-aware
 // middleware and falls back to the direct peer for tests or direct installs.
 func clientAddress(r *http.Request) string {
-	if value := middleware.GetClientIP(r.Context()); value != "" {
+	if value := normalizedClientIP(middleware.GetClientIP(r.Context())); value != "" {
 		return value
 	}
 	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
-	if err == nil && host != "" {
-		return host
+	if err == nil {
+		if value := normalizedClientIP(host); value != "" {
+			return value
+		}
 	}
-	return strings.TrimSpace(r.RemoteAddr)
+	if value := normalizedClientIP(r.RemoteAddr); value != "" {
+		return value
+	}
+	return "unknown"
+}
+
+func normalizedClientIP(value string) string {
+	value = strings.TrimSpace(value)
+	if zoneIndex := strings.LastIndex(value, "%"); zoneIndex > 0 {
+		value = value[:zoneIndex]
+	}
+	ip := net.ParseIP(value)
+	if ip == nil {
+		return ""
+	}
+	return ip.String()
 }
 
 func (s *Server) loginAllowed(address string) (bool, time.Duration) {
@@ -164,8 +183,17 @@ func (s *Store) RecordAdminSessionMetadata(ctx context.Context, token, ipAddress
 	if strings.TrimSpace(token) == "" {
 		return nil
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE admin_sessions SET ip_address=?,user_agent=?,last_seen_at=? WHERE token_hash=?`, strings.TrimSpace(ipAddress), strings.TrimSpace(userAgent), time.Now().UTC().Format(time.RFC3339Nano), hashSecret(token))
+	_, err := s.db.ExecContext(ctx, `UPDATE admin_sessions SET ip_address=?,user_agent=?,last_seen_at=? WHERE token_hash=?`, boundedSessionMetadata(ipAddress, maxSessionIPRunes), boundedSessionMetadata(userAgent, maxSessionUserAgentRunes), time.Now().UTC().Format(time.RFC3339Nano), hashSecret(token))
 	return err
+}
+
+func boundedSessionMetadata(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if len(runes) > limit {
+		value = string(runes[:limit])
+	}
+	return value
 }
 
 func (s *Store) RevokeAdminSession(ctx context.Context, sessionID string) error {
@@ -422,6 +450,7 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("X-Permitted-Cross-Domain-Policies", "none")
+		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
 		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		w.Header().Set("Referrer-Policy", "no-referrer")

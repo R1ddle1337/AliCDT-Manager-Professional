@@ -2,12 +2,18 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
+
+	"github.com/go-chi/chi/v5/middleware"
 )
 
 func TestAdminSecuritySessionLifecycleAndPasswordRotation(t *testing.T) {
@@ -149,6 +155,47 @@ func TestAPIResponsesAreNotCacheable(t *testing.T) {
 	server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v2/auth/initialized", nil))
 	if got := recorder.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("API cache policy is %q", got)
+	}
+}
+
+func TestClientAddressRejectsInvalidForwardedValue(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/v2/auth/login", nil)
+	request.RemoteAddr = "192.0.2.40:12345"
+	request.Header.Set("X-Real-IP", strings.Repeat("x", 4096))
+	var forwardedResult string
+	middleware.ClientIPFromHeader("X-Real-IP")(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		forwardedResult = clientAddress(r)
+	})).ServeHTTP(httptest.NewRecorder(), request)
+	if forwardedResult != "192.0.2.40" {
+		t.Fatalf("invalid proxy value was trusted: %q", forwardedResult)
+	}
+
+	ipv6Request := httptest.NewRequest(http.MethodPost, "/api/v2/auth/login", nil)
+	ipv6Request.RemoteAddr = net.JoinHostPort("2001:db8::10", "12345")
+	if got := clientAddress(ipv6Request); got != "2001:db8::10" {
+		t.Fatalf("IPv6 peer was not normalized: %q", got)
+	}
+}
+
+func TestAdminSessionMetadataIsBoundedWithoutBreakingUTF8(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	token, err := store.InitAdmin(context.Background(), "admin", "Admin-pass1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordAdminSessionMetadata(context.Background(), token, strings.Repeat("1", maxSessionIPRunes+10), strings.Repeat("浏", maxSessionUserAgentRunes+100)); err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := store.ListAdminSessions(context.Background(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || len([]rune(sessions[0].IPAddress)) != maxSessionIPRunes || len([]rune(sessions[0].UserAgent)) != maxSessionUserAgentRunes || !utf8.ValidString(sessions[0].UserAgent) {
+		t.Fatalf("session metadata was not safely bounded: %+v", sessions)
 	}
 }
 
