@@ -192,7 +192,7 @@ func (s *CloudService) runKeepAlive(ctx context.Context) {
 		return
 	}
 	for _, account := range accounts {
-		if !account.KeepAlive || account.ProtectedInstanceID == "" || account.ManualStopped {
+		if !account.KeepAlive || account.ProtectedInstanceID == "" || account.PowerStopReason != "" {
 			continue
 		}
 		status, err := s.currentInstanceStatus(ctx, account, account.ProtectedInstanceID)
@@ -251,11 +251,11 @@ func (s *CloudService) runScheduledPower(ctx context.Context, hhmm string) {
 			}
 		}
 		stoppedThisCycle := false
-		if account.AutoStopTime == hhmm && !account.ManualStopped && !strings.EqualFold(instanceStatus, "Stopped") {
+		if account.AutoStopTime == hhmm && account.PowerStopReason == "" && !strings.EqualFold(instanceStatus, "Stopped") {
 			err := s.clientFor(account).StopInstance(ctx, account.ProtectedInstanceID, account.ShutdownMode)
 			if err == nil {
 				stoppedThisCycle = true
-				_ = s.store.SetAccountManualStopped(ctx, account.ID, true)
+				_ = s.store.SetAccountPowerStopReason(ctx, account.ID, "scheduled")
 				s.reconcilePowerState(ctx, account.ProtectedInstanceID, "Stopped")
 				message := fmt.Sprintf("[%s] 定时关机已执行 %s", account.Name, hhmm)
 				_ = s.store.AddSystemLog(ctx, "info", "scheduler", message)
@@ -264,10 +264,14 @@ func (s *CloudService) runScheduledPower(ctx context.Context, hhmm string) {
 				_ = s.store.AddSystemLog(ctx, "error", "scheduler", fmt.Sprintf("[%s] 定时关机失败: %s", account.Name, friendlyCloudError(err)))
 			}
 		}
-		if account.AutoStartTime == hhmm && !stoppedThisCycle && (account.ManualStopped || !strings.EqualFold(instanceStatus, "Running")) {
+		shouldStart := account.PowerStopReason == "scheduled" && (account.AutoStartTime == hhmm || !strings.EqualFold(instanceStatus, "Running"))
+		if account.AutoStartTime == hhmm && account.PowerStopReason == "" && !strings.EqualFold(instanceStatus, "Running") {
+			shouldStart = true
+		}
+		if !stoppedThisCycle && shouldStart {
 			err := s.clientFor(account).StartInstance(ctx, account.ProtectedInstanceID)
 			if err == nil {
-				_ = s.store.SetAccountManualStopped(ctx, account.ID, false)
+				_ = s.store.SetAccountPowerStopReason(ctx, account.ID, "")
 				s.reconcilePowerState(ctx, account.ProtectedInstanceID, "Running")
 				message := fmt.Sprintf("[%s] 定时开机已执行 %s", account.Name, hhmm)
 				_ = s.store.AddSystemLog(ctx, "info", "scheduler", message)
@@ -303,7 +307,7 @@ func (s *CloudService) runMonthlyReset(ctx context.Context) {
 	}
 	restarted := make([]string, 0)
 	for _, account := range accounts {
-		if !account.ManualStopped {
+		if account.PowerStopReason != "protection" {
 			continue
 		}
 		if account.ProtectedInstanceID != "" {
@@ -312,7 +316,7 @@ func (s *CloudService) runMonthlyReset(ctx context.Context) {
 			}
 			s.reconcilePowerState(ctx, account.ProtectedInstanceID, "Running")
 		}
-		_ = s.store.SetAccountManualStopped(ctx, account.ID, false)
+		_ = s.store.SetAccountPowerStopReason(ctx, account.ID, "")
 		_ = s.store.SetAccountNoStockNotified(ctx, account.ID, false)
 		restarted = append(restarted, account.Name)
 	}

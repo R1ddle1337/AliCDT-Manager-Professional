@@ -118,6 +118,7 @@ type CloudAccount struct {
 	AutoStartTime        string  `json:"auto_start_time,omitempty"`
 	AutoStopTime         string  `json:"auto_stop_time,omitempty"`
 	ManualStopped        bool    `json:"manual_stopped"`
+	PowerStopReason      string  `json:"power_stop_reason,omitempty"`
 	NoStockNotified      bool    `json:"nostock_notified"`
 	ProtectionMode       string  `json:"protection_mode"`
 	ProtectionTriggered  bool    `json:"protection_triggered"`
@@ -612,6 +613,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			auto_start_time TEXT,
 			auto_stop_time TEXT,
 			manual_stopped INTEGER DEFAULT 0,
+			power_stop_reason TEXT NOT NULL DEFAULT '',
 			nostock_notified INTEGER DEFAULT 0,
 			protection_mode TEXT NOT NULL DEFAULT 'alert_only',
 			protection_triggered INTEGER NOT NULL DEFAULT 0,
@@ -1041,10 +1043,14 @@ func (s *Store) migrate(ctx context.Context) error {
 		{name: "protection_last_error", definition: "TEXT NOT NULL DEFAULT ''"},
 		{name: "protection_drain_published", definition: "INTEGER NOT NULL DEFAULT 0"},
 		{name: "protection_predictive", definition: "INTEGER NOT NULL DEFAULT 0"},
+		{name: "power_stop_reason", definition: "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := s.ensureColumn(ctx, "accounts", column.name, column.definition); err != nil {
 			return err
 		}
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE accounts SET power_stop_reason=CASE WHEN COALESCE(protection_triggered,0)=1 OR COALESCE(protection_action_completed,0)=1 THEN 'protection' ELSE 'manual' END WHERE COALESCE(manual_stopped,0)=1 AND COALESCE(power_stop_reason,'')=''`); err != nil {
+		return err
 	}
 	if err := s.ensureColumn(ctx, "dns_providers", "zone_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
@@ -2897,7 +2903,7 @@ func (s *Store) ResetRelayServiceTraffic(ctx context.Context, id string) (RelayS
 func (s *Store) ListCloudAccounts(ctx context.Context, enabledOnly bool) ([]CloudAccount, error) {
 	query := `SELECT a.id,a.name,a.access_key_id,a.access_key_secret,a.region_id,COALESCE(a.site_type,'international'),COALESCE(a.instance_id,''),
 		COALESCE(traffic_limit_gb,200),COALESCE(threshold_percent,95),COALESCE(outstanding_threshold,0),COALESCE(shutdown_mode,'StopCharging'),
-		COALESCE(keep_alive,0),COALESCE(auto_start_time,''),COALESCE(auto_stop_time,''),COALESCE(manual_stopped,0),COALESCE(nostock_notified,0),
+		COALESCE(keep_alive,0),COALESCE(auto_start_time,''),COALESCE(auto_stop_time,''),COALESCE(manual_stopped,0),COALESCE(power_stop_reason,''),COALESCE(nostock_notified,0),
 		COALESCE(protection_mode,'alert_only'),COALESCE(protection_triggered,0),COALESCE(protection_predictive,0),protection_triggered_at,
 		COALESCE(protection_action_completed,0),COALESCE(a.protection_last_error,''),COALESCE(a.protection_drain_published,0),COALESCE(a.enabled,1),a.created_at,
 		(SELECT user_id FROM user_cloud_accounts WHERE account_id=a.id),
@@ -2921,12 +2927,13 @@ func (s *Store) ListCloudAccounts(ctx context.Context, enabledOnly bool) ([]Clou
 	for rows.Next() {
 		var account CloudAccount
 		var enabled, keepAlive, manualStopped, noStockNotified, triggered, predictive, actionCompleted, drainPublished int
+		var powerStopReason string
 		var agentCount, onlineAgentCount, instanceBindingValid int
 		var triggeredAt, createdAt sql.NullString
 		var userID sql.NullInt64
 		if err := rows.Scan(&account.ID, &account.Name, &account.AccessKeyID, &account.AccessKeySecret, &account.RegionID, &account.SiteType,
 			&account.ProtectedInstanceID, &account.TrafficLimitGB, &account.ThresholdPercent, &account.OutstandingThreshold, &account.ShutdownMode,
-			&keepAlive, &account.AutoStartTime, &account.AutoStopTime, &manualStopped, &noStockNotified,
+			&keepAlive, &account.AutoStartTime, &account.AutoStopTime, &manualStopped, &powerStopReason, &noStockNotified,
 			&account.ProtectionMode, &triggered, &predictive, &triggeredAt, &actionCompleted, &account.ProtectionLastError, &drainPublished, &enabled, &createdAt, &userID, &account.UserName, &agentCount, &onlineAgentCount, &instanceBindingValid); err != nil {
 			return nil, err
 		}
@@ -2936,6 +2943,7 @@ func (s *Store) ListCloudAccounts(ctx context.Context, enabledOnly bool) ([]Clou
 		account.Enabled = enabled != 0
 		account.KeepAlive = keepAlive != 0
 		account.ManualStopped = manualStopped != 0
+		account.PowerStopReason = powerStopReason
 		account.NoStockNotified = noStockNotified != 0
 		account.ProtectionTriggered = triggered != 0
 		account.ProtectionPredictive = predictive != 0
@@ -3009,6 +3017,17 @@ func (s *Store) UpdateCloudAccount(ctx context.Context, id int64, request CloudA
 	var triggered, predictive int
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(protection_mode,'alert_only'),COALESCE(instance_id,''),COALESCE(protection_triggered,0),COALESCE(protection_predictive,0) FROM accounts WHERE id=?`, id).Scan(&oldMode, &oldInstanceID, &triggered, &predictive); err != nil {
 		return CloudAccount{}, err
+	}
+	if request.ProtectedInstanceID != "" {
+		var resolvedInstanceID string
+		resolveErr := tx.QueryRowContext(ctx, `SELECT instance_id FROM instances WHERE account_id=? AND (instance_id=? OR instance_name=?) ORDER BY CASE WHEN instance_id=? THEN 0 ELSE 1 END LIMIT 1`, id, request.ProtectedInstanceID, request.ProtectedInstanceID, request.ProtectedInstanceID).Scan(&resolvedInstanceID)
+		if resolveErr == nil {
+			request.ProtectedInstanceID = resolvedInstanceID
+		} else if !errors.Is(resolveErr, sql.ErrNoRows) {
+			return CloudAccount{}, resolveErr
+		} else if !strings.HasPrefix(request.ProtectedInstanceID, "i-") {
+			return CloudAccount{}, errors.New("protected instance must use an ECS instance ID; sync the account inventory first")
+		}
 	}
 	if request.AccessKeySecret == "" {
 		_, err = tx.ExecContext(ctx, `UPDATE accounts SET name=?,access_key_id=?,region_id=?,site_type=?,instance_id=?,traffic_limit_gb=?,threshold_percent=?,outstanding_threshold=?,shutdown_mode=?,keep_alive=?,auto_start_time=?,auto_stop_time=?,protection_mode=?,enabled=? WHERE id=?`,
@@ -3368,7 +3387,7 @@ func (s *Store) ApplyTrafficProtectionWithWindow(ctx context.Context, accountID 
 			decision.Predictive = false
 			if triggered != 0 || predictive != 0 {
 				decision.Changed = true
-				if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_triggered=0,protection_predictive=0,protection_triggered_at=NULL,protection_action_completed=0,protection_drain_published=0,protection_last_error='' WHERE id=?`, accountID); err != nil {
+				if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_triggered=0,protection_predictive=0,protection_triggered_at=NULL,protection_action_completed=0,protection_drain_published=0,protection_last_error='',manual_stopped=CASE WHEN power_stop_reason='protection' THEN 0 ELSE manual_stopped END,power_stop_reason=CASE WHEN power_stop_reason='protection' THEN '' ELSE power_stop_reason END WHERE id=?`, accountID); err != nil {
 					return TrafficProtectionDecision{}, err
 				}
 				if decision.Mode == ProtectionDrainRelay || autoDrain {
@@ -3405,7 +3424,7 @@ func (s *Store) MarkTrafficProtectionAction(ctx context.Context, accountID int64
 	}
 	now := time.Now().UTC()
 	if actionError == nil {
-		if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_action_completed=1,manual_stopped=1,protection_last_error='' WHERE id=?`, accountID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE accounts SET protection_action_completed=1,manual_stopped=1,power_stop_reason='protection',protection_last_error='' WHERE id=?`, accountID); err != nil {
 			return err
 		}
 		if err := insertEvent(ctx, tx, "", "warning", "traffic_protection", fmt.Sprintf("[%s] 流量保护已发送 ECS 停机指令", name), now); err != nil {

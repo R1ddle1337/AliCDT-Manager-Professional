@@ -243,7 +243,7 @@ func (s *CloudService) StartInstance(ctx context.Context, instanceID string) err
 	if err := s.clientFor(account).StartInstance(ctx, instanceID); err != nil {
 		return err
 	}
-	if err := s.store.SetAccountManualStopped(ctx, account.ID, false); err != nil {
+	if err := s.store.SetAccountPowerStopReason(ctx, account.ID, ""); err != nil {
 		return err
 	}
 	s.reconcilePowerState(ctx, instanceID, "Running")
@@ -259,7 +259,7 @@ func (s *CloudService) StopInstance(ctx context.Context, instanceID string) erro
 	if err := s.clientFor(account).StopInstance(ctx, instanceID, account.ShutdownMode); err != nil {
 		return err
 	}
-	if err := s.store.SetAccountManualStopped(ctx, account.ID, true); err != nil {
+	if err := s.store.SetAccountPowerStopReason(ctx, account.ID, "manual"); err != nil {
 		return err
 	}
 	s.reconcilePowerState(ctx, instanceID, "Stopped")

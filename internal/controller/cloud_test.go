@@ -162,6 +162,34 @@ func TestCloudSyncUpdatesRelayPublicIPWhenECSAddressChanges(t *testing.T) {
 	}
 }
 
+func TestUpdateCloudAccountResolvesInstanceNameToID(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	account, err := store.CreateCloudAccount(ctx, CloudAccountRequest{
+		Name: "resolve-instance", AccessKeyID: "key", AccessKeySecret: "secret", RegionID: "cn-hongkong", SiteType: "china",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveCloudSync(ctx, account, []CloudInstanceUpdate{{InstanceID: "i-resolve", InstanceName: "edge-name", RegionID: "cn-hongkong", Status: "Running"}}, true, "", 0, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := store.UpdateCloudAccount(ctx, account.ID, CloudAccountRequest{
+		Name: "resolve-instance", AccessKeyID: "key", RegionID: "cn-hongkong", SiteType: "china",
+		ProtectedInstanceID: "edge-name", ProtectionMode: ProtectionAlertOnly,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.ProtectedInstanceID != "i-resolve" {
+		t.Fatalf("instance name was not normalized to ECS ID: %q", updated.ProtectedInstanceID)
+	}
+}
+
 func TestLegacyDatabaseMigrationPreservesCloudDataAndTraffic(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "legacy.db")
 	legacy, err := sql.Open("sqlite", databasePath)
