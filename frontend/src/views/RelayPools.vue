@@ -47,7 +47,9 @@ import { useRelayStore } from '../stores/relay'
 import Modal from '../components/Modal.vue'
 import MaskedIP from '../components/MaskedIP.vue'
 import { normalizeTTLForProvider, ttlHint, ttlOptions } from '../utils/dns'
+import { usePolling } from '../utils/polling'
 const store=useRelayStore();const showForm=ref(false);const editTarget=ref(null);const saving=ref(false);const formError=ref('');const message=ref('');const messageType=ref('success');const selectedMembers=ref([]);const selectedTargets=ref([]);const memberOptions=reactive({});const targetOptions=reactive({})
+usePolling(() => store.fetchPools(), 5000)
 const blank=()=>({name:'',hostname:'',front_door_mode:'relay_dns',listen_port:443,network:'tcp',mode:'failover',enabled:true,auto_drain:true,dns_provider_id:'',dns_record_name:'',dns_ttl:60});const form=ref(blank());const selectedDNSProvider=computed(()=>store.dnsProviders.find(provider=>String(provider.id)===String(form.value.dns_provider_id)));const dnsTTLOptions=computed(()=>ttlOptions(selectedDNSProvider.value,form.value.dns_ttl));const dnsTTLHint=computed(()=>ttlHint(selectedDNSProvider.value));const entryHostnamePreview=computed(()=>form.value.front_door_mode==='relay_dns'&&selectedDNSProvider.value?composeEntryHostname(form.value.dns_record_name,selectedDNSProvider.value.zone):String(form.value.hostname||'').trim());const canCreate=computed(()=>store.relayNodes.length>0&&store.landingNodes.length>0)
 function normalizeDNSRecordName(value,zone){const host=String(value||'').trim().replace(/\.$/,'');const root=String(zone||'').trim().replace(/\.$/,'');if(!host)return '';if(host==='@'||(root&&host.toLowerCase()===root.toLowerCase()))return '@';const suffix='.'+root;return root&&host.toLowerCase().endsWith(suffix.toLowerCase())?host.slice(0,-suffix.length):host}
 function deriveDNSRecordName(hostname,zone){return normalizeDNSRecordName(hostname,zone)}
