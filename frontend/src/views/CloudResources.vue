@@ -89,6 +89,11 @@
           <span>{{ instancesFor(account.id).length }} 个实例共享该账户额度</span>
         </div>
 
+        <div v-if="account.instance_id && !account.instance_binding_valid" class="account-row-wide sync-warning">
+          <strong>绑定实例已不存在</strong>
+          <span>当前绑定的 ECS 已被释放，保活和定时开关机不会作用于新实例；请编辑账户并选择当前 ECS 后保存。</span>
+        </div>
+
         <p class="account-row-wide traffic-disclaimer">阿里云接口不提供单个 ECS 的 CDT 用量；同一账户下多个实例共享此快照与保护阈值。</p>
 
         <div v-if="trafficFor(account.id)?.last_error" class="account-row-wide sync-warning">

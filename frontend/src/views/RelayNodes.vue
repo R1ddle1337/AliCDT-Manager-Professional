@@ -21,6 +21,7 @@
           <div class="relay-node-actions">
             <span class="state-tag" :class="node.status === 'online' ? 'state-online' : ''">{{ node.status === 'online' ? '在线' : '离线' }}</span>
             <button v-if="needsUpgrade(node)" class="btn-ghost border border-blue-100 px-2 py-1 text-xs text-blue-700" :disabled="upgradeBusy || upgradeInProgress(node)" @click="requestUpgrade(node)">{{ upgradeInProgress(node) ? updateLabel(node.update_status) : '立即升级' }}</button>
+            <button class="btn-danger px-2 py-1 text-xs" :disabled="deleteBusyIDs.has(node.id)" @click="removeNode(node)">{{ deleteBusyIDs.has(node.id) ? '删除中...' : '删除' }}</button>
           </div>
         </div>
         <div class="relay-node-metrics">
@@ -52,6 +53,7 @@ const upgradeNodes = computed(() => store.relayNodes.filter(needsUpgrade))
 const upgradeBusy = ref(false)
 const upgradeMessage = ref('')
 const upgradeMessageType = ref('success')
+const deleteBusyIDs = ref(new Set())
 usePolling(() => store.fetchRelayNodes(), 5000)
 
 const installCommand = computed(() => token.value
@@ -94,6 +96,21 @@ async function requestUpgradeAll() {
     upgradeMessageType.value = 'error'
     upgradeMessage.value = error.response?.data?.error || '升级任务提交失败，请检查宿主机升级服务'
   } finally { upgradeBusy.value = false }
+}
+
+async function removeNode(node) {
+  if (!window.confirm(`确认删除中转节点“${node.name}”？该节点的转发服务、池成员和本机 DNS 记录会一起移除。`)) return
+  deleteBusyIDs.value = new Set(deleteBusyIDs.value).add(node.id)
+  error.value = ''
+  try {
+    await store.deleteRelayNode(node.id)
+  } catch (requestError) {
+    error.value = requestError.response?.data?.error || '删除中转节点失败'
+  } finally {
+    const next = new Set(deleteBusyIDs.value)
+    next.delete(node.id)
+    deleteBusyIDs.value = next
+  }
 }
 
 function formatTime(value) {

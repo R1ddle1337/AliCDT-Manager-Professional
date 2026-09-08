@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -196,6 +197,42 @@ func (s *CloudService) syncAccount(ctx context.Context, account CloudAccount) Cl
 		result.Error = stringsJoinErrors(instanceError, trafficError, errorString(protectionErr))
 	}
 	return result
+}
+
+func (s *CloudService) currentInstanceStatus(ctx context.Context, account CloudAccount, instanceID string) (string, error) {
+	client := s.clientFor(account)
+	statusClient, ok := client.(instanceStatusClient)
+	if !ok {
+		return "", errors.New("cloud client does not support instance status")
+	}
+	status, statusErr := statusClient.GetInstanceStatus(ctx, instanceID)
+	if statusErr == nil && status != "" && !strings.EqualFold(status, "Unknown") {
+		return status, nil
+	}
+	if inventoryClient, ok := client.(interface {
+		GetInstances(context.Context) ([]aliyun.Instance, error)
+	}); ok {
+		instances, inventoryErr := inventoryClient.GetInstances(ctx)
+		if inventoryErr == nil {
+			for _, instance := range instances {
+				if instance.InstanceID == instanceID {
+					return instance.Status, nil
+				}
+			}
+			if status == "" || strings.EqualFold(status, "Unknown") {
+				return "", fmt.Errorf("bound ECS instance %s was not found in the cloud inventory", instanceID)
+			}
+		} else if statusErr != nil {
+			return "", statusErr
+		}
+	}
+	if statusErr != nil {
+		return "", statusErr
+	}
+	if status != "" {
+		return status, nil
+	}
+	return "Unknown", nil
 }
 
 func (s *CloudService) StartInstance(ctx context.Context, instanceID string) error {

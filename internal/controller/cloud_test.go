@@ -290,7 +290,7 @@ func TestScheduledPowerUpdatesInstanceAndRelayProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fake := &fakeCloudClient{}
+	fake := &fakeCloudClient{instances: []aliyun.Instance{{InstanceID: "i-scheduled", Status: "Running"}}}
 	service := NewCloudService(store)
 	service.clientFor = func(CloudAccount) cloudClient { return fake }
 
@@ -335,6 +335,35 @@ func TestScheduledPowerUpdatesInstanceAndRelayProjection(t *testing.T) {
 	service.runScheduledPower(ctx, "03:00")
 	if fake.startCalls != 1 {
 		t.Fatalf("scheduled start was not idempotent, calls=%d", fake.startCalls)
+	}
+}
+
+func TestKeepAliveFallsBackToInventoryWhenStatusEndpointIsUnknown(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	account, err := store.CreateCloudAccount(ctx, CloudAccountRequest{
+		Name: "keepalive-fallback", AccessKeyID: "key", AccessKeySecret: "secret", RegionID: "cn-hongkong", SiteType: "china",
+		ProtectedInstanceID: "i-fallback", KeepAlive: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveCloudSync(ctx, account, []CloudInstanceUpdate{{InstanceID: "i-fallback", Status: "Stopped"}}, true, "", 0, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeCloudClient{
+		instances:      []aliyun.Instance{{InstanceID: "i-fallback", Status: "Stopped"}},
+		instanceStatus: "Unknown",
+	}
+	service := NewCloudService(store)
+	service.clientFor = func(CloudAccount) cloudClient { return fake }
+	service.runKeepAlive(ctx)
+	if fake.startCalls != 1 {
+		t.Fatalf("keepalive did not start inventory-stopped instance, calls=%d", fake.startCalls)
 	}
 }
 
@@ -961,12 +990,17 @@ func TestDisablingProtectedCloudAccountReleasesRelay(t *testing.T) {
 }
 
 type fakeCloudClient struct {
-	instances  []aliyun.Instance
-	traffic    float64
-	stopErr    error
-	startErr   error
-	startCalls int
-	stopCalls  int
+	instances      []aliyun.Instance
+	traffic        float64
+	instanceStatus string
+	stopErr        error
+	startErr       error
+	startCalls     int
+	stopCalls      int
+}
+
+func (client *fakeCloudClient) GetInstanceStatus(context.Context, string) (string, error) {
+	return client.instanceStatus, nil
 }
 
 func (client *fakeCloudClient) GetInstances(context.Context) ([]aliyun.Instance, error) {

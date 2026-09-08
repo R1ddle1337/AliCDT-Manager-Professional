@@ -133,6 +133,7 @@ type CloudAccount struct {
 	AgentInstalled            bool       `json:"agent_installed"`
 	AgentCount                int        `json:"agent_count"`
 	OnlineAgentCount          int        `json:"online_agent_count"`
+	InstanceBindingValid      bool       `json:"instance_binding_valid"`
 	CreatedAt                 *time.Time `json:"created_at,omitempty"`
 }
 
@@ -1697,6 +1698,104 @@ func (s *Store) ListRelayNodes(ctx context.Context) ([]RelayNode, error) {
 	return nodes, rows.Err()
 }
 
+// DeleteRelayNode removes a stale Agent and the configuration owned by it.
+// A pool shared with other Relays remains intact; a pool whose only member is
+// this node is removed through the normal pool cleanup path.
+func (s *Store) DeleteRelayNode(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin relay node delete: %w", err)
+	}
+	defer tx.Rollback()
+
+	var exists int
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM relay_nodes WHERE id=?)`, id).Scan(&exists); err != nil {
+		return fmt.Errorf("check relay node: %w", err)
+	}
+	if exists == 0 {
+		return sql.ErrNoRows
+	}
+
+	poolRows, err := tx.QueryContext(ctx, `SELECT pool_id FROM relay_pool_members WHERE relay_node_id=?`, id)
+	if err != nil {
+		return fmt.Errorf("list relay node pools: %w", err)
+	}
+	poolIDs := make([]string, 0)
+	for poolRows.Next() {
+		var poolID string
+		if err := poolRows.Scan(&poolID); err != nil {
+			poolRows.Close()
+			return fmt.Errorf("scan relay node pool: %w", err)
+		}
+		poolIDs = append(poolIDs, poolID)
+	}
+	if err := poolRows.Close(); err != nil {
+		return fmt.Errorf("close relay node pools: %w", err)
+	}
+
+	changedNodes := make(map[string]bool)
+	deletedDNS := make([]poolDNSCleanupRecord, 0)
+	for _, poolID := range poolIDs {
+		var memberCount int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM relay_pool_members WHERE pool_id=?`, poolID).Scan(&memberCount); err != nil {
+			return fmt.Errorf("count relay pool members: %w", err)
+		}
+		if memberCount != 1 {
+			continue
+		}
+		deleted, err := s.deleteRelayPoolTx(ctx, tx, poolID)
+		if err != nil {
+			return fmt.Errorf("delete relay node's pool: %w", err)
+		}
+		for nodeID := range deleted.ChangedNodes {
+			changedNodes[nodeID] = true
+		}
+		deletedDNS = append(deletedDNS, deleted.DNSRecords...)
+	}
+
+	recordRows, err := tx.QueryContext(ctx, `SELECT id,provider_id,COALESCE(provider_record_id,''),name,type FROM dns_managed_records
+		WHERE relay_node_id=? AND COALESCE(pool_id,'')=''`, id)
+	if err != nil {
+		return fmt.Errorf("list relay node DNS records: %w", err)
+	}
+	for recordRows.Next() {
+		var record poolDNSCleanupRecord
+		if err := recordRows.Scan(&record.ID, &record.ProviderID, &record.ProviderRecordID, &record.Name, &record.Type); err != nil {
+			recordRows.Close()
+			return fmt.Errorf("scan relay node DNS record: %w", err)
+		}
+		deletedDNS = append(deletedDNS, record)
+	}
+	if err := recordRows.Close(); err != nil {
+		return fmt.Errorf("close relay node DNS records: %w", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `UPDATE dns_managed_records SET relay_node_id=NULL,enabled=0,desired_enabled=0,status='deleting',last_error='',updated_at=? WHERE relay_node_id=? AND COALESCE(pool_id,'')=''`, now, id); err != nil {
+		return fmt.Errorf("mark relay node DNS records: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM relay_port_quarantine WHERE relay_node_id=?`, id); err != nil {
+		return fmt.Errorf("delete relay node port quarantine: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM relay_nodes WHERE id=?`, id); err != nil {
+		return fmt.Errorf("delete relay node: %w", err)
+	}
+	for nodeID := range changedNodes {
+		if nodeID == id {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET desired_revision=desired_revision+1 WHERE id=?`, nodeID); err != nil {
+			return fmt.Errorf("bump relay revision after node delete: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit relay node delete: %w", err)
+	}
+	_ = s.RefreshAllRelayPoolDNS(ctx)
+	_ = s.RefreshRelayAgentDNSRecords(ctx)
+	s.cleanupDeletedPoolDNS(ctx, deletedDNS)
+	return nil
+}
+
 func (s *Store) CreateLandingNode(ctx context.Context, request CreateLandingNodeRequest) (LandingNode, error) {
 	request.Name = strings.TrimSpace(request.Name)
 	request.Address = strings.TrimSpace(request.Address)
@@ -2806,9 +2905,9 @@ func (s *Store) ListCloudAccounts(ctx context.Context, enabledOnly bool) ([]Clou
 		(SELECT COUNT(*) FROM relay_nodes rn LEFT JOIN instances ri ON ri.instance_id=rn.ecs_instance_id
 		 WHERE rn.cloud_account_id=a.id OR (rn.cloud_account_id IS NULL AND ri.account_id=a.id)),
 		(SELECT COUNT(*) FROM relay_nodes rn LEFT JOIN instances ri ON ri.instance_id=rn.ecs_instance_id
-		 WHERE (rn.cloud_account_id=a.id OR (rn.cloud_account_id IS NULL AND ri.account_id=a.id)) AND rn.status='online'
-		 AND rn.last_seen_at IS NOT NULL AND julianday(rn.last_seen_at) >= julianday('now','-35 seconds')
-		) FROM accounts a`
+			WHERE (rn.cloud_account_id=a.id OR (rn.cloud_account_id IS NULL AND ri.account_id=a.id)) AND rn.status='online'
+			AND rn.last_seen_at IS NOT NULL AND julianday(rn.last_seen_at) >= julianday('now','-35 seconds')
+		), CASE WHEN COALESCE(a.instance_id,'')='' OR EXISTS(SELECT 1 FROM instances binding WHERE binding.account_id=a.id AND binding.instance_id=a.instance_id) THEN 1 ELSE 0 END FROM accounts a`
 	if enabledOnly {
 		query += ` WHERE a.enabled=1`
 	}
@@ -2822,13 +2921,13 @@ func (s *Store) ListCloudAccounts(ctx context.Context, enabledOnly bool) ([]Clou
 	for rows.Next() {
 		var account CloudAccount
 		var enabled, keepAlive, manualStopped, noStockNotified, triggered, predictive, actionCompleted, drainPublished int
-		var agentCount, onlineAgentCount int
+		var agentCount, onlineAgentCount, instanceBindingValid int
 		var triggeredAt, createdAt sql.NullString
 		var userID sql.NullInt64
 		if err := rows.Scan(&account.ID, &account.Name, &account.AccessKeyID, &account.AccessKeySecret, &account.RegionID, &account.SiteType,
 			&account.ProtectedInstanceID, &account.TrafficLimitGB, &account.ThresholdPercent, &account.OutstandingThreshold, &account.ShutdownMode,
 			&keepAlive, &account.AutoStartTime, &account.AutoStopTime, &manualStopped, &noStockNotified,
-			&account.ProtectionMode, &triggered, &predictive, &triggeredAt, &actionCompleted, &account.ProtectionLastError, &drainPublished, &enabled, &createdAt, &userID, &account.UserName, &agentCount, &onlineAgentCount); err != nil {
+			&account.ProtectionMode, &triggered, &predictive, &triggeredAt, &actionCompleted, &account.ProtectionLastError, &drainPublished, &enabled, &createdAt, &userID, &account.UserName, &agentCount, &onlineAgentCount, &instanceBindingValid); err != nil {
 			return nil, err
 		}
 		if userID.Valid {
@@ -2844,6 +2943,7 @@ func (s *Store) ListCloudAccounts(ctx context.Context, enabledOnly bool) ([]Clou
 		account.ProtectionDrainPublished = drainPublished != 0
 		account.AgentCount = agentCount
 		account.OnlineAgentCount = onlineAgentCount
+		account.InstanceBindingValid = instanceBindingValid != 0
 		account.AgentInstalled = agentCount > 0
 		if triggeredAt.Valid {
 			parsed := parseDatabaseTime(triggeredAt.String)

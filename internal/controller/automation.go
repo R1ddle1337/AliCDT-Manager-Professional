@@ -144,10 +144,10 @@ func (s *CloudService) runAutomationCycleLocked(ctx context.Context, now time.Ti
 	cycleCtx, cancel := context.WithTimeout(ctx, 55*time.Second)
 	defer cancel()
 	_, _ = s.store.MarkStaleRelayNodes(cycleCtx, 45*time.Second)
-	s.runKeepAlive(cycleCtx)
 	for _, minute := range s.scheduledPowerMinutes(now) {
 		s.runScheduledPower(cycleCtx, minute)
 	}
+	s.runKeepAlive(cycleCtx)
 	if now.Day() == 1 && now.Hour() == 0 && now.Minute() == 1 {
 		s.runMonthlyReset(cycleCtx)
 	}
@@ -195,11 +195,7 @@ func (s *CloudService) runKeepAlive(ctx context.Context) {
 		if !account.KeepAlive || account.ProtectedInstanceID == "" || account.ManualStopped {
 			continue
 		}
-		client, ok := s.clientFor(account).(instanceStatusClient)
-		if !ok {
-			continue
-		}
-		status, err := client.GetInstanceStatus(ctx, account.ProtectedInstanceID)
+		status, err := s.currentInstanceStatus(ctx, account, account.ProtectedInstanceID)
 		if err != nil {
 			_ = s.store.AddSystemLog(ctx, "warning", "keepalive", fmt.Sprintf("[%s] 保活状态检查失败: %s", account.Name, friendlyCloudError(err)))
 			continue
@@ -244,7 +240,16 @@ func (s *CloudService) runScheduledPower(ctx context.Context, hhmm string) {
 		// The local instance projection makes repeated/delayed scheduler ticks
 		// idempotent while still allowing a configured start to recover an ECS
 		// that was stopped outside the panel (manual_stopped may be false there).
-		instanceStatus, _ := s.store.CloudInstanceStatus(ctx, account.ProtectedInstanceID)
+		instanceStatus, statusErr := s.currentInstanceStatus(ctx, account, account.ProtectedInstanceID)
+		if statusErr != nil || instanceStatus == "" || strings.EqualFold(instanceStatus, "Unknown") {
+			if statusErr != nil {
+				_ = s.store.AddSystemLog(ctx, "warning", "scheduler", fmt.Sprintf("[%s] 定时电源任务跳过：%s", account.Name, friendlyCloudError(statusErr)))
+				continue
+			}
+			if localStatus, localErr := s.store.CloudInstanceStatus(ctx, account.ProtectedInstanceID); localErr == nil && localStatus != "" {
+				instanceStatus = localStatus
+			}
+		}
 		stoppedThisCycle := false
 		if account.AutoStopTime == hhmm && !account.ManualStopped && !strings.EqualFold(instanceStatus, "Stopped") {
 			err := s.clientFor(account).StopInstance(ctx, account.ProtectedInstanceID, account.ShutdownMode)

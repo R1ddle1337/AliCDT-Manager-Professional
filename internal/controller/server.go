@@ -220,6 +220,7 @@ func (s *Server) routes() chi.Router {
 		router.Delete("/api/v2/entry-groups/{groupID}", s.deleteEntryGroup)
 		router.Post("/api/v2/enrollment-tokens", s.createEnrollmentToken)
 		router.Get("/api/v2/relay-nodes", s.listRelayNodes)
+		router.Delete("/api/v2/relay-nodes/{agentID}", s.deleteRelayNode)
 		router.Post("/api/v2/relay-nodes/upgrade-all", s.requestAllAgentUpgrades)
 		router.Post("/api/v2/relay-nodes/{agentID}/upgrade", s.requestAgentUpgrade)
 		router.Get("/api/v2/landing-nodes", s.listLandingNodes)
@@ -940,6 +941,14 @@ func (s *Server) listRelayNodes(w http.ResponseWriter, r *http.Request) {
 	}
 	s.annotateAgentUpdates(nodes)
 	writeJSON(w, http.StatusOK, nodes)
+}
+
+func (s *Server) deleteRelayNode(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.DeleteRelayNode(r.Context(), chi.URLParam(r, "agentID")); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) annotateAgentUpdates(nodes []RelayNode) {
