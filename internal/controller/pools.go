@@ -58,7 +58,7 @@ func normalizeRelayPoolRequestWithDrain(request CreateRelayPoolRequest) (CreateR
 		return request, false, false, errors.New("DNS TTL must not exceed 86400 seconds")
 	}
 	if request.DialTimeoutMillis <= 0 {
-		request.DialTimeoutMillis = 2500
+		request.DialTimeoutMillis = 5000
 	}
 	if request.UDPIdleTimeoutSeconds <= 0 {
 		request.UDPIdleTimeoutSeconds = 60

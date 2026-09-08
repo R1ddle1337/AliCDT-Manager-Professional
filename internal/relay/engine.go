@@ -351,7 +351,7 @@ func normalizeService(cfg protocol.ServiceConfig) (protocol.ServiceConfig, error
 		cfg.BillingEpoch = 1
 	}
 	if cfg.DialTimeoutMillis <= 0 {
-		cfg.DialTimeoutMillis = 2500
+		cfg.DialTimeoutMillis = 5000
 	}
 	if cfg.UDPIdleTimeoutSeconds <= 0 {
 		cfg.UDPIdleTimeoutSeconds = 60
@@ -360,7 +360,7 @@ func normalizeService(cfg protocol.ServiceConfig) (protocol.ServiceConfig, error
 		cfg.Health.IntervalSeconds = 4
 	}
 	if cfg.Health.TimeoutMillis <= 0 {
-		cfg.Health.TimeoutMillis = 2000
+		cfg.Health.TimeoutMillis = 5000
 	}
 	if cfg.Health.FailureThreshold <= 0 {
 		cfg.Health.FailureThreshold = 2

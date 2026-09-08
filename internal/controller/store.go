@@ -2104,7 +2104,7 @@ func (s *Store) CreateRelayService(ctx context.Context, request CreateRelayServi
 		return RelayService{}, errors.New("at least one target is required")
 	}
 	if request.DialTimeoutMillis <= 0 {
-		request.DialTimeoutMillis = 2500
+		request.DialTimeoutMillis = 5000
 	}
 	if request.UDPIdleTimeoutSeconds <= 0 {
 		request.UDPIdleTimeoutSeconds = 60
@@ -2254,7 +2254,7 @@ func (s *Store) UpdateRelayService(ctx context.Context, id string, request Creat
 		return RelayService{}, errors.New("at least one target is required")
 	}
 	if request.DialTimeoutMillis <= 0 {
-		request.DialTimeoutMillis = 2500
+		request.DialTimeoutMillis = 5000
 	}
 	if request.UDPIdleTimeoutSeconds <= 0 {
 		request.UDPIdleTimeoutSeconds = 60
@@ -2540,7 +2540,7 @@ func normalizeEntryGroupRequest(request CreateUserEntryGroupRequest) (CreateUser
 		return request, errors.New("at least one target is required")
 	}
 	if request.DialTimeoutMillis <= 0 {
-		request.DialTimeoutMillis = 2500
+		request.DialTimeoutMillis = 5000
 	}
 	if request.UDPIdleTimeoutSeconds <= 0 {
 		request.UDPIdleTimeoutSeconds = 60
@@ -3586,7 +3586,7 @@ func normalizeHealth(value HealthSettings) HealthSettings {
 		value.IntervalSeconds = 4
 	}
 	if value.TimeoutMillis <= 0 {
-		value.TimeoutMillis = 2000
+		value.TimeoutMillis = 5000
 	}
 	if value.FailureThreshold <= 0 {
 		value.FailureThreshold = 2
