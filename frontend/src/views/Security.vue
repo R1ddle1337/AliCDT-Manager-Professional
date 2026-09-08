@@ -1,7 +1,7 @@
 <template>
   <div class="security-page space-y-5 fade-in">
     <header class="security-header">
-      <div><div class="eyebrow">SECURITY CENTER</div><h1 class="page-title">安全中心</h1><p class="page-subtitle">管理员密码、登录保护和活动会话统一管理</p></div>
+      <div><h1 class="page-title">安全中心</h1><p class="page-subtitle">管理员密码、登录保护和活动会话统一管理</p></div>
       <span class="security-status"><span class="status-dot status-dot-success"></span>基础防护已启用</span>
     </header>
 
@@ -12,7 +12,7 @@
     </section>
 
     <article class="card security-card twofa-card">
-      <div class="card-heading"><div><h2>双因素认证（2FA）</h2><p>为管理员登录增加身份验证器验证码。启用或关闭后会撤销全部已有会话。</p></div><span class="panel-code">TOTP</span></div>
+      <div class="card-heading"><div><h2>双因素认证（2FA）</h2><p>为管理员登录增加身份验证器验证码。启用或关闭后会撤销全部已有会话。</p></div></div>
       <div v-if="twoFAEnabled" class="twofa-enabled"><span class="twofa-check">✓</span><div><strong>双因素认证已启用</strong><small>每次管理员登录都需要密码和 6 位验证码。</small></div><button class="btn-danger" :disabled="twoFALoading" @click="disableTwoFA">关闭 2FA</button></div>
       <template v-else-if="twoFASetup">
         <div class="twofa-setup"><div><strong>1. 在身份验证器中添加账户</strong><p>无法扫码时，可以手动输入下方密钥。</p><code>{{ twoFASetup.secret }}</code></div><div><strong>2. 输入一次性验证码确认</strong><p class="twofa-uri">{{ twoFASetup.otpauth_uri }}</p><div class="twofa-confirm"><input v-model.trim="twoFACode" class="input" inputmode="numeric" maxlength="6" placeholder="6 位验证码" /><button class="btn-primary" :disabled="twoFALoading" @click="confirmTwoFA">{{ twoFALoading ? '确认中...' : '确认启用' }}</button></div></div></div>
@@ -22,7 +22,7 @@
 
     <section class="security-columns">
       <article class="card security-card">
-        <div class="card-heading"><div><h2>修改管理员密码</h2><p>修改后所有管理员会话都会立即失效，需要重新登录。</p></div><span class="panel-code">PASSWORD</span></div>
+        <div class="card-heading"><div><h2>修改管理员密码</h2><p>修改后所有管理员会话都会立即失效，需要重新登录。</p></div></div>
         <form class="password-form" @submit.prevent="changePassword">
           <div><label class="field-label">当前密码</label><input v-model="passwordForm.current_password" type="password" class="input" autocomplete="current-password" required /></div>
           <div><label class="field-label">新密码</label><input v-model="passwordForm.new_password" type="password" class="input" autocomplete="new-password" minlength="10" required /><div class="strength-track"><span :class="`strength-${passwordStrength.level}`" :style="{ width: `${passwordStrength.percent}%` }"></span></div><small class="strength-label">{{ passwordStrength.label }}</small></div>
@@ -44,7 +44,7 @@
       </article>
     </section>
 
-    <div class="notice notice-info"><strong>关于环境管理员 Token：</strong> `CDT_ADMIN_TOKEN` 是宿主机应急凭据，不属于浏览器会话，不能在此页面撤销。生产环境请将它保存在密钥管理器中，并定期更换。</div>
+    <div class="notice notice-info"><strong>关于环境管理员令牌：</strong> `CDT_ADMIN_TOKEN` 是宿主机应急凭据，不属于浏览器会话，不能在此页面撤销。生产环境请将它保存在密钥管理器中，并定期更换。</div>
     <div v-if="message" class="notice" :class="messageType === 'error' ? 'notice-error' : 'notice-success'">{{ message }}</div>
   </div>
 </template>

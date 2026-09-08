@@ -25,7 +25,7 @@
         <div v-else class="node-row-body legacy-panel"><strong>兼容旧节点录入</strong><span>当前节点只有地址和端口，编辑时可补充完整分享链接。</span></div>
 
         <div class="node-row-wide relay-panel">
-          <div class="relay-panel-head"><div><h3>中转后的节点</h3><p>仅替换 Host 和 Port，其余参数保持不变</p></div><span class="panel-code">{{ linksFor(node).length }} 个入口</span></div>
+          <div class="relay-panel-head"><div><h3>中转后的节点</h3><p>仅替换主机和端口，其余参数保持不变</p></div><span class="panel-code">{{ linksFor(node).length }} 个入口</span></div>
           <div v-if="linksFor(node).length" class="relay-link-list">
             <div v-for="link in linksFor(node)" :key="link.pool_id || link.service_id || `${link.host}:${link.port}:${link.service_name}`" class="relay-link-item">
               <div class="min-w-0"><strong class="block truncate text-xs text-slate-700">{{ link.service_name }}</strong><small class="mt-1 block truncate text-[10px] text-slate-400">{{ link.relay_node_name }} · <MaskedIP :value="link.host" :suffix="link.port ? `:${link.port}` : ''" placeholder="未设置入口地址" /></small></div>

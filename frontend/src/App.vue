@@ -16,7 +16,7 @@
         <div class="sidebar-brand">
           <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
           <div>
-            <div class="brand-name">AliCDT Console</div>
+            <div class="brand-name">AliCDT 管理台</div>
             <div class="brand-caption">云资源与中转控制台</div>
           </div>
         </div>
@@ -94,7 +94,7 @@
             <CardLayoutToggle v-if="isAdmin" />
             <span v-if="isAdmin && updateState.status !== 'idle'" class="update-status" :class="`update-status-${updateState.status}`" aria-live="polite">{{ updateStatusLabel }}</span>
             <button v-if="isAdmin" type="button" class="update-button" :disabled="updateBusy" @click="requestUpdate">
-              <span class="update-code">UPD</span>
+              <span class="update-code">更新</span>
               <span>{{ updateButtonLabel }}</span>
             </button>
           </div>
@@ -103,7 +103,7 @@
           网络连接已断开，当前页面仍可浏览；恢复连接后数据会继续更新。
         </div>
         <header class="mobile-header">
-          <span class="font-semibold">AliCDT Console</span>
+          <span class="font-semibold">AliCDT 管理台</span>
         </header>
         <div class="page-container">
           <router-view v-slot="{ Component }">

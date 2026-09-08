@@ -15,7 +15,7 @@
           {{ syncing ? '正在同步...' : '同步全部记录' }}
         </button>
         <button type="button" class="btn-primary" @click="openPrimaryCreate">
-          {{ activeTab === 'providers' ? '添加 Provider' : '添加托管记录' }}
+          {{ activeTab === 'providers' ? '添加服务商' : '添加托管记录' }}
         </button>
       </div>
     </header>
@@ -28,7 +28,7 @@
       <article class="card summary-card summary-card-blue">
         <div class="summary-icon">P</div>
         <div>
-          <span>DNS Provider</span>
+          <span>DNS 服务商</span>
           <strong>{{ store.dnsProviders.length }}</strong>
           <small>{{ enabledProviderCount }} 个正在运行</small>
         </div>
@@ -66,7 +66,7 @@
         :class="{ active: activeTab === 'providers' }"
         @click="activeTab = 'providers'"
       >
-        <span>Provider 配置</span>
+        <span>服务商配置</span>
         <b>{{ store.dnsProviders.length }}</b>
       </button>
       <button
@@ -83,9 +83,9 @@
       <div class="panel-heading">
         <div>
           <h2>域名服务商</h2>
-          <p>保存前会验证凭据和 Zone 权限；密钥只写入服务端，不会在页面回显。</p>
+          <p>保存前会验证凭据和域名权限；密钥只写入服务端，不会在页面回显。</p>
         </div>
-        <button type="button" class="btn-primary panel-create" @click="openProvider()">添加 Provider</button>
+        <button type="button" class="btn-primary panel-create" @click="openProvider()">添加服务商</button>
       </div>
 
       <div v-if="store.dnsProviders.length" class="provider-grid">
@@ -133,7 +133,7 @@
           <div v-if="provider.last_error" class="provider-error" role="alert">
             <span>!</span>
             <div>
-              <strong>Provider 异常</strong>
+              <strong>服务商异常</strong>
               <p>{{ provider.last_error }}</p>
             </div>
           </div>
@@ -168,7 +168,7 @@
       <div v-else class="card empty-state">
         <h3>还没有 DNS 服务商</h3>
         <p>先连接阿里云 DNS 或 Cloudflare，验证成功后即可托管 Relay 入口记录。</p>
-        <button type="button" class="btn-primary" @click="openProvider()">添加第一个 Provider</button>
+        <button type="button" class="btn-primary" @click="openProvider()">添加第一个服务商</button>
       </div>
     </section>
 
@@ -191,7 +191,7 @@
       <div class="record-toolbar">
         <label class="search-control">
           <span aria-hidden="true">⌕</span>
-          <input v-model.trim="recordQuery" type="search" placeholder="搜索记录名、目标值、Provider 或 Relay" />
+          <input v-model.trim="recordQuery" type="search" placeholder="搜索记录名、目标值、服务商或 Relay" />
         </label>
         <div class="filter-group" aria-label="记录状态筛选">
           <button
@@ -213,7 +213,7 @@
             <tr>
               <th>记录</th>
               <th>目标值 / 来源</th>
-              <th>Provider</th>
+              <th>服务商</th>
               <th>TTL</th>
               <th>状态</th>
               <th><span class="sr-only">操作</span></th>
@@ -236,10 +236,10 @@
                   <small v-else>手动记录值</small>
                 </div>
               </td>
-              <td data-label="Provider">
+              <td data-label="服务商">
                 <div class="record-provider">
                   <strong>{{ providerName(record.provider_id) }}</strong>
-                  <small>{{ providerFor(record.provider_id)?.zone || 'Provider 已删除' }}</small>
+                  <small>{{ providerFor(record.provider_id)?.zone || '服务商已删除' }}</small>
                 </div>
               </td>
               <td data-label="TTL" class="record-ttl">
@@ -266,7 +266,7 @@
         <div class="empty-icon">A</div>
         <h3>{{ store.dnsRecords.length ? '没有符合条件的记录' : '还没有托管记录' }}</h3>
         <p v-if="store.dnsRecords.length">清除搜索词或切换状态筛选后再试。</p>
-        <p v-else-if="!store.dnsProviders.length">请先添加并验证一个 DNS Provider。</p>
+        <p v-else-if="!store.dnsProviders.length">请先添加并验证一个 DNS 服务商。</p>
         <p v-else>创建记录后可手动填写目标值，或让它自动跟随 Relay Agent 的公网 IP。</p>
         <button
           v-if="!store.dnsRecords.length"
@@ -274,7 +274,7 @@
           class="btn-primary"
           @click="store.dnsProviders.length ? openRecord() : openProvider()"
         >
-          {{ store.dnsProviders.length ? '添加第一条记录' : '先添加 Provider' }}
+          {{ store.dnsProviders.length ? '添加第一条记录' : '先添加服务商' }}
         </button>
       </div>
     </section>
@@ -282,8 +282,8 @@
     <Modal v-if="providerForm.open" size="wide" @close="providerForm.open = false">
       <form class="modal-form" @submit.prevent="saveProvider">
         <div class="modal-heading">
-          <h2>{{ providerForm.id ? '编辑 DNS Provider' : '添加 DNS Provider' }}</h2>
-          <p>服务端会在保存前测试凭据和 Zone 权限，测试失败不会写入配置。</p>
+          <h2>{{ providerForm.id ? '编辑 DNS 服务商' : '添加 DNS 服务商' }}</h2>
+          <p>服务端会在保存前测试凭据和域名权限，测试失败不会写入配置。</p>
         </div>
 
         <section class="form-section">
@@ -304,7 +304,7 @@
               </select>
             </label>
             <label class="form-span-2">
-              <span class="field-label">DNS Zone</span>
+              <span class="field-label">DNS 域名区域</span>
               <input v-model.trim="providerForm.zone" class="input" required placeholder="example.com" />
               <small class="field-hint">填写区域根域名，例如 example.com，不要填写 relay.example.com。</small>
             </label>
@@ -314,7 +314,7 @@
         <section class="form-section">
           <div class="form-section-heading">
             <span>2</span>
-            <div><h3>访问凭据</h3><p>建议使用仅包含当前 Zone DNS 编辑权限的凭据。</p></div>
+            <div><h3>访问凭据</h3><p>建议使用仅包含当前域名 DNS 编辑权限的凭据。</p></div>
           </div>
           <div v-if="providerForm.type === 'aliyun'" class="form-grid">
             <label>
@@ -348,7 +348,7 @@
                 :required="!providerForm.id"
                 autocomplete="new-password"
               />
-              <small class="field-hint">Cloudflare Token 至少需要 Zone DNS Edit 与 Zone Read 权限。</small>
+              <small class="field-hint">Cloudflare 令牌至少需要 DNS 编辑与域名读取权限。</small>
             </label>
           </div>
         </section>
@@ -356,11 +356,11 @@
         <section class="form-section form-section-compact">
           <div class="form-section-heading">
             <span>3</span>
-            <div><h3>自动同步</h3><p>停用后保留配置，但不会再自动更新这个 Provider 的记录。</p></div>
+            <div><h3>自动同步</h3><p>停用后保留配置，但不会再自动更新这个服务商的记录。</p></div>
           </div>
           <label class="toggle-row">
             <input v-model="providerForm.enabled" type="checkbox" />
-            <span><strong>启用 Provider</strong><small>允许控制器自动同步托管记录</small></span>
+            <span><strong>启用服务商</strong><small>允许控制器自动同步托管记录</small></span>
           </label>
         </section>
 
@@ -368,7 +368,7 @@
         <div class="modal-actions">
           <button type="button" class="btn-ghost border border-slate-200" @click="providerForm.open = false">取消</button>
           <button type="submit" class="btn-primary" :disabled="saving">
-            {{ saving ? '正在验证并保存...' : '验证并保存 Provider' }}
+            {{ saving ? '正在验证并保存...' : '验证并保存服务商' }}
           </button>
         </div>
       </form>
@@ -388,7 +388,7 @@
           </div>
           <div class="form-grid">
             <label>
-              <span class="field-label">DNS Provider</span>
+              <span class="field-label">DNS 服务商</span>
               <select v-model="recordForm.provider_id" class="input" required>
                 <option v-for="provider in store.dnsProviders" :key="provider.id" :value="provider.id">
                   {{ provider.name }} · {{ provider.zone }}
@@ -407,7 +407,7 @@
             <label class="form-span-2">
               <span class="field-label">记录名</span>
               <input v-model.trim="recordForm.name" class="input" required placeholder="relay 或 relay.example.com" />
-              <small class="field-hint">可填写主机记录或完整域名，服务端会按所选 Zone 规范化。</small>
+              <small class="field-hint">可填写主机记录或完整域名，服务端会按所选域名区域规范化。</small>
             </label>
           </div>
         </section>
@@ -482,7 +482,7 @@
             </label>
             <label class="toggle-row">
               <input v-model="recordForm.enabled" type="checkbox" />
-              <span><strong>启用托管</strong><small>保存后进入 Provider 同步队列</small></span>
+              <span><strong>启用托管</strong><small>保存后进入服务商同步队列</small></span>
             </label>
           </div>
         </section>
@@ -592,7 +592,7 @@ function providerFor(id) {
 }
 
 function providerName(id) {
-  return providerFor(id)?.name || String(id || '未知 Provider')
+  return providerFor(id)?.name || String(id || '未知服务商')
 }
 
 function relayNodeName(id) {
@@ -699,7 +699,7 @@ async function saveProvider() {
     if (providerForm.id) await store.updateDNSProvider(providerForm.id, payload)
     else await store.createDNSProvider(payload)
     providerForm.open = false
-    showMessage('DNS Provider 已验证并保存')
+    showMessage('DNS 服务商已验证并保存')
   } catch (error) {
     formError.value = error.response?.data?.error || '保存失败'
   } finally {
@@ -714,7 +714,7 @@ async function testProvider(provider) {
     await store.testDNSProvider(provider.id)
     showMessage(`“${provider.name}”连接测试成功`)
   } catch (error) {
-    showMessage(error.response?.data?.error || 'Provider 测试失败', 'error')
+    showMessage(error.response?.data?.error || '服务商测试失败', 'error')
   } finally {
     busyId.value = ''
     busyAction.value = ''
@@ -739,8 +739,8 @@ async function syncAll() {
   syncing.value = true
   try {
     const data = await store.syncAllDNS()
-    if (data.ok === false) throw new Error(data.error || '部分 Provider 同步失败')
-    showMessage('全部 DNS Provider 已同步')
+    if (data.ok === false) throw new Error(data.error || '部分服务商同步失败')
+    showMessage('全部 DNS 服务商已同步')
   } catch (error) {
     showMessage(error.response?.data?.error || error.message || 'DNS 同步失败', 'error')
   } finally {
@@ -749,10 +749,10 @@ async function syncAll() {
 }
 
 async function removeProvider(provider) {
-  if (!window.confirm(`确认删除 DNS Provider“${provider.name}”？请先确认它没有托管记录。`)) return
+  if (!window.confirm(`确认删除 DNS 服务商“${provider.name}”？请先确认它没有托管记录。`)) return
   try {
     await store.deleteDNSProvider(provider.id)
-    showMessage('DNS Provider 已删除')
+    showMessage('DNS 服务商已删除')
   } catch (error) {
     showMessage(error.response?.data?.error || '删除失败', 'error')
   }

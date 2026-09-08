@@ -67,14 +67,14 @@
       <form class="space-y-5 modal-form" @submit.prevent="saveMinecraft">
         <div><h2 class="mt-1 text-lg font-bold text-slate-900">Minecraft 快速转发</h2><p class="mt-2 text-xs leading-5 text-slate-500">填写服务器 IP 和端口即可创建透明转发，并可选择 DNS 服务商自动发布专属域名。</p></div>
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div class="sm:col-span-2"><label class="field-label">游戏版本</label><select v-model="minecraftForm.edition" class="input"><option value="java">Java Edition（TCP）</option><option value="bedrock">Bedrock Edition（UDP）</option></select></div>
+          <div class="sm:col-span-2"><label class="field-label">游戏版本</label><select v-model="minecraftForm.edition" class="input"><option value="java">Java 版（TCP）</option><option value="bedrock">基岩版（UDP）</option></select></div>
           <div><label class="field-label">目标服务器 IP / 域名</label><input v-model.trim="minecraftForm.target_address" class="input" placeholder="例如 10.0.0.12" required /></div>
           <div><label class="field-label">目标服务器端口</label><input v-model.number="minecraftForm.target_port" type="number" min="1" max="65535" class="input" required /></div>
           <div><label class="field-label">对外监听端口</label><input v-model.number="minecraftForm.listen_port" type="number" min="1" max="65535" class="input" required /><p class="field-hint">{{ minecraftForm.entry_mode === 'dns' ? '域名会指向所选 Relay；Java 默认 25565 时无需填写端口。' : '用户将连接“中转节点公网 IP:此端口”。' }}</p></div>
           <div><label class="field-label">中转节点</label><select v-model="minecraftForm.relay_node_id" class="input" required><option v-for="node in store.relayNodes" :key="node.id" :value="node.id">{{ node.name }} · {{ maskedIP(node.public_ip, '未设置 IP') }}</option></select></div>
-          <div class="sm:col-span-2"><label class="field-label">公网连接方式</label><select v-model="minecraftForm.entry_mode" class="input"><option value="ip">中转节点 IP + 端口</option><option value="dns" :disabled="!enabledDNSProviders.length">DNS 托管域名</option></select><p v-if="!enabledDNSProviders.length" class="field-hint">尚无已启用的 DNS Provider，请先到 DNS 托管页面添加。</p></div>
+          <div class="sm:col-span-2"><label class="field-label">公网连接方式</label><select v-model="minecraftForm.entry_mode" class="input"><option value="ip">中转节点 IP + 端口</option><option value="dns" :disabled="!enabledDNSProviders.length">DNS 托管域名</option></select><p v-if="!enabledDNSProviders.length" class="field-hint">尚无已启用的 DNS 服务商，请先到 DNS 托管页面添加。</p></div>
           <template v-if="minecraftForm.entry_mode === 'dns'">
-            <div><label class="field-label">DNS Provider</label><select v-model="minecraftForm.dns_provider_id" class="input" required @change="normalizeMinecraftDNSSettings"><option v-for="provider in enabledDNSProviders" :key="provider.id" :value="provider.id">{{ provider.name }} · {{ provider.zone }}</option></select></div>
+            <div><label class="field-label">DNS 服务商</label><select v-model="minecraftForm.dns_provider_id" class="input" required @change="normalizeMinecraftDNSSettings"><option v-for="provider in enabledDNSProviders" :key="provider.id" :value="provider.id">{{ provider.name }} · {{ provider.zone }}</option></select></div>
             <div><label class="field-label">专属记录名</label><input v-model.trim="minecraftForm.dns_record_name" class="input" placeholder="例如 mc" required /><p class="field-hint">请使用未被多节点入口占用的新记录名。</p></div>
             <div><label class="field-label">DNS TTL</label><select v-model.number="minecraftForm.dns_ttl" class="input"><option v-for="option in minecraftDNSTTLOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></div>
             <div class="minecraft-dns-preview"><span>玩家连接地址</span><code>{{ minecraftConnectionPreview || '填写记录名后自动生成' }}</code></div>
@@ -153,7 +153,7 @@ async function saveMinecraft() {
     if (!relayNode?.public_ip) throw new Error('所选中转节点尚未上报公网 IP')
     if (minecraftForm.value.entry_mode === 'dns') {
       dnsProvider = selectedMinecraftDNSProvider.value
-      if (!dnsProvider) throw new Error('请选择可用的 DNS Provider')
+      if (!dnsProvider) throw new Error('请选择可用的 DNS 服务商')
       dnsRecordName = normalizeDNSRecordName(minecraftForm.value.dns_record_name, dnsProvider.zone)
       if (!isValidDNSRecordName(dnsRecordName, dnsProvider.zone)) throw new Error('DNS 记录名格式无效，请使用字母、数字、短横线或多级子域名')
       const recordType = isIPv6(relayNode.public_ip) ? 'AAAA' : 'A'
@@ -162,7 +162,7 @@ async function saveMinecraft() {
       if (conflicts.length && !reuseDNSRecord) throw new Error(`域名 ${minecraftHostname.value} 已被其他或多台 Relay 使用，请换一个专属记录名`)
     }
     landing = await store.createLandingNode({ name: `Minecraft · ${minecraftForm.value.target_address}:${minecraftForm.value.target_port}`, address: minecraftForm.value.target_address, port: Number(minecraftForm.value.target_port), network, protocol: 'minecraft', share_uri: '', enabled: true })
-    service = await store.createService({ relay_node_id: minecraftForm.value.relay_node_id, user_id: minecraftForm.value.user_id || 0, name: `Minecraft ${minecraftForm.value.edition === 'bedrock' ? 'Bedrock' : 'Java'} · ${minecraftForm.value.listen_port}`, listen_host: '0.0.0.0', listen_port: Number(minecraftForm.value.listen_port), network, mode: 'failover', enabled: true, billing_mode: user?.billing_mode || 'both', traffic_limit_gb: user?.traffic_limit_gb || 0, dial_timeout_ms: 2500, udp_idle_timeout_seconds: 120, health: { enabled: network === 'tcp', interval_seconds: 4, timeout_ms: 2000, failure_threshold: 2, success_threshold: 3, recovery_cooldown_seconds: 60 }, targets: [{ landing_node_id: landing.id, priority: 0, weight: 1, enabled: true }] })
+    service = await store.createService({ relay_node_id: minecraftForm.value.relay_node_id, user_id: minecraftForm.value.user_id || 0, name: `Minecraft ${minecraftForm.value.edition === 'bedrock' ? '基岩版' : 'Java 版'} · ${minecraftForm.value.listen_port}`, listen_host: '0.0.0.0', listen_port: Number(minecraftForm.value.listen_port), network, mode: 'failover', enabled: true, billing_mode: user?.billing_mode || 'both', traffic_limit_gb: user?.traffic_limit_gb || 0, dial_timeout_ms: 2500, udp_idle_timeout_seconds: 120, health: { enabled: network === 'tcp', interval_seconds: 4, timeout_ms: 2000, failure_threshold: 2, success_threshold: 3, recovery_cooldown_seconds: 60 }, targets: [{ landing_node_id: landing.id, priority: 0, weight: 1, enabled: true }] })
     if (dnsProvider && !reuseDNSRecord) dnsRecord = await store.createDNSRecord({ provider_id: dnsProvider.id, relay_node_id: relayNode.id, name: dnsRecordName, type: isIPv6(relayNode.public_ip) ? 'AAAA' : 'A', value: '', ttl: normalizeTTLForProvider(minecraftForm.value.dns_ttl, dnsProvider), enabled: true })
   } catch (error) {
     if (dnsRecord?.id) { try { await store.deleteDNSRecord(dnsRecord.id) } catch (_) { /* preserve the creation error */ } }

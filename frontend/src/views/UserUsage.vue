@@ -2,7 +2,6 @@
   <div class="usage-page fade-in">
     <header class="page-header">
       <div>
-        <div class="eyebrow">MY USAGE</div>
         <h1 class="page-title">我的用量</h1>
         <p class="page-subtitle">查看入口端口、计费方向和本月可用流量</p>
       </div>
