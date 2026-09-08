@@ -1,7 +1,7 @@
 <template>
   <div class="space-y-5 fade-in">
     <header class="flex flex-wrap items-end justify-between gap-4">
-      <div><div class="eyebrow">L4 SERVICES</div><h1 class="page-title">转发服务</h1><p class="page-subtitle">独立入口支持 Agent 字节级计量和流量额度熔断</p></div>
+      <div><h1 class="page-title">转发服务</h1><p class="page-subtitle">独立入口支持 Agent 字节级计量和流量额度熔断</p></div>
       <div class="flex flex-wrap gap-2"><button class="btn-ghost border border-blue-200 text-blue-700" :disabled="!canCreate" @click="openMinecraft">Minecraft 快速转发</button><button class="btn-primary" :disabled="!canCreate" @click="openCreate">创建转发服务</button></div>
     </header>
     <div v-if="!canCreate" class="notice notice-info">创建服务前至少需要一个在线中转节点和一个落地节点。</div>
@@ -37,7 +37,7 @@
 
     <Modal v-if="showForm" @close="showForm = false">
       <form class="space-y-5 modal-form" @submit.prevent="save">
-        <div><div class="eyebrow">RELAY SERVICE</div><h2 class="mt-1 text-lg font-bold text-slate-900">{{ editTarget ? '编辑转发服务' : '创建转发服务' }}</h2></div>
+        <div><h2 class="mt-1 text-lg font-bold text-slate-900">{{ editTarget ? '编辑转发服务' : '创建转发服务' }}</h2></div>
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div class="sm:col-span-2"><label class="field-label">服务名称</label><input v-model.trim="form.name" class="input" placeholder="例如：用户 A 独立入口" required /></div>
           <div><label class="field-label">CDT 中转节点</label><select v-model="form.relay_node_id" class="input" :disabled="!!editTarget"><option v-for="node in store.relayNodes" :key="node.id" :value="node.id">{{ node.name }} · {{ maskedIP(node.public_ip, '未设置 IP') }}</option></select></div>
@@ -65,7 +65,7 @@
 
     <Modal v-if="showMinecraft" @close="showMinecraft = false">
       <form class="space-y-5 modal-form" @submit.prevent="saveMinecraft">
-        <div><div class="eyebrow">MINECRAFT FORWARD</div><h2 class="mt-1 text-lg font-bold text-slate-900">Minecraft 快速转发</h2><p class="mt-2 text-xs leading-5 text-slate-500">填写服务器 IP 和端口即可创建透明转发，并可选择 DNS Provider 自动发布专属域名。</p></div>
+        <div><h2 class="mt-1 text-lg font-bold text-slate-900">Minecraft 快速转发</h2><p class="mt-2 text-xs leading-5 text-slate-500">填写服务器 IP 和端口即可创建透明转发，并可选择 DNS 服务商自动发布专属域名。</p></div>
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div class="sm:col-span-2"><label class="field-label">游戏版本</label><select v-model="minecraftForm.edition" class="input"><option value="java">Java Edition（TCP）</option><option value="bedrock">Bedrock Edition（UDP）</option></select></div>
           <div><label class="field-label">目标服务器 IP / 域名</label><input v-model.trim="minecraftForm.target_address" class="input" placeholder="例如 10.0.0.12" required /></div>

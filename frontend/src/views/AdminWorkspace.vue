@@ -2,7 +2,6 @@
   <div class="workspace-page space-y-5 fade-in">
     <header class="workspace-header">
       <div>
-        <div class="eyebrow">OPERATIONS WORKSPACE</div>
         <div class="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <h1 class="page-title">中转管理</h1>
           <span class="live-status"><span class="status-dot status-dot-success"></span>实时状态</span>
@@ -38,7 +37,7 @@
     <template v-if="activeTab === 'overview'">
       <section class="workspace-columns">
         <article class="card panel-card">
-          <div class="panel-heading"><div><h2>入口健康</h2><p>入口池和独立转发统一展示，异常项优先排在前面</p></div><span class="panel-code">ENTRY</span></div>
+          <div class="panel-heading"><div><h2>入口健康</h2><p>入口池和独立转发统一展示，异常项优先排在前面</p></div></div>
           <div v-if="!entries.length" class="empty-panel">还没有入口，先创建一个转发入口即可开始。</div>
           <div v-else class="entry-list">
             <div v-for="entry in entries.slice(0, 8)" :key="entry.id" class="entry-item">
@@ -52,7 +51,7 @@
         </article>
 
         <article class="card panel-card">
-          <div class="panel-heading"><div><h2>Agent 状态</h2><p>心跳、能力和远程升级状态</p></div><div class="panel-heading-actions"><button v-if="upgradeNodes.length" class="btn-ghost border border-blue-100 px-2 py-1 text-[10px] text-blue-700" :disabled="upgradeAllBusy" @click="upgradeAll">{{ upgradeAllBusy ? '提交中...' : `升级全部 ${upgradeNodes.length} 台` }}</button><span class="panel-code">AGENT</span></div></div>
+          <div class="panel-heading"><div><h2>Agent 状态</h2><p>心跳、能力和远程升级状态</p></div><div class="panel-heading-actions"><button v-if="upgradeNodes.length" class="btn-ghost border border-blue-100 px-2 py-1 text-[10px] text-blue-700" :disabled="upgradeAllBusy" @click="upgradeAll">{{ upgradeAllBusy ? '提交中...' : `升级全部 ${upgradeNodes.length} 台` }}</button></div></div>
           <div v-if="!store.relayNodes.length" class="empty-panel">尚未注册 Relay Agent。</div>
           <div v-else class="agent-list">
             <div v-for="node in store.relayNodes.slice(0, 6)" :key="node.id" class="agent-item">
@@ -68,17 +67,17 @@
 
       <section class="workspace-columns workspace-columns-bottom">
         <article class="card panel-card">
-          <div class="panel-heading"><div><h2>最近事件</h2><p>发布、健康和流量保护变化</p></div><span class="panel-code">EVENTS</span></div>
+          <div class="panel-heading"><div><h2>最近事件</h2><p>发布、健康和流量保护变化</p></div></div>
           <div v-if="!store.events.length" class="empty-panel">暂无事件记录。</div>
           <div v-else class="event-list"><div v-for="event in store.events.slice(0, 6)" :key="event.id" class="event-item"><span class="event-dot" :class="event.level === 'warning' ? 'event-warning' : ''"></span><div class="min-w-0 flex-1"><p class="truncate"><MaskedText :value="event.message" /></p><small>{{ formatTime(event.created_at) }}<template v-if="event.category"> · {{ event.category }}</template></small></div></div></div>
         </article>
         <article class="card panel-card quick-card">
-          <div class="panel-heading"><div><h2>常用操作</h2><p>把复杂配置留到需要时再展开</p></div><span class="panel-code">QUICK</span></div>
+          <div class="panel-heading"><div><h2>常用操作</h2><p>把复杂配置留到需要时再展开</p></div></div>
           <div class="quick-grid">
             <button class="quick-action" @click="go('/relay-services')"><span class="quick-mark">+</span><span><strong>创建转发入口</strong><small>配置 TCP / UDP 和目标</small></span><b>→</b></button>
-            <button class="quick-action" @click="go('/relay-services?quick=minecraft')"><span class="quick-mark quick-mark-mc">MC</span><span><strong>Minecraft 快速转发</strong><small>填写 IP + 端口即可创建</small></span><b>→</b></button>
-            <button class="quick-action" @click="go('/relay-nodes')"><span class="quick-mark">AG</span><span><strong>添加 Relay Agent</strong><small>生成一次性安装注册码</small></span><b>→</b></button>
-            <button class="quick-action" @click="go('/users')"><span class="quick-mark">US</span><span><strong>管理用户与额度</strong><small>端口组和流量流水</small></span><b>→</b></button>
+            <button class="quick-action" @click="go('/relay-services?quick=minecraft')"><span class="quick-mark quick-mark-mc">+</span><span><strong>Minecraft 快速转发</strong><small>填写 IP + 端口即可创建</small></span><b>→</b></button>
+            <button class="quick-action" @click="go('/relay-nodes')"><span class="quick-mark">+</span><span><strong>添加 Relay Agent</strong><small>生成一次性安装注册码</small></span><b>→</b></button>
+            <button class="quick-action" @click="go('/users')"><span class="quick-mark">+</span><span><strong>管理用户与额度</strong><small>端口组和流量流水</small></span><b>→</b></button>
           </div>
         </article>
       </section>

@@ -3,7 +3,7 @@
     <div class="login-layout w-full max-w-4xl">
       <section class="login-intro hidden md:block">
         <div class="brand-mark mb-6">AC</div>
-        <p class="text-xs font-bold uppercase tracking-[0.2em] text-accent">AliCDT Manager</p>
+        <p class="text-xs font-bold text-accent">阿里云 CDT 管理台</p>
         <h1 class="mt-4 text-4xl font-bold leading-tight text-slate-900">集中管理云资源，<br />让运行状态清晰可见。</h1>
         <p class="mt-5 max-w-md text-sm leading-7 text-slate-500">统一查看实例、流量和账单状态，按策略执行保活与自动关停。</p>
         <div class="mt-10 flex items-center gap-3 text-xs text-slate-500">
@@ -15,7 +15,7 @@
       <section class="card login-card p-7 sm:p-9">
         <div class="mb-8 md:hidden">
           <div class="brand-mark mb-4">AC</div>
-          <div class="text-xs font-bold uppercase tracking-[0.16em] text-accent">AliCDT Manager</div>
+          <div class="text-xs font-bold text-accent">阿里云 CDT 管理台</div>
         </div>
         <div class="mb-7">
           <h2 class="text-2xl font-bold tracking-tight text-slate-900">{{ isInit ? '创建管理员账号' : '登录控制台' }}</h2>

@@ -2,7 +2,6 @@
   <div class="users-page fade-in">
     <header class="page-header">
       <div>
-        <div class="eyebrow">ACCESS & USAGE</div>
         <h1 class="page-title">用户管理</h1>
         <p class="page-subtitle">创建控制台用户、分配云账户并管理月流量额度</p>
       </div>
@@ -76,7 +75,6 @@
     <Modal v-if="showForm" size="large" @close="showForm = false">
       <form class="space-y-5" @submit.prevent="saveUser">
         <div>
-          <div class="eyebrow">CONSOLE USER</div>
           <h2 class="mt-1 text-lg font-bold text-slate-900">{{ editTarget ? '编辑用户' : '创建用户' }}</h2>
           <p class="mt-2 text-xs leading-5 text-slate-500">用户只能查看分配给自己的云账户名称和流量汇总，不能访问管理接口或云密钥。</p>
         </div>
@@ -117,7 +115,7 @@
 
     <Modal v-if="showGroupForm" size="large" @close="showGroupForm = false">
       <form class="space-y-5" @submit.prevent="saveGroup">
-        <div><div class="eyebrow">USER ENTRY GROUP</div><h2 class="mt-1 text-lg font-bold text-slate-900">为 {{ groupUser?.display_name }} 分配入口端口组</h2><p class="mt-2 text-xs leading-5 text-slate-500">默认自动分配连续 10 个端口，同一用户的全部端口共享一份月流量额度。</p></div>
+        <div><h2 class="mt-1 text-lg font-bold text-slate-900">为 {{ groupUser?.display_name }} 分配入口端口组</h2><p class="mt-2 text-xs leading-5 text-slate-500">默认自动分配连续 10 个端口，同一用户的全部端口共享一份月流量额度。</p></div>
         <div class="form-grid">
           <div><label class="field-label">端口组名称</label><input v-model.trim="groupForm.name" class="input" placeholder="例如：Alice 主入口" required /></div>
           <div><label class="field-label">中转节点</label><select v-model="groupForm.relay_node_id" class="input" required><option v-for="node in availableRelayNodes" :key="node.id" :value="node.id" :disabled="groupForm.port_count > 1 && !node.capabilities?.includes('shared_meters_v1')">{{ node.name }} · {{ node.public_ip || '未上报 IP' }}{{ node.capabilities?.includes('shared_meters_v1') ? '' : ' · Agent 待升级' }}</option></select></div>
@@ -134,7 +132,7 @@
 
     <Modal v-if="showQuotaForm" size="large" @close="showQuotaForm = false">
       <div class="space-y-5">
-        <div><div class="eyebrow">USAGE LEDGER</div><h2 class="mt-1 text-lg font-bold text-slate-900">{{ quotaUser?.display_name }} · 额度与用量流水</h2><p class="mt-2 text-xs leading-5 text-slate-500">正数为追加额度，负数为扣减额度；每次调整必须填写审计备注。</p></div>
+        <div><h2 class="mt-1 text-lg font-bold text-slate-900">{{ quotaUser?.display_name }} · 额度与用量流水</h2><p class="mt-2 text-xs leading-5 text-slate-500">正数为追加额度，负数为扣减额度；每次调整必须填写审计备注。</p></div>
         <form class="quota-form" @submit.prevent="adjustQuota"><div><label class="field-label">调整额度（GB）</label><input v-model.number="quotaForm.delta_gb" type="number" step="0.01" class="input" placeholder="例如 50 或 -20" required /></div><div><label class="field-label">审计备注</label><input v-model.trim="quotaForm.note" class="input" maxlength="200" placeholder="例如：续费追加 50 GB" required /></div><button class="btn-primary" :disabled="quotaSaving">{{ quotaSaving ? '提交中...' : '确认调整' }}</button></form>
         <div v-if="quotaError" class="notice notice-error">{{ quotaError }}</div>
         <div class="ledger-list"><div v-for="entry in usageLedger" :key="entry.id" class="ledger-row"><div><strong>{{ ledgerKind(entry.kind) }}</strong><small>{{ formatDate(entry.created_at) }} · {{ entry.note || entry.source }}</small></div><span :class="entry.delta_bytes < 0 ? 'ledger-minus' : 'ledger-plus'">{{ formatLedgerDelta(entry) }}</span></div><div v-if="!usageLedger.length" class="account-empty">暂无流水，Agent 上报流量或调整额度后会自动记录。</div></div>

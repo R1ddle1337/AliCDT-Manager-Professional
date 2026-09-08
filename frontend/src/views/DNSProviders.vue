@@ -2,7 +2,6 @@
   <div class="dns-page fade-in">
     <header class="page-header">
       <div>
-        <div class="eyebrow">DNS CONTROL PLANE</div>
         <h1 class="page-title">DNS 托管</h1>
         <p class="page-subtitle">集中管理域名服务商和 Relay 入口记录，配置、状态与异常各归其位。</p>
       </div>
@@ -167,8 +166,7 @@
       </div>
 
       <div v-else class="card empty-state">
-        <div class="empty-icon">DNS</div>
-        <h3>还没有 DNS Provider</h3>
+        <h3>还没有 DNS 服务商</h3>
         <p>先连接阿里云 DNS 或 Cloudflare，验证成功后即可托管 Relay 入口记录。</p>
         <button type="button" class="btn-primary" @click="openProvider()">添加第一个 Provider</button>
       </div>
@@ -284,7 +282,6 @@
     <Modal v-if="providerForm.open" size="wide" @close="providerForm.open = false">
       <form class="modal-form" @submit.prevent="saveProvider">
         <div class="modal-heading">
-          <div class="eyebrow">DNS PROVIDER</div>
           <h2>{{ providerForm.id ? '编辑 DNS Provider' : '添加 DNS Provider' }}</h2>
           <p>服务端会在保存前测试凭据和 Zone 权限，测试失败不会写入配置。</p>
         </div>
@@ -380,7 +377,6 @@
     <Modal v-if="recordForm.open" size="wide" @close="recordForm.open = false">
       <form class="modal-form" @submit.prevent="saveRecord">
         <div class="modal-heading">
-          <div class="eyebrow">MANAGED RECORD</div>
           <h2>{{ recordForm.id ? '编辑托管记录' : '添加托管记录' }}</h2>
           <p>选择记录来源；Agent 来源会在公网 IP 变化后自动等待同步。</p>
         </div>

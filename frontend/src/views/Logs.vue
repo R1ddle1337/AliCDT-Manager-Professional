@@ -1,14 +1,14 @@
 <template>
   <div class="space-y-6 fade-in logs-page">
     <div class="flex flex-wrap items-end justify-between gap-4">
-      <div><div class="eyebrow">AUDIT LOG</div><h1 class="page-title">系统日志</h1><p class="page-subtitle">查看自动化任务和账户操作记录</p></div>
+      <div><h1 class="page-title">系统日志</h1><p class="page-subtitle">查看自动化任务和账户操作记录</p></div>
       <div class="flex flex-wrap items-center gap-2"><select v-model="category" :disabled="loading || clearing" @change="load" class="input w-36 py-2"><option value="">全部分类</option><option value="traffic">流量</option><option value="keepalive">保活</option><option value="scheduler">定时任务</option><option value="ddns">DDNS</option><option value="notify">通知</option><option value="system">系统</option></select><button type="button" :disabled="loading || clearing" @click="load" class="btn-ghost border border-slate-200">{{ loading ? '刷新中...' : '刷新' }}</button><button type="button" :disabled="loading || clearing || !store.logs.length" @click="clearLogs" class="btn-danger">{{ clearing ? '清空中...' : '清空' }}</button></div>
     </div>
 
     <div v-if="error" class="notice notice-error" role="alert">{{ error }}</div>
     <div class="card overflow-hidden log-card layout-card">
       <div v-if="loading && !store.logs.length" class="empty-state py-14"><div class="loading-ring"></div><p class="mt-4 text-sm text-text-muted">正在加载日志...</p></div>
-      <div v-else-if="store.logs.length === 0" class="empty-state py-14"><div class="empty-mark">LOG</div><p class="mt-4 text-sm text-text-muted">暂无日志记录</p></div>
+      <div v-else-if="store.logs.length === 0" class="empty-state py-14"><p class="mt-4 text-sm text-text-muted">暂无日志记录</p></div>
       <div v-else class="divide-y divide-slate-100"><div v-for="log in store.logs" :key="log.id" class="log-row"><span class="level-marker" :class="levelClass(log.level)"></span><span class="category-tag">{{ log.category }}</span><span class="min-w-0 flex-1 break-words text-xs leading-6 text-slate-600"><MaskedText :value="log.message" /></span><span class="flex-shrink-0 font-mono text-[11px] text-slate-400">{{ formatTime(log.created_at) }}</span></div></div>
     </div>
   </div>

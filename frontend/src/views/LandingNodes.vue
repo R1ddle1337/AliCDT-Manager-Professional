@@ -1,13 +1,13 @@
 <template>
   <div class="landing-page space-y-5 fade-in">
     <header class="flex flex-wrap items-end justify-between gap-4">
-      <div><div class="eyebrow">LANDING NODES</div><h1 class="page-title">落地节点</h1><p class="page-subtitle">粘贴完整节点链接，面板只替换中转入口地址和端口</p></div>
+      <div><h1 class="page-title">落地节点</h1><p class="page-subtitle">粘贴完整节点链接，面板只替换中转入口地址和端口</p></div>
       <button class="btn-primary" @click="openCreate">添加完整节点</button>
     </header>
     <div v-if="message" class="notice" :class="messageType === 'error' ? 'notice-error' : 'notice-success'">{{ message }}</div>
 
     <div v-if="!store.landingNodes.length" class="card empty-panel">
-      <div class="empty-mark">NODE</div><h2 class="mt-4 font-semibold text-slate-800">还没有落地节点</h2>
+      <h2 class="font-semibold text-slate-800">还没有落地节点</h2>
       <p class="mt-1 text-sm text-slate-500">添加 VLESS、SS2022、VMess、Trojan 或其他受支持的完整分享链接。</p>
       <button class="btn-primary mt-5" @click="openCreate">添加第一个节点</button>
     </div>
@@ -40,7 +40,7 @@
 
     <Modal v-if="showForm" @close="showForm = false">
       <form class="space-y-5 modal-form" @submit.prevent="save">
-        <div><div class="eyebrow">LANDING NODE</div><h2 class="mt-1 text-lg font-bold text-slate-900">{{ editTarget ? '编辑落地节点' : '添加完整节点' }}</h2><p class="mt-2 text-xs leading-5 text-slate-500">粘贴分享链接后，保存时会自动识别协议、地址和端口。生成中转链接时只改入口 Host/Port。</p></div>
+        <div><h2 class="mt-1 text-lg font-bold text-slate-900">{{ editTarget ? '编辑落地节点' : '添加完整节点' }}</h2><p class="mt-2 text-xs leading-5 text-slate-500">粘贴分享链接后，保存时会自动识别协议、地址和端口。生成中转链接时只改入口主机和端口。</p></div>
         <div><label class="field-label" for="node-share-uri">完整节点分享链接 <span v-if="!editTarget" class="text-danger">*</span></label><textarea id="node-share-uri" v-model.trim="form.share_uri" class="input node-textarea" rows="4" placeholder="vless://... 或 ss://... 或 vmess://..."></textarea><p class="field-hint">支持 VLESS（含 REALITY/WS/gRPC 参数）、SS/SS2022、VMess、Trojan、Hysteria2、TUIC。链接中的密钥和传输参数会原样保留。</p></div>
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2"><div class="sm:col-span-2"><label class="field-label">节点名称 <span class="font-normal text-slate-400">（可选，留空则从链接名称推断）</span></label><input v-model.trim="form.name" class="input" placeholder="例如：香港 REALITY 主节点" /></div></div>
         <details v-if="editTarget && !form.share_uri" class="legacy-fields"><summary>兼容旧节点：手动维护地址和端口</summary><div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2"><div><label class="field-label">IP 或域名</label><input v-model.trim="form.address" class="input" /></div><div><label class="field-label">端口</label><input v-model.number="form.port" type="number" min="1" max="65535" class="input" /></div><div><label class="field-label">网络协议</label><select v-model="form.network" class="input"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="tcp+udp">TCP + UDP</option></select></div></div></details>

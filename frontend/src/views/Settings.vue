@@ -1,10 +1,10 @@
 <template>
   <div class="space-y-6 fade-in settings-page">
-    <div><div class="eyebrow">PREFERENCES</div><h1 class="page-title">系统设置</h1><p class="page-subtitle">配置通知和自动化选项</p></div>
+    <div><h1 class="page-title">系统设置</h1><p class="page-subtitle">配置通知和自动化选项</p></div>
 
     <div class="settings-card-grid layout-collection layout-collection--strip">
     <div class="card settings-card layout-card">
-      <div class="section-heading"><div><h2>Telegram 通知</h2><p>将熔断、保活和定时任务结果发送到指定会话。</p></div><span class="section-code">TG</span></div>
+      <div class="section-heading"><div><h2>Telegram 通知</h2><p>将熔断、保活和定时任务结果发送到指定会话。</p></div></div>
       <div class="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2"><div><label class="field-label" for="bot-token">Bot Token</label><input id="bot-token" v-model="form.tg_bot_token" class="input" placeholder="123456:ABC..." /></div><div><label class="field-label" for="chat-id">Chat ID</label><input id="chat-id" v-model="form.tg_chat_id" class="input" placeholder="123..." /></div></div>
       <div class="setting-row mt-5"><div><div class="text-sm font-semibold text-slate-700">每日流量汇报</div><div class="mt-1 text-xs text-slate-500">每天北京时间 00:00 推送所有实例的流量摘要。</div></div><button type="button" class="toggle" :class="form.tg_daily_report === '1' ? 'toggle-on' : ''" :aria-pressed="form.tg_daily_report === '1'" @click="form.tg_daily_report = form.tg_daily_report === '1' ? '0' : '1'"><span></span></button></div>
       <div class="mt-4 rounded-lg bg-slate-50 p-3 text-xs leading-6 text-slate-500"><div class="font-semibold text-slate-600">通知触发条件</div><div>流量熔断自动停机、抢占式实例被回收、定时开关机执行。</div><div :class="form.tg_daily_report === '1' ? 'text-accent' : 'text-slate-400'">每日流量汇报：{{ form.tg_daily_report === '1' ? '已开启' : '已关闭' }}</div></div>
@@ -12,14 +12,14 @@
     </div>
 
     <div class="card settings-card layout-card">
-      <div class="section-heading"><div><h2>管理员安全</h2><p>密码轮换、活动会话和双因素认证已集中到安全中心。</p></div><span class="section-code">SEC</span></div>
+      <div class="section-heading"><div><h2>管理员安全</h2><p>密码轮换、活动会话和双因素认证已集中到安全中心。</p></div></div>
       <div class="mt-5 rounded-lg bg-slate-50 p-3 text-xs leading-6 text-slate-500">为避免重复配置，系统设置只保留通知和自动化选项；所有管理员安全操作请在安全中心完成。</div>
       <button type="button" @click="$router.push('/security')" class="btn-primary mt-4">打开安全中心</button>
     </div>
     </div>
 
     <div v-if="msg.text" class="notice" :class="`notice-${msg.type}`">{{ msg.text }}</div>
-    <div class="text-center text-xs text-slate-400">AliCDT Manager {{ versionInfo.current || 'dev' }} <a v-if="versionInfo.has_update" :href="versionInfo.url" target="_blank" rel="noopener noreferrer" class="ml-2 text-accent hover:underline">发现新版本 {{ versionInfo.latest }}</a></div>
+    <div class="text-center text-xs text-slate-400">当前版本 {{ versionInfo.current || 'dev' }} <a v-if="versionInfo.has_update" :href="versionInfo.url" target="_blank" rel="noopener noreferrer" class="ml-2 text-accent hover:underline">发现新版本 {{ versionInfo.latest }}</a></div>
   </div>
 </template>
 
