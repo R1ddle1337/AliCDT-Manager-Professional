@@ -88,7 +88,6 @@
             <div class="topbar-brand"><span class="topbar-brand-mark">A</span><strong>AliCDT</strong><small>管理员控制台</small></div>
           </div>
           <div class="topbar-context">
-            <span class="topbar-kicker">WORKSPACE</span>
             <strong>{{ activeItem.label }}</strong>
           </div>
           <div class="topbar-actions">
@@ -320,8 +319,7 @@ onUnmounted(() => {
 .topbar-brand small { color: #94a3b8; font-size: 10px; }
 .nav-item-icon { display: inline-grid; width: 21px; height: 21px; flex: 0 0 auto; place-items: center; border-radius: 6px; background: #f1f5f9; color: #94a3b8; font-size: 13px; font-weight: 700; line-height: 1; }
 .nav-item-active .nav-item-icon { background: #dbeafe; color: #2563eb; }
-.topbar-context { display: flex; min-width: 0; align-items: baseline; gap: 10px; }
-.topbar-kicker { color: #94a3b8; font-size: 9px; font-weight: 800; letter-spacing: .16em; }
+.topbar-context { display: flex; min-width: 0; align-items: baseline; }
 .topbar-context strong { overflow: hidden; color: #334155; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .topbar-actions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 10px; }
 .update-status { max-width: 260px; overflow: hidden; color: #64748b; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
