@@ -1149,7 +1149,7 @@ func (s *Server) syncCloud(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createCloudAccount(w http.ResponseWriter, r *http.Request) {
-	var request CloudAccountRequest
+	request := CloudAccountRequest{KeepAlive: true}
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return

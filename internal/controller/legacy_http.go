@@ -59,7 +59,7 @@ func (s *Server) legacyListAccounts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) legacyCreateAccount(w http.ResponseWriter, r *http.Request) {
-	var request CloudAccountRequest
+	request := CloudAccountRequest{KeepAlive: true}
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
