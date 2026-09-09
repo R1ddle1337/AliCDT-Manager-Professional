@@ -264,9 +264,24 @@ func (s *CloudService) runScheduledPower(ctx context.Context, hhmm string) {
 				_ = s.store.AddSystemLog(ctx, "error", "scheduler", fmt.Sprintf("[%s] 定时关机失败: %s", account.Name, friendlyCloudError(err)))
 			}
 		}
-		shouldStart := account.PowerStopReason == "scheduled" && (account.AutoStartTime == hhmm || !strings.EqualFold(instanceStatus, "Running"))
-		if account.AutoStartTime == hhmm && account.PowerStopReason == "" && !strings.EqualFold(instanceStatus, "Running") {
-			shouldStart = true
+		// A scheduled stop must remain in effect until the configured start
+		// minute.  Checking only for a Stopped instance here would start it on
+		// the very next scheduler tick (usually one minute after stopping),
+		// defeating the schedule and repeatedly taking the Agent offline.
+		shouldStart := false
+		if account.AutoStartTime == hhmm {
+			switch account.PowerStopReason {
+			case "scheduled":
+				if strings.EqualFold(instanceStatus, "Running") {
+					// An operator may have started the ECS during the scheduled
+					// downtime. Treat it as recovered so the next stop can run.
+					_ = s.store.SetAccountPowerStopReason(ctx, account.ID, "")
+				} else {
+					shouldStart = true
+				}
+			case "":
+				shouldStart = !strings.EqualFold(instanceStatus, "Running")
+			}
 		}
 		if !stoppedThisCycle && shouldStart {
 			err := s.clientFor(account).StartInstance(ctx, account.ProtectedInstanceID)

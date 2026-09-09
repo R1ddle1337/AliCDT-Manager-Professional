@@ -341,6 +341,14 @@ func TestScheduledPowerUpdatesInstanceAndRelayProjection(t *testing.T) {
 		t.Fatalf("scheduled stop did not remove relay from online set: %+v", nodes)
 	}
 
+	// The instance is now stopped. A tick between the configured stop and
+	// start times must not wake it up early (the regression used to do so).
+	fake.instances[0].Status = "Stopped"
+	service.runScheduledPower(ctx, "02:01")
+	if fake.startCalls != 0 {
+		t.Fatalf("scheduled stop was undone before auto-start time, calls=%d", fake.startCalls)
+	}
+
 	service.runScheduledPower(ctx, "03:00")
 	if fake.startCalls != 1 {
 		t.Fatalf("scheduled start calls=%d, want 1", fake.startCalls)
@@ -359,6 +367,8 @@ func TestScheduledPowerUpdatesInstanceAndRelayProjection(t *testing.T) {
 	if overview.Instances[0].Status != "Running" {
 		t.Fatalf("scheduled start did not update instance projection: %+v", overview.Instances)
 	}
+	// Reflect the asynchronous ECS transition completing before the next tick.
+	fake.instances[0].Status = "Running"
 	// A replayed scheduler tick in the same minute must be harmless.
 	service.runScheduledPower(ctx, "03:00")
 	if fake.startCalls != 1 {
