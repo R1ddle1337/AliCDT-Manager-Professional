@@ -254,12 +254,19 @@ func (s *CloudService) runScheduledPower(ctx context.Context, hhmm string) {
 		if account.AutoStopTime == hhmm && account.PowerStopReason == "" && !strings.EqualFold(instanceStatus, "Stopped") {
 			shutdownMode := account.ShutdownMode
 			if strings.EqualFold(shutdownMode, "StopCharging") {
-				if installed, installErr := s.store.RelayAgentInstalledForInstance(ctx, account.ProtectedInstanceID); installErr == nil && installed {
+				installed, installErr := s.store.RelayAgentInstalledForInstance(ctx, account.ProtectedInstanceID)
+				if installErr != nil || installed {
 					// StopCharging may recreate a spot host and lose the Agent
 					// binary/credentials. Keep the system disk and Relay identity
-					// when a scheduled task owns an installed Agent.
+					// when a scheduled task owns an installed Agent. Fail closed if
+					// the node lookup is unavailable; a storage error must never
+					// turn into destructive power automation.
 					shutdownMode = "KeepCharging"
-					_ = s.store.AddSystemLog(ctx, "warning", "scheduler", fmt.Sprintf("[%s] 已绑定 Agent，定时关机改用普通停机以保留 Agent", account.Name))
+					message := fmt.Sprintf("[%s] 已绑定 Agent，定时关机改用普通停机以保留 Agent", account.Name)
+					if installErr != nil {
+						message = fmt.Sprintf("[%s] 无法确认 Agent 状态，定时关机改用普通停机以避免丢失 Agent: %s", account.Name, installErr)
+					}
+					_ = s.store.AddSystemLog(ctx, "warning", "scheduler", message)
 				}
 			}
 			err := s.clientFor(account).StopInstance(ctx, account.ProtectedInstanceID, shutdownMode)
