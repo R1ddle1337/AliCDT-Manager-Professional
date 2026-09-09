@@ -151,10 +151,31 @@ type CloudAccountRequest struct {
 	OutstandingThreshold float64 `json:"outstanding_threshold"`
 	ShutdownMode         string  `json:"shutdown_mode"`
 	KeepAlive            bool    `json:"keep_alive"`
-	AutoStartTime        string  `json:"auto_start_time"`
-	AutoStopTime         string  `json:"auto_stop_time"`
-	ProtectionMode       string  `json:"protection_mode"`
-	Enabled              *bool   `json:"enabled,omitempty"`
+	// KeepAliveSet distinguishes an explicit false from an omitted field so
+	// newly created accounts can default to automatic reclaim recovery while
+	// still allowing operators to turn it off.
+	KeepAliveSet   bool   `json:"-"`
+	AutoStartTime  string `json:"auto_start_time"`
+	AutoStopTime   string `json:"auto_stop_time"`
+	ProtectionMode string `json:"protection_mode"`
+	Enabled        *bool  `json:"enabled,omitempty"`
+}
+
+func (r *CloudAccountRequest) UnmarshalJSON(data []byte) error {
+	type plain CloudAccountRequest
+	var fields struct {
+		*plain
+		KeepAlive *bool `json:"keep_alive"`
+	}
+	fields.plain = (*plain)(r)
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if fields.KeepAlive != nil {
+		r.KeepAlive = *fields.KeepAlive
+		r.KeepAliveSet = true
+	}
+	return nil
 }
 
 type TrafficProtectionDecision struct {
@@ -3554,6 +3575,9 @@ func normalizeCloudAccountRequest(request CloudAccountRequest, secretOptional bo
 	request.AutoStartTime = strings.TrimSpace(request.AutoStartTime)
 	request.AutoStopTime = strings.TrimSpace(request.AutoStopTime)
 	request.ProtectionMode = strings.ToLower(strings.TrimSpace(request.ProtectionMode))
+	if !secretOptional && !request.KeepAliveSet {
+		request.KeepAlive = true
+	}
 	if request.Name == "" || request.AccessKeyID == "" || request.RegionID == "" || (!secretOptional && request.AccessKeySecret == "") {
 		return request, false, errors.New("name, AccessKey ID, secret and region are required")
 	}
@@ -3580,6 +3604,9 @@ func normalizeCloudAccountRequest(request CloudAccountRequest, secretOptional bo
 	}
 	if err := validateScheduleTime(request.AutoStopTime); err != nil {
 		return request, false, fmt.Errorf("auto stop time: %w", err)
+	}
+	if request.AutoStartTime != "" && request.AutoStartTime == request.AutoStopTime {
+		return request, false, errors.New("定时开机与关机时间不能相同")
 	}
 	if request.SiteType == "china" {
 		request.OutstandingThreshold = 0

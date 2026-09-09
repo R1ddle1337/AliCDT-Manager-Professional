@@ -184,7 +184,7 @@
           </div>
           <div><label class="field-label">定时关机</label><input v-model="form.auto_stop_time" type="time" class="input" /></div>
           <div><label class="field-label">定时开机</label><input v-model="form.auto_start_time" type="time" class="input" /></div>
-          <p class="field-wide field-hint">节省停机会回收计算资源；未绑定 EIP 时公网 IP 可能变化。本地盘实例上的文件可能在停机后丢失，请将 Agent 安装在云系统盘；需要保留本地盘数据时选择普通停机。</p>
+          <p class="field-wide field-hint">节省停机会释放计算资源和固定公网 IP，但会保留云盘数据；抢占式实例开机可能因库存不足而延迟。已安装 Agent 的实例会在开机时段持续重试恢复，建议绑定 EIP 保持入口地址不变。</p>
           <p v-if="form.protection_mode === 'stop_ecs'" class="field-wide field-hint">流量超过阈值后，会对上面绑定的实例发送一次停机指令；失败会在下次有效同步时重试。</p>
         </div>
         <div v-if="formError" class="notice notice-error">{{ formError }}</div>
@@ -239,7 +239,7 @@ const workspaceTabs = computed(() => [
 const blank = () => ({
   name: '', access_key_id: '', access_key_secret: '', region_id: 'cn-hongkong', site_type: 'china',
   instance_id: '', user_id: 0, traffic_limit_gb: 200, threshold_percent: 95, outstanding_threshold: 0,
-  shutdown_mode: 'StopCharging', keep_alive: false, auto_start_time: '', auto_stop_time: '', protection_mode: 'drain_relay', enabled: true,
+  shutdown_mode: 'StopCharging', keep_alive: true, auto_start_time: '', auto_stop_time: '', protection_mode: 'drain_relay', enabled: true,
 })
 const form = ref(blank())
 

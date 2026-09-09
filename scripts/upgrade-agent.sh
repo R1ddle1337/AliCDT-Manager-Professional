@@ -17,6 +17,19 @@ if [ -z "$CONTROLLER" ]; then echo "--server is required." >&2; exit 2; fi
 case "$CONTROLLER$SERVICE$BINARY" in *"\n"*|*"\r"*) echo "Arguments must not contain line breaks." >&2; exit 2 ;; esac
 case "$(uname -m)" in x86_64|amd64) ARCH=amd64 ;; aarch64|arm64) ARCH=arm64 ;; *) echo "Unsupported architecture." >&2; exit 1 ;; esac
 
+check_persistent_path() {
+  path="$1"
+  filesystem="$(stat -f -c '%T' "$path" 2>/dev/null || true)"
+  case "$filesystem" in
+    ''|tmpfs|ramfs|rootfs|devtmpfs|overlay|aufs|squashfs)
+      echo "Agent data path $path is on non-persistent filesystem ($filesystem). Move it to the ECS system disk." >&2
+      exit 1
+      ;;
+  esac
+}
+check_persistent_path /etc/cdt-relay
+check_persistent_path /var/lib/cdt-relay
+
 TMP_DIR="$(mktemp -d)"; trap 'rm -rf "$TMP_DIR"' EXIT
 BASE="${CONTROLLER%/}/agent"
 ASSET="cdt-relay-agent-linux-${ARCH}"

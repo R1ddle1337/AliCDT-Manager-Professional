@@ -58,6 +58,23 @@ fi
 mkdir -p /etc/cdt-relay /var/lib/cdt-relay
 chmod 700 /etc/cdt-relay /var/lib/cdt-relay
 
+# Credentials, cached configuration and the service definition must live on a
+# persistent filesystem.  A tmpfs/ramfs root is commonly used by rescue or
+# diskless images; allowing installation there makes a later ECS power cycle
+# look like a lost Agent because the enrollment files disappear.
+check_persistent_path() {
+  path="$1"
+  filesystem="$(stat -f -c '%T' "$path" 2>/dev/null || true)"
+  case "$filesystem" in
+    ''|tmpfs|ramfs|rootfs|devtmpfs|overlay|aufs|squashfs)
+      echo "Agent data path $path is on non-persistent filesystem ($filesystem). Install on the ECS system disk." >&2
+      exit 1
+      ;;
+  esac
+}
+check_persistent_path /etc/cdt-relay
+check_persistent_path /var/lib/cdt-relay
+
 if [ -n "$INSTALL_BINARY" ]; then
   install -m 0755 "$INSTALL_BINARY" /usr/local/bin/cdt-relay-agent
 else

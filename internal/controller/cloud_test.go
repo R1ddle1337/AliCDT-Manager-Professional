@@ -294,6 +294,50 @@ func TestCloudOverviewUsesEmptyArraysInsteadOfNull(t *testing.T) {
 	}
 }
 
+func TestCloudAccountKeepAliveDefaultsOnButCanBeDisabled(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	defaultAccount, err := store.CreateCloudAccount(ctx, CloudAccountRequest{
+		Name: "default-keepalive", AccessKeyID: "key", AccessKeySecret: "secret", RegionID: "cn-hongkong", SiteType: "china",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !defaultAccount.KeepAlive {
+		t.Fatal("new cloud accounts should enable reclaim keep-alive by default")
+	}
+	var explicit CloudAccountRequest
+	if err := json.Unmarshal([]byte(`{"name":"disabled","keep_alive":false}`), &explicit); err != nil {
+		t.Fatal(err)
+	}
+	explicit.AccessKeyID, explicit.AccessKeySecret, explicit.RegionID, explicit.SiteType = "key", "secret", "cn-hongkong", "china"
+	disabledAccount, err := store.CreateCloudAccount(ctx, explicit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if disabledAccount.KeepAlive {
+		t.Fatal("explicit keep_alive=false was not preserved")
+	}
+}
+
+func TestScheduledDowntimeHandlesOvernightWindow(t *testing.T) {
+	account := CloudAccount{AutoStopTime: "00:03", AutoStartTime: "12:04"}
+	for _, item := range []struct {
+		minute string
+		want   bool
+	}{
+		{"00:02", false}, {"00:03", true}, {"08:00", true}, {"12:03", true}, {"12:04", false}, {"23:59", false},
+	} {
+		if got := inScheduledDowntime(account, item.minute); got != item.want {
+			t.Errorf("inScheduledDowntime(%q)=%v, want %v", item.minute, got, item.want)
+		}
+	}
+}
+
 func TestScheduledPowerUpdatesInstanceAndRelayProjection(t *testing.T) {
 	store, err := OpenStore(":memory:")
 	if err != nil {
@@ -326,8 +370,8 @@ func TestScheduledPowerUpdatesInstanceAndRelayProjection(t *testing.T) {
 	if fake.stopCalls != 1 {
 		t.Fatalf("scheduled stop calls=%d, want 1", fake.stopCalls)
 	}
-	if fake.stopMode != "KeepCharging" {
-		t.Fatalf("scheduled stop did not preserve the installed Agent, mode=%q", fake.stopMode)
+	if fake.stopMode != "StopCharging" {
+		t.Fatalf("scheduled stop did not honor the configured savings mode, mode=%q", fake.stopMode)
 	}
 	overview, err := store.CloudOverview(ctx)
 	if err != nil {

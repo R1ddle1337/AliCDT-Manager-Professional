@@ -145,9 +145,9 @@ func (s *CloudService) runAutomationCycleLocked(ctx context.Context, now time.Ti
 	defer cancel()
 	_, _ = s.store.MarkStaleRelayNodes(cycleCtx, 45*time.Second)
 	for _, minute := range s.scheduledPowerMinutes(now) {
-		s.runScheduledPower(cycleCtx, minute)
+		s.runScheduledPowerAt(cycleCtx, minute, now.Format("15:04"))
 	}
-	s.runKeepAlive(cycleCtx)
+	s.runKeepAliveAt(cycleCtx, now.Format("15:04"))
 	if now.Day() == 1 && now.Hour() == 0 && now.Minute() == 1 {
 		s.runMonthlyReset(cycleCtx)
 	}
@@ -186,13 +186,30 @@ func (s *CloudService) scheduledPowerMinutes(now time.Time) []string {
 	return minutes
 }
 
+// inScheduledDowntime supports both overnight and same-day schedules.
+// Equal or incomplete schedules do not define an interval.
+func inScheduledDowntime(account CloudAccount, hhmm string) bool {
+	stop, start := account.AutoStopTime, account.AutoStartTime
+	if stop == "" || start == "" || stop == start {
+		return false
+	}
+	if stop < start {
+		return hhmm >= stop && hhmm < start
+	}
+	return hhmm >= stop || hhmm < start
+}
+
 func (s *CloudService) runKeepAlive(ctx context.Context) {
+	s.runKeepAliveAt(ctx, time.Now().In(time.FixedZone("Asia/Shanghai", 8*60*60)).Format("15:04"))
+}
+
+func (s *CloudService) runKeepAliveAt(ctx context.Context, hhmm string) {
 	accounts, err := s.store.ListCloudAccounts(ctx, true)
 	if err != nil {
 		return
 	}
 	for _, account := range accounts {
-		if !account.KeepAlive || account.ProtectedInstanceID == "" || account.PowerStopReason != "" {
+		if !account.KeepAlive || account.ProtectedInstanceID == "" || account.PowerStopReason != "" || inScheduledDowntime(account, hhmm) {
 			continue
 		}
 		status, err := s.currentInstanceStatus(ctx, account, account.ProtectedInstanceID)
@@ -229,89 +246,80 @@ func (s *CloudService) runKeepAlive(ctx context.Context) {
 }
 
 func (s *CloudService) runScheduledPower(ctx context.Context, hhmm string) {
+	s.runScheduledPowerAt(ctx, hhmm, hhmm)
+}
+
+func (s *CloudService) runScheduledPowerAt(ctx context.Context, scheduledMinute, currentMinute string) {
 	accounts, err := s.store.ListCloudAccounts(ctx, true)
 	if err != nil {
 		return
 	}
 	for _, account := range accounts {
-		if account.ProtectedInstanceID == "" {
+		if account.ProtectedInstanceID == "" || account.PowerStopReason == "manual" || account.PowerStopReason == "protection" {
 			continue
 		}
-		// The local instance projection makes repeated/delayed scheduler ticks
-		// idempotent while still allowing a configured start to recover an ECS
-		// that was stopped outside the panel (manual_stopped may be false there).
-		instanceStatus, statusErr := s.currentInstanceStatus(ctx, account, account.ProtectedInstanceID)
-		if statusErr != nil || instanceStatus == "" || strings.EqualFold(instanceStatus, "Unknown") {
-			if statusErr != nil {
-				_ = s.store.AddSystemLog(ctx, "warning", "scheduler", fmt.Sprintf("[%s] 定时电源任务跳过：%s", account.Name, friendlyCloudError(statusErr)))
+		paired := account.AutoStartTime != "" && account.AutoStopTime != "" && account.AutoStartTime != account.AutoStopTime
+		downtime := inScheduledDowntime(account, currentMinute)
+		stopDue := account.AutoStopTime == scheduledMinute && (!paired || downtime)
+		startDue := account.AutoStartTime == scheduledMinute && (!paired || !downtime)
+		// Persist intent before calling ECS so a timeout or controller restart
+		// cannot lose the scheduled operation. Paired schedules retry only in
+		// the appropriate interval, independently of the keep-alive toggle.
+		if account.PowerStopReason == "scheduled" {
+			if paired {
+				stopDue, startDue = downtime, !downtime
+			} else if account.AutoStartTime != "" && currentMinute >= account.AutoStartTime {
+				startDue = true
+			}
+		}
+		if !stopDue && !startDue {
+			continue
+		}
+		if account.PowerStopReason == "" {
+			if err := s.store.SetAccountPowerStopReason(ctx, account.ID, "scheduled"); err != nil {
 				continue
 			}
-			if localStatus, localErr := s.store.CloudInstanceStatus(ctx, account.ProtectedInstanceID); localErr == nil && localStatus != "" {
-				instanceStatus = localStatus
-			}
 		}
-		stoppedThisCycle := false
-		if account.AutoStopTime == hhmm && account.PowerStopReason == "" && !strings.EqualFold(instanceStatus, "Stopped") {
-			shutdownMode := account.ShutdownMode
-			if strings.EqualFold(shutdownMode, "StopCharging") {
-				installed, installErr := s.store.RelayAgentInstalledForInstance(ctx, account.ProtectedInstanceID)
-				if installErr != nil || installed {
-					// StopCharging may recreate a spot host and lose the Agent
-					// binary/credentials. Keep the system disk and Relay identity
-					// when a scheduled task owns an installed Agent. Fail closed if
-					// the node lookup is unavailable; a storage error must never
-					// turn into destructive power automation.
-					shutdownMode = "KeepCharging"
-					message := fmt.Sprintf("[%s] 已绑定 Agent，定时关机改用普通停机以保留 Agent", account.Name)
-					if installErr != nil {
-						message = fmt.Sprintf("[%s] 无法确认 Agent 状态，定时关机改用普通停机以避免丢失 Agent: %s", account.Name, installErr)
-					}
-					_ = s.store.AddSystemLog(ctx, "warning", "scheduler", message)
-				}
-			}
-			err := s.clientFor(account).StopInstance(ctx, account.ProtectedInstanceID, shutdownMode)
-			if err == nil {
-				stoppedThisCycle = true
-				_ = s.store.SetAccountPowerStopReason(ctx, account.ID, "scheduled")
-				s.reconcilePowerState(ctx, account.ProtectedInstanceID, "Stopped")
-				message := fmt.Sprintf("[%s] 定时关机已执行 %s", account.Name, hhmm)
-				_ = s.store.AddSystemLog(ctx, "info", "scheduler", message)
-				_ = s.sendTelegram(ctx, message)
-			} else {
-				_ = s.store.AddSystemLog(ctx, "error", "scheduler", fmt.Sprintf("[%s] 定时关机失败: %s", account.Name, friendlyCloudError(err)))
-			}
+		status, err := s.currentInstanceStatus(ctx, account, account.ProtectedInstanceID)
+		if err != nil || (status != "Running" && status != "Stopped" && status != "Starting" && status != "Stopping") {
+			_ = s.store.AddSystemLog(ctx, "warning", "scheduler", fmt.Sprintf("[%s] 定时电源任务等待有效实例状态，下次重试", account.Name))
+			continue
 		}
-		// A scheduled stop must remain in effect until the configured start
-		// minute.  Checking only for a Stopped instance here would start it on
-		// the very next scheduler tick (usually one minute after stopping),
-		// defeating the schedule and repeatedly taking the Agent offline.
-		shouldStart := false
-		if account.AutoStartTime == hhmm {
-			switch account.PowerStopReason {
-			case "scheduled":
-				if strings.EqualFold(instanceStatus, "Running") {
-					// An operator may have started the ECS during the scheduled
-					// downtime. Treat it as recovered so the next stop can run.
-					_ = s.store.SetAccountPowerStopReason(ctx, account.ID, "")
-				} else {
-					shouldStart = true
-				}
-			case "":
-				shouldStart = !strings.EqualFold(instanceStatus, "Running")
+		if stopDue {
+			if status != "Running" {
+				continue
 			}
-		}
-		if !stoppedThisCycle && shouldStart {
-			err := s.clientFor(account).StartInstance(ctx, account.ProtectedInstanceID)
-			if err == nil {
-				_ = s.store.SetAccountPowerStopReason(ctx, account.ID, "")
-				s.reconcilePowerState(ctx, account.ProtectedInstanceID, "Running")
-				message := fmt.Sprintf("[%s] 定时开机已执行 %s", account.Name, hhmm)
-				_ = s.store.AddSystemLog(ctx, "info", "scheduler", message)
-				_ = s.sendTelegram(ctx, message)
-			} else {
-				_ = s.store.AddSystemLog(ctx, "error", "scheduler", fmt.Sprintf("[%s] 定时开机失败: %s", account.Name, friendlyCloudError(err)))
+			// StopCharging retains cloud disks. Honor the selected billing mode;
+			// installing an Agent must never silently turn savings into charges.
+			if err := s.clientFor(account).StopInstance(ctx, account.ProtectedInstanceID, account.ShutdownMode); err != nil {
+				_ = s.store.AddSystemLog(ctx, "error", "scheduler", fmt.Sprintf("[%s] 定时关机失败，下次重试: %s", account.Name, friendlyCloudError(err)))
+				continue
 			}
+			s.reconcilePowerState(ctx, account.ProtectedInstanceID, "Stopped")
+			message := fmt.Sprintf("[%s] 定时关机指令已接受（计划 %s，执行 %s，北京时间，%s）", account.Name, account.AutoStopTime, currentMinute, account.ShutdownMode)
+			_ = s.store.AddSystemLog(ctx, "info", "scheduler", message)
+			_ = s.sendTelegram(ctx, message)
+			continue
 		}
+		if status == "Running" {
+			_ = s.store.SetAccountPowerStopReason(ctx, account.ID, "")
+			s.reconcilePowerState(ctx, account.ProtectedInstanceID, "Running")
+			continue
+		}
+		if status != "Stopped" {
+			continue
+		}
+		if err := s.clientFor(account).StartInstance(ctx, account.ProtectedInstanceID); err != nil {
+			_ = s.store.AddSystemLog(ctx, "error", "scheduler", fmt.Sprintf("[%s] 定时开机失败，将在使用时段重试: %s", account.Name, friendlyCloudError(err)))
+			continue
+		}
+		// Keep the local projection usable immediately. The next inventory sync
+		// remains authoritative for the final ECS state and any changed IP.
+		_ = s.store.SetAccountPowerStopReason(ctx, account.ID, "")
+		s.reconcilePowerState(ctx, account.ProtectedInstanceID, "Running")
+		message := fmt.Sprintf("[%s] 定时开机指令已接受（计划 %s，执行 %s，北京时间），等待 ECS 和 Agent 恢复", account.Name, account.AutoStartTime, currentMinute)
+		_ = s.store.AddSystemLog(ctx, "info", "scheduler", message)
+		_ = s.sendTelegram(ctx, message)
 	}
 }
 
