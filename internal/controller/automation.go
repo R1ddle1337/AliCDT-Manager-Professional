@@ -145,7 +145,10 @@ func (s *CloudService) runAutomationCycleLocked(ctx context.Context, now time.Ti
 	defer cancel()
 	_, _ = s.store.MarkStaleRelayNodes(cycleCtx, 45*time.Second)
 	for _, minute := range s.scheduledPowerMinutes(now) {
-		s.runScheduledPowerAt(cycleCtx, minute, now.Format("15:04"))
+		// Evaluate each replayed minute against itself. Using the latest tick
+		// for every replay could cross the start boundary and wake an instance
+		// one minute early when a cloud call delayed the scheduler.
+		s.runScheduledPowerAt(cycleCtx, minute, minute)
 	}
 	s.runKeepAliveAt(cycleCtx, now.Format("15:04"))
 	if now.Day() == 1 && now.Hour() == 0 && now.Minute() == 1 {
