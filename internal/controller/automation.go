@@ -252,7 +252,17 @@ func (s *CloudService) runScheduledPower(ctx context.Context, hhmm string) {
 		}
 		stoppedThisCycle := false
 		if account.AutoStopTime == hhmm && account.PowerStopReason == "" && !strings.EqualFold(instanceStatus, "Stopped") {
-			err := s.clientFor(account).StopInstance(ctx, account.ProtectedInstanceID, account.ShutdownMode)
+			shutdownMode := account.ShutdownMode
+			if strings.EqualFold(shutdownMode, "StopCharging") {
+				if installed, installErr := s.store.RelayAgentInstalledForInstance(ctx, account.ProtectedInstanceID); installErr == nil && installed {
+					// StopCharging may recreate a spot host and lose the Agent
+					// binary/credentials. Keep the system disk and Relay identity
+					// when a scheduled task owns an installed Agent.
+					shutdownMode = "KeepCharging"
+					_ = s.store.AddSystemLog(ctx, "warning", "scheduler", fmt.Sprintf("[%s] 已绑定 Agent，定时关机改用普通停机以保留 Agent", account.Name))
+				}
+			}
+			err := s.clientFor(account).StopInstance(ctx, account.ProtectedInstanceID, shutdownMode)
 			if err == nil {
 				stoppedThisCycle = true
 				_ = s.store.SetAccountPowerStopReason(ctx, account.ID, "scheduled")

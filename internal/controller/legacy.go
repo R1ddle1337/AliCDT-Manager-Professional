@@ -232,6 +232,20 @@ func (s *Store) MarkRelayNodesForInstance(ctx context.Context, instanceID, statu
 	return nil
 }
 
+// RelayAgentInstalledForInstance reports whether an ECS host currently owns a
+// Relay node. Scheduled StopCharging can recreate the host and lose the Agent
+// installation, so callers can choose a disk-preserving stop mode when a
+// Relay is attached.
+func (s *Store) RelayAgentInstalledForInstance(ctx context.Context, instanceID string) (bool, error) {
+	instanceID = strings.TrimSpace(instanceID)
+	if instanceID == "" {
+		return false, nil
+	}
+	var installed int
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM relay_nodes WHERE ecs_instance_id=?)`, instanceID).Scan(&installed)
+	return installed != 0, err
+}
+
 func (s *Store) SetAccountNoStockNotified(ctx context.Context, accountID int64, notified bool) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE accounts SET nostock_notified=? WHERE id=?`, boolInt(notified), accountID)
 	return err

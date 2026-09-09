@@ -326,6 +326,9 @@ func TestScheduledPowerUpdatesInstanceAndRelayProjection(t *testing.T) {
 	if fake.stopCalls != 1 {
 		t.Fatalf("scheduled stop calls=%d, want 1", fake.stopCalls)
 	}
+	if fake.stopMode != "KeepCharging" {
+		t.Fatalf("scheduled stop did not preserve the installed Agent, mode=%q", fake.stopMode)
+	}
 	overview, err := store.CloudOverview(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -1035,6 +1038,7 @@ type fakeCloudClient struct {
 	startErr       error
 	startCalls     int
 	stopCalls      int
+	stopMode       string
 }
 
 func (client *fakeCloudClient) GetInstanceStatus(context.Context, string) (string, error) {
@@ -1054,8 +1058,9 @@ func (client *fakeCloudClient) StartInstance(context.Context, string) error {
 	return client.startErr
 }
 
-func (client *fakeCloudClient) StopInstance(context.Context, string, string) error {
+func (client *fakeCloudClient) StopInstance(_ context.Context, _ string, mode string) error {
 	client.stopCalls++
+	client.stopMode = mode
 	return client.stopErr
 }
 
