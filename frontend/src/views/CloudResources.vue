@@ -180,7 +180,7 @@
             <p class="field-hint">新账户默认自动排空。达到阈值后从入口池撤下该账户的 Relay，并停止新连接；已建立的 TCP 连接会自然结束，月初流量恢复后自动重新开放。</p>
           </div>
           <div class="field-wide setting-toggle-row">
-            <div><strong>抢占实例自动保活</strong><p class="field-hint">每分钟检查实例状态，发现被回收后自动尝试重新启动。</p></div>
+            <div><strong>抢占实例自动保活</strong><p class="field-hint">仅能自动启动仍存在且处于停机状态的实例；阿里云彻底释放后无法用原实例 ID 恢复。绑定 Agent 的定时任务会使用普通停机，避免计划任务主动释放实例。</p></div>
             <button type="button" class="toggle" :class="form.keep_alive ? 'toggle-on' : ''" :aria-pressed="form.keep_alive" @click="form.keep_alive = !form.keep_alive"><span></span></button>
           </div>
           <div><label class="field-label">定时关机</label><input v-model="form.auto_stop_time" type="time" class="input" /></div>
