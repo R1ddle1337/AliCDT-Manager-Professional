@@ -3251,6 +3251,33 @@ func (s *Store) SaveCloudSync(ctx context.Context, account CloudAccount, instanc
 				return err
 			}
 		}
+		// A spot instance can disappear between two inventory syncs. When the
+		// account has exactly one replacement candidate, carry the binding and
+		// Relay association forward automatically; operators should not need to
+		// edit the account after every reclaim. Multiple candidates remain
+		// ambiguous and are left for an explicit selection in the console.
+		boundID := strings.TrimSpace(account.ProtectedInstanceID)
+		boundSeen := false
+		for _, id := range seen {
+			if id == boundID {
+				boundSeen = true
+				break
+			}
+		}
+		if boundID != "" && !boundSeen && len(instances) == 1 {
+			candidate := instances[0]
+			if candidate.InstanceID != "" {
+				if _, err := tx.ExecContext(ctx, `UPDATE accounts SET instance_id=?,manual_stopped=0,power_stop_reason='' WHERE id=? AND instance_id=?`, candidate.InstanceID, account.ID, boundID); err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET ecs_instance_id=?,region_id=?,public_ip=CASE WHEN ?<>'' THEN ? ELSE public_ip END WHERE cloud_account_id=? AND ecs_instance_id=?`, candidate.InstanceID, candidate.RegionID, candidate.PublicIP, candidate.PublicIP, account.ID, boundID); err != nil {
+					return err
+				}
+				if err := insertEvent(ctx, tx, "", "warning", "cloud", fmt.Sprintf("[%s] 原绑定 ECS 已释放，已自动绑定唯一新实例 %s", account.Name, candidate.InstanceID), now); err != nil {
+					return err
+				}
+			}
+		}
 		if len(seen) == 0 {
 			if _, err := tx.ExecContext(ctx, `DELETE FROM instances WHERE account_id=?`, account.ID); err != nil {
 				return err

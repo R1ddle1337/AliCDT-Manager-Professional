@@ -324,6 +324,48 @@ func TestCloudAccountKeepAliveDefaultsOnButCanBeDisabled(t *testing.T) {
 	}
 }
 
+func TestCloudSyncRebindsUniqueReplacementInstance(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	account, err := store.CreateCloudAccount(ctx, CloudAccountRequest{
+		Name: "rebind", AccessKeyID: "key", AccessKeySecret: "secret", RegionID: "cn-hongkong", SiteType: "international", ProtectedInstanceID: "i-old",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveCloudSync(ctx, account, []CloudInstanceUpdate{{InstanceID: "i-old", Status: "Running", RegionID: "cn-hongkong"}}, true, "", 0, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateEnrollmentToken(ctx, "rebind-agent", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	enrolled, err := store.EnrollAgent(ctx, protocol.AgentEnrollmentRequest{Token: "rebind-agent", NodeName: "relay", ECSInstanceID: "i-old"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveCloudSync(ctx, account, []CloudInstanceUpdate{{InstanceID: "i-new", Status: "Running", RegionID: "cn-hongkong", PublicIP: "203.0.113.99"}}, true, "", 0, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	accounts, err := store.ListCloudAccounts(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accounts) != 1 || accounts[0].ProtectedInstanceID != "i-new" || accounts[0].InstanceBindingValid == false {
+		t.Fatalf("unique replacement was not rebound: %+v", accounts)
+	}
+	nodes, err := store.ListRelayNodes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || nodes[0].ID != enrolled.AgentID || nodes[0].ECSInstanceID != "i-new" || nodes[0].PublicIP != "203.0.113.99" {
+		t.Fatalf("Relay association was not moved to replacement: %+v", nodes)
+	}
+}
+
 func TestScheduledDowntimeHandlesOvernightWindow(t *testing.T) {
 	account := CloudAccount{AutoStopTime: "00:03", AutoStartTime: "12:04"}
 	for _, item := range []struct {
