@@ -284,7 +284,19 @@ func (s *CloudService) runScheduledPowerAt(ctx context.Context, scheduledMinute,
 			}
 		}
 		status, err := s.currentInstanceStatus(ctx, account, account.ProtectedInstanceID)
-		if err != nil || (status != "Running" && status != "Stopped" && status != "Starting" && status != "Stopping") {
+		if err != nil {
+			message := strings.ToLower(err.Error())
+			if strings.Contains(message, "not found") || strings.Contains(message, "does not exist") || strings.Contains(message, "released") {
+				// Do not keep a released instance in the scheduled-stop state;
+				// that would cause a warning and API lookup every minute forever.
+				_ = s.store.SetAccountPowerStopReason(ctx, account.ID, "")
+				_ = s.store.AddSystemLog(ctx, "warning", "scheduler", fmt.Sprintf("[%s] 绑定 ECS 已不存在，请重新选择实例；已暂停该账户的定时电源任务", account.Name))
+				continue
+			}
+			_ = s.store.AddSystemLog(ctx, "warning", "scheduler", fmt.Sprintf("[%s] 定时电源任务等待有效实例状态，下次重试", account.Name))
+			continue
+		}
+		if status != "Running" && status != "Stopped" && status != "Starting" && status != "Stopping" {
 			_ = s.store.AddSystemLog(ctx, "warning", "scheduler", fmt.Sprintf("[%s] 定时电源任务等待有效实例状态，下次重试", account.Name))
 			continue
 		}
@@ -292,14 +304,24 @@ func (s *CloudService) runScheduledPowerAt(ctx context.Context, scheduledMinute,
 			if status != "Running" {
 				continue
 			}
-			// StopCharging retains cloud disks. Honor the selected billing mode;
-			// installing an Agent must never silently turn savings into charges.
-			if err := s.clientFor(account).StopInstance(ctx, account.ProtectedInstanceID, account.ShutdownMode); err != nil {
+			shutdownMode := account.ShutdownMode
+			if strings.EqualFold(shutdownMode, "StopCharging") {
+				// A spot ECS can be permanently reclaimed while its compute
+				// resources are released. That breaks the promise of an automatic
+				// start and leaves the account bound to a missing instance. Keep
+				// spot resources for scheduled cycles; operators can still choose
+				// economical stops manually when a deliberate release is wanted.
+				if spot, spotErr := s.store.CloudInstanceIsSpot(ctx, account.ProtectedInstanceID); spotErr != nil || spot {
+					shutdownMode = "KeepCharging"
+					_ = s.store.AddSystemLog(ctx, "warning", "scheduler", fmt.Sprintf("[%s] 抢占式 ECS 为保证定时开机和 Agent 恢复，定时关机改用普通停机", account.Name))
+				}
+			}
+			if err := s.clientFor(account).StopInstance(ctx, account.ProtectedInstanceID, shutdownMode); err != nil {
 				_ = s.store.AddSystemLog(ctx, "error", "scheduler", fmt.Sprintf("[%s] 定时关机失败，下次重试: %s", account.Name, friendlyCloudError(err)))
 				continue
 			}
 			s.reconcilePowerState(ctx, account.ProtectedInstanceID, "Stopped")
-			message := fmt.Sprintf("[%s] 定时关机指令已接受（计划 %s，执行 %s，北京时间，%s）", account.Name, account.AutoStopTime, currentMinute, account.ShutdownMode)
+			message := fmt.Sprintf("[%s] 定时关机指令已接受（计划 %s，执行 %s，北京时间，%s）", account.Name, account.AutoStopTime, currentMinute, shutdownMode)
 			_ = s.store.AddSystemLog(ctx, "info", "scheduler", message)
 			_ = s.sendTelegram(ctx, message)
 			continue

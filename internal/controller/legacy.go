@@ -198,6 +198,12 @@ func (s *Store) CloudInstanceStatus(ctx context.Context, instanceID string) (str
 	return status, err
 }
 
+func (s *Store) CloudInstanceIsSpot(ctx context.Context, instanceID string) (bool, error) {
+	var spot int
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(is_spot,0) FROM instances WHERE instance_id=?`, instanceID).Scan(&spot)
+	return spot != 0, err
+}
+
 func (s *Store) SetAccountManualStopped(ctx context.Context, accountID int64, stopped bool) error {
 	if stopped {
 		return s.SetAccountPowerStopReason(ctx, accountID, "manual")

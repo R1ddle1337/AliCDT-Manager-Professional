@@ -352,7 +352,7 @@ func TestScheduledPowerUpdatesInstanceAndRelayProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveCloudSync(ctx, account, []CloudInstanceUpdate{{InstanceID: "i-scheduled", InstanceName: "edge", RegionID: "cn-hongkong", Status: "Running", PublicIP: "203.0.113.40"}}, true, "", 0, false, ""); err != nil {
+	if err := store.SaveCloudSync(ctx, account, []CloudInstanceUpdate{{InstanceID: "i-scheduled", InstanceName: "edge", RegionID: "cn-hongkong", Status: "Running", PublicIP: "203.0.113.40", IsSpot: true}}, true, "", 0, false, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.CreateEnrollmentToken(ctx, "scheduled-agent", time.Hour); err != nil {
@@ -370,8 +370,8 @@ func TestScheduledPowerUpdatesInstanceAndRelayProjection(t *testing.T) {
 	if fake.stopCalls != 1 {
 		t.Fatalf("scheduled stop calls=%d, want 1", fake.stopCalls)
 	}
-	if fake.stopMode != "StopCharging" {
-		t.Fatalf("scheduled stop did not honor the configured savings mode, mode=%q", fake.stopMode)
+	if fake.stopMode != "KeepCharging" {
+		t.Fatalf("scheduled stop did not protect the spot Agent, mode=%q", fake.stopMode)
 	}
 	overview, err := store.CloudOverview(ctx)
 	if err != nil {

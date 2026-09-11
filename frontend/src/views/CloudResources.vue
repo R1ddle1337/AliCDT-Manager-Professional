@@ -90,7 +90,8 @@
 
         <div v-if="account.instance_id && !account.instance_binding_valid" class="account-row-wide sync-warning">
           <strong>绑定实例已不存在</strong>
-          <span>当前绑定的 ECS 已被释放，保活和定时开关机不会作用于新实例；请编辑账户并选择当前 ECS 后保存。</span>
+          <span>当前绑定的 ECS 已被释放，保活和定时开关机已暂停；请选择当前 ECS 后恢复。</span>
+          <button class="btn-ghost border border-orange-200 px-2 py-1 text-xs text-orange-700" type="button" @click="openEdit(account)">重新绑定实例</button>
         </div>
 
         <p class="account-row-wide traffic-disclaimer">阿里云接口不提供单个 ECS 的 CDT 用量；同一账户下多个实例共享此快照与保护阈值。</p>
