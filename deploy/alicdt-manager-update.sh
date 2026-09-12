@@ -128,7 +128,6 @@ source_fingerprint() {
 
 controller_build_version="$(git -C "$REPO_DIR" rev-parse --short=12 HEAD)"
 agent_build_version="agent-$(source_fingerprint cmd/relay-agent internal/agent internal/relay internal/protocol go.mod go.sum Dockerfile.controller Dockerfile.agent)"
-dispatcher_build_version="dispatcher-$(source_fingerprint cmd/dispatcher internal/dispatcher internal/protocol go.mod go.sum Dockerfile.controller Dockerfile.dispatcher)"
 
 # Keep the legacy-Agent compatibility bridge installed on the host. New
 # Agents use force_update directly; old Agents are upgraded by this isolated
@@ -143,7 +142,7 @@ write_status "running" "正在构建 Go 控制器和 Agent 镜像" "$request_id"
 if docker image inspect alicdt-controller:production >/dev/null 2>&1; then
   docker tag alicdt-controller:production "$rollback_image"
 fi
-CDT_BUILD_VERSION="$controller_build_version" CDT_AGENT_BUILD_VERSION="$agent_build_version" CDT_DISPATCHER_BUILD_VERSION="$dispatcher_build_version" \
+CDT_BUILD_VERSION="$controller_build_version" CDT_AGENT_BUILD_VERSION="$agent_build_version" \
   docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build --pull controller
 
 write_status "running" "正在备份数据库并切换服务" "$request_id" "$target_commit" "$started_at" ""
