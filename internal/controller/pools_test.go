@@ -10,6 +10,22 @@ import (
 	"github.com/R1ddle1337/AliCDT-Manager-Professional/internal/protocol"
 )
 
+func TestRelayPoolPrioritySelectsLowestReadyTier(t *testing.T) {
+	pool := RelayPool{Enabled: true, Members: []RelayPoolMember{
+		{RelayNodeID: "primary", Priority: 1, Enabled: true, Status: "online", PublicIP: "203.0.113.10"},
+		{RelayNodeID: "backup", Priority: 2, Enabled: true, Status: "online", PublicIP: "203.0.113.11"},
+	}}
+	preferred := preferredRelayPoolMembers(pool)
+	if !preferred["primary"] || preferred["backup"] {
+		t.Fatalf("expected primary tier only, got %#v", preferred)
+	}
+	pool.Members[0].Status = "offline"
+	preferred = preferredRelayPoolMembers(pool)
+	if preferred["primary"] || !preferred["backup"] {
+		t.Fatalf("expected backup tier after primary outage, got %#v", preferred)
+	}
+}
+
 func TestRelayPoolMemberJSONRetainsKnownZeroTraffic(t *testing.T) {
 	member := RelayPoolMember{TrafficKnown: true}
 	encoded, err := json.Marshal(member)

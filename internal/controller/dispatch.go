@@ -34,9 +34,10 @@ func (s *Store) DispatcherPoolSnapshot(ctx context.Context, poolID string) (Disp
 		Backends:              make([]DispatcherBackend, 0),
 		GeneratedAt:           time.Now().UTC(),
 	}
+	preferred := preferredRelayPoolMembers(pool)
 	if pool.Enabled {
 		for _, member := range pool.Members {
-			if !member.Enabled || !strings.EqualFold(member.Status, "online") || !validRelayIP(member.PublicIP) {
+			if !preferred[member.RelayNodeID] {
 				continue
 			}
 			backend := DispatcherBackend{

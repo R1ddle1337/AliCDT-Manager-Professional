@@ -69,6 +69,9 @@ func normalizeRelayPoolRequestWithDrain(request CreateRelayPoolRequest) (CreateR
 		if strings.TrimSpace(member.RelayNodeID) == "" {
 			return request, false, false, errors.New("relay member ID is required")
 		}
+		if member.Priority != nil && (*member.Priority < 1 || *member.Priority > 999) {
+			return request, false, false, errors.New("Relay 优先级须为 1–999 的整数")
+		}
 		if seenMembers[member.RelayNodeID] {
 			return request, false, false, errors.New("duplicate relay member")
 		}
@@ -145,7 +148,7 @@ func (s *Store) CreateRelayPool(ctx context.Context, request CreateRelayPoolRequ
 		if err != nil {
 			return RelayPool{}, err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO relay_pool_members(id,pool_id,relay_node_id,service_id,weight,enabled,created_at) VALUES(?,?,?,?,?,?,?)`, memberID, poolID, member.RelayNodeID, serviceID, member.Weight, boolInt(memberEnabled), now.Format(time.RFC3339Nano)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO relay_pool_members(id,pool_id,relay_node_id,service_id,weight,priority,enabled,created_at) VALUES(?,?,?,?,?,?,?,?)`, memberID, poolID, member.RelayNodeID, serviceID, member.Weight, relayMemberPriority(member.Priority, 1), boolInt(memberEnabled), now.Format(time.RFC3339Nano)); err != nil {
 			return RelayPool{}, err
 		}
 		changedNodes[member.RelayNodeID] = true
@@ -255,7 +258,7 @@ func (s *Store) UpdateRelayPool(ctx context.Context, id string, request CreateRe
 		}
 		memberEnabled := pointerBool(member.Enabled, true)
 		if old, ok := existingMembers[member.RelayNodeID]; ok {
-			if _, err := tx.ExecContext(ctx, `UPDATE relay_pool_members SET weight=?,enabled=? WHERE id=?`, member.Weight, boolInt(memberEnabled), old.ID); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE relay_pool_members SET weight=?,priority=?,enabled=? WHERE id=?`, member.Weight, relayMemberPriority(member.Priority, old.Priority), boolInt(memberEnabled), old.ID); err != nil {
 				return RelayPool{}, err
 			}
 			if err := updatePoolServiceTx(ctx, tx, old.ServiceID, request, memberEnabled && enabled); err != nil {
@@ -270,7 +273,7 @@ func (s *Store) UpdateRelayPool(ctx context.Context, id string, request CreateRe
 			if err != nil {
 				return RelayPool{}, err
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO relay_pool_members(id,pool_id,relay_node_id,service_id,weight,enabled,created_at) VALUES(?,?,?,?,?,?,?)`, randomID("poolmember"), id, member.RelayNodeID, serviceID, member.Weight, boolInt(memberEnabled), now); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO relay_pool_members(id,pool_id,relay_node_id,service_id,weight,priority,enabled,created_at) VALUES(?,?,?,?,?,?,?,?)`, randomID("poolmember"), id, member.RelayNodeID, serviceID, member.Weight, relayMemberPriority(member.Priority, 1), boolInt(memberEnabled), now); err != nil {
 				return RelayPool{}, err
 			}
 		}
@@ -569,7 +572,7 @@ func (s *Store) GetRelayPool(ctx context.Context, id string) (RelayPool, error) 
 func (s *Store) listRelayPoolMembers(ctx context.Context, poolID string) ([]RelayPoolMember, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT rpm.id,rpm.pool_id,rpm.relay_node_id,rn.name,COALESCE(rn.public_ip,''),rn.status,
 		CASE WHEN ((COALESCE(a.protection_triggered,0)=1 OR COALESCE(a.protection_predictive,0)=1) AND (COALESCE(a.protection_mode,'alert_only')='drain_relay' OR COALESCE(rp.auto_drain,1)=1)) OR COALESCE(rn.update_status,'idle') IN ('draining','updating') THEN 1 ELSE 0 END,
-		COALESCE(rn.last_seen_at,''),rn.current_revision,rn.desired_revision,COALESCE(rn.service_status_json,'[]'),rpm.weight,rpm.enabled,COALESCE(rpm.service_id,''),
+		COALESCE(rn.last_seen_at,''),rn.current_revision,rn.desired_revision,COALESCE(rn.service_status_json,'[]'),rpm.weight,rpm.priority,rpm.enabled,COALESCE(rpm.service_id,''),
 		 rn.cloud_account_id,COALESCE(a.name,''),COALESCE(ts.used_gb,0),CASE WHEN ts.account_id IS NOT NULL AND ts.synced_at IS NOT NULL THEN 1 ELSE 0 END,
 		COALESCE(ts.synced_at,''),ts.previous_used_gb,ts.previous_synced_at,
 		COALESCE(a.traffic_limit_gb,0),COALESCE(a.threshold_percent,0),COALESCE(a.protection_mode,''),COALESCE(a.protection_triggered,0),COALESCE(a.protection_predictive,0),
@@ -577,7 +580,7 @@ func (s *Store) listRelayPoolMembers(ctx context.Context, poolID string) ([]Rela
 		FROM relay_pool_members rpm JOIN relay_nodes rn ON rn.id=rpm.relay_node_id JOIN relay_pools rp ON rp.id=rpm.pool_id
 		LEFT JOIN accounts a ON a.id=rn.cloud_account_id OR (rn.cloud_account_id IS NULL AND rn.ecs_instance_id IN (SELECT instance_id FROM instances WHERE account_id=a.id))
 		LEFT JOIN account_traffic_snapshots ts ON ts.account_id=a.id
-		WHERE rpm.pool_id=? ORDER BY rn.name`, poolID)
+		WHERE rpm.pool_id=? ORDER BY rpm.priority,rn.name`, poolID)
 	if err != nil {
 		return nil, err
 	}
@@ -593,7 +596,7 @@ func (s *Store) listRelayPoolMembers(ctx context.Context, poolID string) ([]Rela
 		var cloudAccountID sql.NullInt64
 		var currentRevision, desiredRevision int64
 		if err := rows.Scan(&m.ID, &m.PoolID, &m.RelayNodeID, &m.RelayNodeName, &m.PublicIP, &rawStatus, &draining,
-			&lastSeen, &currentRevision, &desiredRevision, &serviceStatusJSON, &m.Weight, &enabled, &m.ServiceID,
+			&lastSeen, &currentRevision, &desiredRevision, &serviceStatusJSON, &m.Weight, &m.Priority, &enabled, &m.ServiceID,
 			&cloudAccountID, &m.CloudAccountName, &m.TrafficUsedGB, &trafficKnown, &trafficSyncedAt, &previousTrafficUsed, &previousTrafficSynced, &m.TrafficLimitGB,
 			&m.TrafficThresholdPercent, &m.ProtectionMode, &protectionTriggered, &protectionPredictive, &protectionActionCompleted, &protectionTriggeredAt); err != nil {
 			return nil, err
@@ -758,10 +761,11 @@ func (s *Store) RefreshRelayPoolDNS(ctx context.Context, poolID string) error {
 	if recordName == "" {
 		recordName = pool.Hostname
 	}
+	preferred := preferredRelayPoolMembers(pool)
 	for _, member := range pool.Members {
 		key := member.RelayNodeID
 		seen[key] = true
-		enabled := pool.Enabled && member.Enabled && strings.EqualFold(member.Status, "online") && validRelayIP(member.PublicIP)
+		enabled := preferred[member.RelayNodeID]
 		var existing *DNSManagedRecord
 		for i := range records {
 			// Match by provider/name/type/member even when another pool owns the
@@ -885,7 +889,7 @@ func isUniqueConstraint(err error) bool {
 // sharedPoolRecordEligible applies a conservative AND policy to a shared RR:
 // every port-specific pool using the address must have an eligible member.
 func (s *Store) sharedPoolRecordEligible(ctx context.Context, recordID, currentPoolID string, currentEligible bool) (bool, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT b.pool_id,rp.enabled,rpm.enabled,rn.status,
+	rows, err := s.db.QueryContext(ctx, `SELECT b.pool_id,dr.relay_node_id,rp.enabled,rpm.enabled,rn.status,
 		CASE WHEN ((COALESCE(a.protection_triggered,0)=1 OR COALESCE(a.protection_predictive,0)=1) AND (COALESCE(a.protection_mode,'alert_only')='drain_relay' OR COALESCE(rp.auto_drain,1)=1)) OR COALESCE(rn.update_status,'idle') IN ('draining','updating') THEN 1 ELSE 0 END,
 		COALESCE(rn.public_ip,''),COALESCE(rn.last_seen_at,''),rn.current_revision,rn.desired_revision,COALESCE(rn.service_status_json,'[]'),COALESCE(rpm.service_id,'')
 		FROM dns_managed_record_pools b JOIN relay_pools rp ON rp.id=b.pool_id
@@ -899,22 +903,45 @@ func (s *Store) sharedPoolRecordEligible(ctx context.Context, recordID, currentP
 	defer rows.Close()
 	eligible := currentEligible
 	now := time.Now().UTC()
+	type bindingState struct {
+		poolID, relayNodeID, rawStatus, publicIP, lastSeen, serviceJSON, serviceID string
+		poolEnabled, memberEnabled, draining                                       int
+		currentRevision, desiredRevision                                           int64
+	}
+	bindings := make([]bindingState, 0)
 	for rows.Next() {
-		var bindingPoolID, rawStatus, publicIP, lastSeen, serviceJSON, serviceID string
+		var bindingPoolID, relayNodeID, rawStatus, publicIP, lastSeen, serviceJSON, serviceID string
 		var poolEnabled, memberEnabled, draining int
 		var currentRevision, desiredRevision int64
-		if err := rows.Scan(&bindingPoolID, &poolEnabled, &memberEnabled, &rawStatus, &draining, &publicIP, &lastSeen, &currentRevision, &desiredRevision, &serviceJSON, &serviceID); err != nil {
+		if err := rows.Scan(&bindingPoolID, &relayNodeID, &poolEnabled, &memberEnabled, &rawStatus, &draining, &publicIP, &lastSeen, &currentRevision, &desiredRevision, &serviceJSON, &serviceID); err != nil {
 			return false, err
 		}
-		if bindingPoolID == currentPoolID {
+		bindings = append(bindings, bindingState{bindingPoolID, relayNodeID, rawStatus, publicIP, lastSeen, serviceJSON, serviceID, poolEnabled, memberEnabled, draining, currentRevision, desiredRevision})
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	_ = rows.Close()
+	for _, binding := range bindings {
+		if binding.poolID == currentPoolID {
 			continue
 		}
-		status := relayPoolMemberStatus(now, rawStatus, draining != 0, lastSeen, currentRevision, desiredRevision, serviceID, serviceJSON)
-		if poolEnabled == 0 || memberEnabled == 0 || status != "online" || !validRelayIP(publicIP) {
+		status := relayPoolMemberStatus(now, binding.rawStatus, binding.draining != 0, binding.lastSeen, binding.currentRevision, binding.desiredRevision, binding.serviceID, binding.serviceJSON)
+		pool, poolErr := s.GetRelayPool(ctx, binding.poolID)
+		if poolErr != nil {
+			eligible = false
+			continue
+		}
+		// A lower priority member is intentionally not part of this RR while a
+		// preferred member is healthy, so it must not veto that preferred RR.
+		if !preferredRelayPoolMembers(pool)[binding.relayNodeID] {
+			continue
+		}
+		if binding.poolEnabled == 0 || binding.memberEnabled == 0 || status != "online" || !validRelayIP(binding.publicIP) {
 			eligible = false
 		}
 	}
-	return eligible, rows.Err()
+	return eligible, nil
 }
 
 func (s *Store) RefreshAllRelayPoolDNS(ctx context.Context) error {
@@ -935,6 +962,53 @@ func validRelayIP(value string) bool {
 	ip := net.ParseIP(strings.TrimSpace(value))
 	return ip != nil && !ip.IsUnspecified()
 }
+
+// preferredRelayPoolMembers returns the lowest priority tier that is currently
+// ready. Nodes in the same tier remain active together; higher numbers are a
+// fallback for an offline, stale or draining lower tier.
+func preferredRelayPoolMembers(pool RelayPool) map[string]bool {
+	preferred := make(map[string]bool)
+	if !pool.Enabled {
+		return preferred
+	}
+	minimum := 0
+	for _, member := range pool.Members {
+		if !member.Enabled || !strings.EqualFold(member.Status, "online") || !validRelayIP(member.PublicIP) {
+			continue
+		}
+		priority := member.Priority
+		if priority < 1 {
+			priority = 1
+		}
+		if minimum == 0 || priority < minimum {
+			minimum = priority
+		}
+	}
+	if minimum == 0 {
+		return preferred
+	}
+	for _, member := range pool.Members {
+		priority := member.Priority
+		if priority < 1 {
+			priority = 1
+		}
+		if member.Enabled && priority == minimum && strings.EqualFold(member.Status, "online") && validRelayIP(member.PublicIP) {
+			preferred[member.RelayNodeID] = true
+		}
+	}
+	return preferred
+}
+
+func relayMemberPriority(value *int, fallback int) int {
+	if value != nil && *value >= 1 && *value <= 999 {
+		return *value
+	}
+	if fallback >= 1 && fallback <= 999 {
+		return fallback
+	}
+	return 1
+}
+
 func pointerBool(value *bool, fallback bool) bool {
 	if value == nil {
 		return fallback

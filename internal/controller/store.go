@@ -477,6 +477,7 @@ type RelayPoolMember struct {
 	PublicIP         string `json:"public_ip,omitempty"`
 	Status           string `json:"status"`
 	Weight           int    `json:"weight"`
+	Priority         int    `json:"priority"`
 	Enabled          bool   `json:"enabled"`
 	ServiceID        string `json:"service_id,omitempty"`
 	CloudAccountID   *int64 `json:"cloud_account_id,omitempty"`
@@ -554,6 +555,7 @@ type CreateRelayPoolRequest struct {
 type CreateRelayPoolMember struct {
 	RelayNodeID string `json:"relay_node_id"`
 	Weight      int    `json:"weight"`
+	Priority    *int   `json:"priority,omitempty"`
 	Enabled     *bool  `json:"enabled,omitempty"`
 }
 
@@ -910,6 +912,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			relay_node_id TEXT NOT NULL REFERENCES relay_nodes(id) ON DELETE CASCADE,
 			service_id TEXT REFERENCES relay_services(id) ON DELETE SET NULL,
 			weight INTEGER NOT NULL DEFAULT 1,
+			priority INTEGER NOT NULL DEFAULT 1,
 			enabled INTEGER NOT NULL DEFAULT 1,
 			created_at TEXT NOT NULL,
 			UNIQUE(pool_id,relay_node_id)
@@ -1040,6 +1043,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	if err := s.ensureColumn(ctx, "relay_pools", "front_door_mode", "TEXT NOT NULL DEFAULT 'relay_dns'"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "relay_pool_members", "priority", "INTEGER NOT NULL DEFAULT 1"); err != nil {
 		return err
 	}
 	for _, column := range []struct {
