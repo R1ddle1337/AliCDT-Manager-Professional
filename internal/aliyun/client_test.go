@@ -2,6 +2,7 @@ package aliyun
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -109,7 +110,8 @@ func TestGetInstancesUsesEIPBandwidthWhenInstanceBandwidthIsZero(t *testing.T) {
 func TestCreateReplacementInstanceUsesTemplate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
-		if r.Form.Get("Action") != "RunInstances" || r.Form.Get("ImageId") != "img" || r.Form.Get("VSwitchId") != "vsw" || r.Form.Get("SecurityGroupId") != "sg" {
+		decoded, _ := base64.StdEncoding.DecodeString(r.Form.Get("UserData"))
+		if r.Form.Get("Action") != "RunInstances" || r.Form.Get("ImageId") != "img" || r.Form.Get("VSwitchId") != "vsw" || r.Form.Get("SecurityGroupId") != "sg" || string(decoded) != "echo hi" {
 			t.Fatalf("unexpected RunInstances form: %v", r.Form)
 		}
 		_, _ = w.Write([]byte(`{"InstanceIdSets":{"InstanceIdSet":["i-new"]}}`))
@@ -117,7 +119,7 @@ func TestCreateReplacementInstanceUsesTemplate(t *testing.T) {
 	defer server.Close()
 	client := NewClient("id", "secret", "cn-hongkong", "china")
 	client.ECSEndpoint = server.URL
-	id, err := client.CreateReplacementInstance(context.Background(), map[string]string{"ImageId": "img", "InstanceType": "ecs.c7.large", "VSwitchId": "vsw", "SecurityGroupId": "sg"})
+	id, err := client.CreateReplacementInstance(context.Background(), map[string]string{"ImageId": "img", "InstanceType": "ecs.c7.large", "VSwitchId": "vsw", "SecurityGroupId": "sg", "UserData": "echo hi"})
 	if err != nil || id != "i-new" {
 		t.Fatalf("replacement creation failed: id=%q err=%v", id, err)
 	}

@@ -269,6 +269,9 @@ func (c *Client) CreateReplacementInstance(ctx context.Context, template map[str
 			params[key] = value
 		}
 	}
+	if userData := params["UserData"]; userData != "" {
+		params["UserData"] = base64.StdEncoding.EncodeToString([]byte(userData))
+	}
 	if params["ImageId"] == "" || params["InstanceType"] == "" || params["VSwitchId"] == "" || params["SecurityGroupId"] == "" {
 		return "", errors.New("replacement template is incomplete (ImageId, InstanceType, VSwitchId and SecurityGroupId are required)")
 	}
