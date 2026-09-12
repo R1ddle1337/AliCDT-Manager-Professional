@@ -185,9 +185,9 @@
             <div><strong>抢占实例自动保活</strong><p class="field-hint">仅能自动启动仍存在且处于停机状态的实例；阿里云彻底释放后无法用原实例 ID 恢复。绑定 Agent 的定时任务会使用普通停机，避免计划任务主动释放实例。</p></div>
             <button type="button" class="toggle" :class="form.keep_alive ? 'toggle-on' : ''" :aria-pressed="form.keep_alive" @click="form.keep_alive = !form.keep_alive"><span></span></button>
           </div>
-          <div><label class="field-label">定时关机</label><input v-model="form.auto_stop_time" type="time" class="input" /></div>
-          <div><label class="field-label">定时开机</label><input v-model="form.auto_start_time" type="time" class="input" /></div>
-          <div class="field-wide schedule-actions"><span class="field-hint">两个时间都留空即可关闭定时开关机。</span><button type="button" class="btn-ghost border border-slate-200 px-2 py-1 text-xs" :disabled="!form.auto_start_time && !form.auto_stop_time" @click="clearSchedule">关闭定时开关机</button></div>
+          <div><label class="field-label">定时关机</label><input v-model="form.auto_stop_time" type="time" class="input" :disabled="!scheduleEnabled" /></div>
+          <div><label class="field-label">定时开机</label><input v-model="form.auto_start_time" type="time" class="input" :disabled="!scheduleEnabled" /></div>
+          <div class="field-wide schedule-actions"><div><strong>启用定时开关机</strong><p class="field-hint">关闭后保留时间配置，下次需要时可直接启用。</p></div><button type="button" class="toggle" :class="scheduleEnabled ? 'toggle-on' : ''" :aria-pressed="scheduleEnabled" @click="toggleSchedule"><span></span></button></div>
           <p class="field-wide field-hint">节省停机会释放计算资源和固定公网 IP，但会保留云盘数据；抢占式实例开机可能因库存不足而延迟。已安装 Agent 的实例会在开机时段持续重试恢复，建议绑定 EIP 保持入口地址不变。</p>
           <p v-if="form.protection_mode === 'stop_ecs'" class="field-wide field-hint">流量超过阈值后，会对上面绑定的实例发送一次停机指令；失败会在下次有效同步时重试。</p>
         </div>
@@ -227,6 +227,7 @@ const totalTraffic = computed(() => store.cloud.traffic.reduce((sum, snapshot) =
 const activeProtectionCount = computed(() => store.cloud.accounts.filter(account => account.protection_triggered).length)
 const protectedAccounts = computed(() => store.cloud.accounts.filter(account => account.protection_triggered))
 const normalizedSearch = computed(() => search.value.toLowerCase())
+const scheduleEnabled = computed(() => Boolean(form.value.auto_start_time || form.value.auto_stop_time))
 const filteredAccounts = computed(() => {
   const term = normalizedSearch.value
   if (!term) return store.cloud.accounts
@@ -319,6 +320,11 @@ function openEdit(account) {
 function clearSchedule() {
   form.value.auto_start_time = ''
   form.value.auto_stop_time = ''
+}
+
+function toggleSchedule() {
+  if (scheduleEnabled.value) clearSchedule()
+  else form.value.auto_start_time = '08:00'
 }
 
 async function saveAccount() {
