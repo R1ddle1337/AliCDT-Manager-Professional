@@ -3270,9 +3270,33 @@ func (s *Store) SaveCloudSync(ctx context.Context, account CloudAccount, instanc
 				break
 			}
 		}
-		if boundID != "" && !boundSeen && len(instances) == 1 {
-			candidate := instances[0]
-			if candidate.InstanceID != "" {
+		if boundID != "" && !boundSeen {
+			// Prefer a replacement that preserves the old instance's logical
+			// identity. Spot reclaim can briefly expose several candidates; a
+			// unique name/type match is safe to bind automatically, while an
+			// ambiguous inventory remains pending for an explicit choice.
+			var oldName, oldType string
+			_ = tx.QueryRowContext(ctx, `SELECT COALESCE(instance_name,''),COALESCE(instance_type,'') FROM instances WHERE account_id=? AND instance_id=?`, account.ID, boundID).Scan(&oldName, &oldType)
+			candidate := CloudInstanceUpdate{}
+			matches := 0
+			for _, item := range instances {
+				if oldName != "" && item.InstanceName == oldName {
+					candidate, matches = item, matches+1
+				}
+			}
+			if matches != 1 {
+				candidate = CloudInstanceUpdate{}
+				matches = 0
+				for _, item := range instances {
+					if oldType != "" && item.InstanceType == oldType {
+						candidate, matches = item, matches+1
+					}
+				}
+			}
+			if matches != 1 && len(instances) == 1 {
+				candidate, matches = instances[0], 1
+			}
+			if matches == 1 && candidate.InstanceID != "" {
 				if _, err := tx.ExecContext(ctx, `UPDATE accounts SET instance_id=?,manual_stopped=0,power_stop_reason='' WHERE id=? AND instance_id=?`, candidate.InstanceID, account.ID, boundID); err != nil {
 					return err
 				}

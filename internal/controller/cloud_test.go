@@ -395,6 +395,32 @@ func TestCloudSyncRebindsUniqueReplacementInstance(t *testing.T) {
 	}
 }
 
+func TestCloudSyncRebindsMatchingReplacementAmongMultipleInstances(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	account, err := store.CreateCloudAccount(ctx, CloudAccountRequest{Name: "rebind-match", AccessKeyID: "key", AccessKeySecret: "secret", RegionID: "cn-hongkong", SiteType: "international", ProtectedInstanceID: "i-old"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveCloudSync(ctx, account, []CloudInstanceUpdate{{InstanceID: "i-old", InstanceName: "edge", InstanceType: "ecs.t6-c1m1.large", Status: "Running", RegionID: "cn-hongkong"}}, true, "", 0, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveCloudSync(ctx, account, []CloudInstanceUpdate{{InstanceID: "i-other", InstanceName: "other", InstanceType: "ecs.t6-c1m1.large", Status: "Running", RegionID: "cn-hongkong"}, {InstanceID: "i-new", InstanceName: "edge", InstanceType: "ecs.t6-c1m1.large", Status: "Running", RegionID: "cn-hongkong"}}, true, "", 0, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	accounts, err := store.ListCloudAccounts(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accounts) != 1 || accounts[0].ProtectedInstanceID != "i-new" {
+		t.Fatalf("matching replacement was not rebound: %+v", accounts)
+	}
+}
+
 func TestScheduledDowntimeHandlesOvernightWindow(t *testing.T) {
 	account := CloudAccount{AutoStopTime: "00:03", AutoStartTime: "12:04"}
 	for _, item := range []struct {
