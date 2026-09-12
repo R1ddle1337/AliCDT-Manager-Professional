@@ -72,7 +72,7 @@ func normalizeRelayPoolRequestWithDrain(request CreateRelayPoolRequest) (CreateR
 			return request, false, false, errors.New("relay member ID is required")
 		}
 		if member.Priority != nil && (*member.Priority < 1 || *member.Priority > 999) {
-			return request, false, false, errors.New("Relay 优先级须为 1–999 的整数")
+			return request, false, false, errors.New("relay 优先级须为 1–999 的整数")
 		}
 		if seenMembers[member.RelayNodeID] {
 			return request, false, false, errors.New("duplicate relay member")
@@ -933,24 +933,33 @@ func (s *Store) sharedPoolRecordEligible(ctx context.Context, recordID, currentP
 		return false, err
 	}
 	_ = rows.Close()
+	currentPreferred := true
+	otherPreferred := false
 	for _, binding := range bindings {
-		if binding.poolID == currentPoolID {
-			continue
-		}
-		status := relayPoolMemberStatus(now, binding.rawStatus, binding.draining != 0, binding.lastSeen, binding.currentRevision, binding.desiredRevision, binding.serviceID, binding.serviceJSON)
 		pool, poolErr := s.GetRelayPool(ctx, binding.poolID)
 		if poolErr != nil {
 			eligible = false
 			continue
 		}
-		// A lower priority member is intentionally not part of this RR while a
-		// preferred member is healthy, so it must not veto that preferred RR.
-		if !preferredRelayPoolMembers(pool)[binding.relayNodeID] {
+		preferred := preferredRelayPoolMembers(pool)[binding.relayNodeID]
+		if binding.poolID == currentPoolID {
+			currentPreferred = preferred
 			continue
 		}
+		if !preferred {
+			continue
+		}
+		otherPreferred = true
+		status := relayPoolMemberStatus(now, binding.rawStatus, binding.draining != 0, binding.lastSeen, binding.currentRevision, binding.desiredRevision, binding.serviceID, binding.serviceJSON)
 		if binding.poolEnabled == 0 || binding.memberEnabled == 0 || status != "online" || !validRelayIP(binding.publicIP) {
 			eligible = false
 		}
+	}
+	// A shared RR may be visited by a lower-priority pool before its preferred
+	// pool. Keep the existing RR in that case; the preferred pool will reconcile
+	// the final state in the same scheduler pass.
+	if !currentPreferred && otherPreferred {
+		return true, nil
 	}
 	return eligible, nil
 }
@@ -976,12 +985,13 @@ func validRelayIP(value string) bool {
 
 func randomRelayPoolPortTx(ctx context.Context, tx *sql.Tx, members []CreateRelayPoolMember, network string) (int, error) {
 	const firstPort, portSpan, attempts = 20000, 40001, 80
+	startValue, err := cryptorand.Int(cryptorand.Reader, big.NewInt(portSpan))
+	if err != nil {
+		return 0, fmt.Errorf("generate random relay port: %w", err)
+	}
+	start := int(startValue.Int64())
 	for attempt := 0; attempt < attempts; attempt++ {
-		n, err := cryptorand.Int(cryptorand.Reader, big.NewInt(portSpan))
-		if err != nil {
-			return 0, fmt.Errorf("generate random relay port: %w", err)
-		}
-		port := firstPort + int(n.Int64())
+		port := firstPort + (start+attempt)%portSpan
 		available := true
 		for _, member := range members {
 			if err := validateListenConflictTx(ctx, tx, member.RelayNodeID, "0.0.0.0", port, network, ""); err != nil {
@@ -990,6 +1000,14 @@ func randomRelayPoolPortTx(ctx context.Context, tx *sql.Tx, members []CreateRela
 					break
 				}
 				return 0, err
+			}
+			quarantined, err := entryPortQuarantinedTx(ctx, tx, member.RelayNodeID, "0.0.0.0", port, network)
+			if err != nil {
+				return 0, err
+			}
+			if quarantined {
+				available = false
+				break
 			}
 		}
 		if available {

@@ -585,18 +585,19 @@ func TestPortSpecificPoolsShareOneDNSRRset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	makePool := func(port int) RelayPool {
+	makePool := func(port int, priority *int) RelayPool {
 		pool, poolErr := store.CreateRelayPool(context.Background(), CreateRelayPoolRequest{
 			Name: "route", Hostname: "relay.example.com", ListenPort: port, Network: "tcp", Mode: "failover", DNSProviderID: provider.ID,
-			Members: []CreateRelayPoolMember{{RelayNodeID: agent.AgentID}}, Targets: []CreateServiceTarget{{LandingNodeID: landing.ID}},
+			Members: []CreateRelayPoolMember{{RelayNodeID: agent.AgentID, Priority: priority}}, Targets: []CreateServiceTarget{{LandingNodeID: landing.ID}},
 		})
 		if poolErr != nil {
 			t.Fatal(poolErr)
 		}
 		return pool
 	}
-	first := makePool(18445)
-	second := makePool(18446)
+	first := makePool(18445, nil)
+	backupPriority := 2
+	second := makePool(18446, &backupPriority)
 	records, err := store.ListDNSRecords(context.Background(), provider.ID)
 	if err != nil {
 		t.Fatal(err)

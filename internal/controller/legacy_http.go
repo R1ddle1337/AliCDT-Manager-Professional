@@ -222,7 +222,7 @@ func (s *Server) legacyTestTelegram(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) legacyTestDailyReport(w http.ResponseWriter, r *http.Request) {
-	if err := s.cloud.SendDailyReport(r.Context()); err != nil {
+	if err := s.cloud.TestDailyReport(r.Context()); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}

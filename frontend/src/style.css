@@ -246,6 +246,10 @@ button:focus-visible, input:focus-visible, select:focus-visible {
     overflow-x: auto;
     scrollbar-width: none;
   }
+  .workspace-tab {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
   .workspace-tabs::-webkit-scrollbar { display: none; }
   .card,
   .notice,

@@ -3,8 +3,10 @@ package controller
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -393,6 +395,23 @@ func (s *CloudService) runMonthlyReset(ctx context.Context) {
 }
 
 func (s *CloudService) SendDailyReport(ctx context.Context) error {
+	return s.sendDailyReport(ctx, false)
+}
+
+func (s *CloudService) TestDailyReport(ctx context.Context) error {
+	return s.sendDailyReport(ctx, true)
+}
+
+func (s *CloudService) sendDailyReport(ctx context.Context, force bool) error {
+	if !force {
+		enabled, err := s.telegramNotificationsEnabled(ctx)
+		if err != nil {
+			return err
+		}
+		if !enabled {
+			return nil
+		}
+	}
 	overview, err := s.store.CloudOverview(ctx)
 	if err != nil {
 		return err
@@ -424,7 +443,7 @@ func (s *CloudService) SendDailyReport(ctx context.Context) error {
 			report.WriteString("\n抢占实例库存不足，保活正在持续重试")
 		}
 	}
-	if err := s.sendTelegram(ctx, report.String()); err != nil {
+	if err := s.sendTelegramWithOptions(ctx, report.String(), force); err != nil {
 		return err
 	}
 	return s.store.AddSystemLog(ctx, "info", "system", "每日流量汇报已发送")
@@ -440,11 +459,11 @@ func (s *CloudService) sendTelegram(ctx context.Context, message string) error {
 
 func (s *CloudService) sendTelegramWithOptions(ctx context.Context, message string, force bool) error {
 	if !force {
-		enabled, err := s.store.GetSetting(ctx, "tg_enabled")
+		enabled, err := s.telegramNotificationsEnabled(ctx)
 		if err != nil {
 			return err
 		}
-		if enabled == "0" {
+		if !enabled {
 			return nil
 		}
 	}
@@ -459,21 +478,69 @@ func (s *CloudService) sendTelegramWithOptions(ctx context.Context, message stri
 	if token == "" || chatID == "" {
 		return errors.New("telegram Bot Token and Chat ID are required")
 	}
+	client := s.telegramHTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+	for _, chunk := range telegramChunks(message, 3900) {
+		if err := s.sendTelegramChunk(ctx, client, token, chatID, chunk); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *CloudService) telegramNotificationsEnabled(ctx context.Context) (bool, error) {
+	enabled, err := s.store.GetSetting(ctx, "tg_enabled")
+	if err != nil {
+		return false, err
+	}
+	return enabled != "0", nil
+}
+
+func (s *CloudService) sendTelegramChunk(ctx context.Context, client *http.Client, token, chatID, message string) error {
 	form := url.Values{"chat_id": {chatID}, "text": {message}}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.telegram.org/bot"+token+"/sendMessage", strings.NewReader(form.Encode()))
 	if err != nil {
-		return err
+		return errors.New("could not build telegram request")
 	}
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	response, err := (&http.Client{Timeout: 10 * time.Second}).Do(request)
+	response, err := client.Do(request)
 	if err != nil {
-		return err
+		return errors.New("telegram request failed")
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 		return fmt.Errorf("telegram returned HTTP %d", response.StatusCode)
 	}
+	var result struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&result); err != nil || !result.OK {
+		return errors.New("telegram rejected the message")
+	}
 	return nil
+}
+
+func telegramChunks(message string, maxRunes int) []string {
+	if maxRunes < 1 {
+		maxRunes = 3900
+	}
+	runes := []rune(message)
+	if len(runes) == 0 {
+		return []string{""}
+	}
+	chunks := make([]string, 0, (len(runes)+maxRunes-1)/maxRunes)
+	for start := 0; start < len(runes); start += maxRunes {
+		end := start + maxRunes
+		if end > len(runes) {
+			end = len(runes)
+		}
+		chunks = append(chunks, string(runes[start:end]))
+	}
+	return chunks
 }
 
 func friendlyCloudError(err error) string {

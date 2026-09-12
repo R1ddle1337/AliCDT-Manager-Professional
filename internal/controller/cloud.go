@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ type CloudService struct {
 	lastAutomationAt    time.Time
 	clientFor           func(CloudAccount) cloudClient
 	trafficSafetyWindow time.Duration
+	telegramHTTPClient  *http.Client
 }
 
 type cloudClient interface {
