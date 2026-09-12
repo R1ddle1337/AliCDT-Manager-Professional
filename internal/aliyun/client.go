@@ -54,6 +54,10 @@ type Instance struct {
 	InstanceType  string `json:"instance_type"`
 	BandwidthMbps int    `json:"bandwidth_mbps"`
 	IsSpot        bool   `json:"is_spot"`
+	// Template contains the immutable parameters needed to recreate a
+	// reclaimed instance. It is kept out of API responses and persisted by the
+	// controller as an opaque JSON document.
+	Template map[string]string `json:"-"`
 }
 
 type AccountBalance struct {
@@ -142,12 +146,18 @@ func (c *Client) GetInstances(ctx context.Context) ([]Instance, error) {
 			TotalCount int `json:"TotalCount"`
 			Instances  struct {
 				Items []struct {
-					InstanceID   string `json:"InstanceId"`
-					InstanceName string `json:"InstanceName"`
-					RegionID     string `json:"RegionId"`
-					Status       string `json:"Status"`
-					InstanceType string `json:"InstanceType"`
-					SpotStrategy string `json:"SpotStrategy"`
+					InstanceID     string `json:"InstanceId"`
+					InstanceName   string `json:"InstanceName"`
+					RegionID       string `json:"RegionId"`
+					Status         string `json:"Status"`
+					InstanceType   string `json:"InstanceType"`
+					SpotStrategy   string `json:"SpotStrategy"`
+					ImageID        string `json:"ImageId"`
+					ZoneID         string `json:"ZoneId"`
+					VSwitchID      string `json:"VSwitchId"`
+					SecurityGroups struct {
+						Items []string `json:"SecurityGroupId"`
+					} `json:"SecurityGroupIds"`
 					// Aliyun reports the instance bandwidth as a number for most
 					// ECS instances. When an EIP is attached, however,
 					// InternetMaxBandwidthOut is commonly zero and the effective
@@ -182,11 +192,18 @@ func (c *Client) GetInstances(ctx context.Context) ([]Instance, error) {
 			if bandwidth == 0 {
 				bandwidth = bandwidthMbps(item.EIP.MaxBandwidthOut)
 			}
+			template := map[string]string{"ImageId": item.ImageID, "InstanceType": item.InstanceType, "ZoneId": item.ZoneID, "VSwitchId": item.VSwitchID, "SecurityGroupId": "", "InstanceName": item.InstanceName}
+			if len(item.SecurityGroups.Items) > 0 {
+				template["SecurityGroupId"] = item.SecurityGroups.Items[0]
+			}
+			if item.SpotStrategy != "" {
+				template["SpotStrategy"] = item.SpotStrategy
+			}
 			instances = append(instances, Instance{
 				InstanceID: item.InstanceID, InstanceName: item.InstanceName,
 				RegionID: item.RegionID, Status: item.Status, PublicIP: publicIP,
 				InstanceType: item.InstanceType, BandwidthMbps: bandwidth,
-				IsSpot: item.SpotStrategy != "" && item.SpotStrategy != "NoSpot",
+				IsSpot: item.SpotStrategy != "" && item.SpotStrategy != "NoSpot", Template: template,
 			})
 		}
 		if len(response.Instances.Items) == 0 || (response.TotalCount > 0 && len(instances) >= response.TotalCount) || (response.TotalCount == 0 && len(response.Instances.Items) < 100) {
@@ -240,6 +257,42 @@ func (c *Client) DeleteInstance(ctx context.Context, instanceID string) error {
 		"InstanceId": instanceID, "Force": "true",
 	})
 	return err
+}
+
+// CreateReplacementInstance recreates a reclaimed ECS using the last known
+// immutable template. Alibaba may return either InstanceIdSets or a singular
+// InstanceId depending on API version.
+func (c *Client) CreateReplacementInstance(ctx context.Context, template map[string]string) (string, error) {
+	params := map[string]string{"RegionId": c.RegionID, "Amount": "1", "InstanceChargeType": "PostPaid", "SpotStrategy": "SpotAsPriceGo"}
+	for key, value := range template {
+		if strings.TrimSpace(value) != "" {
+			params[key] = value
+		}
+	}
+	if params["ImageId"] == "" || params["InstanceType"] == "" || params["VSwitchId"] == "" || params["SecurityGroupId"] == "" {
+		return "", errors.New("replacement template is incomplete (ImageId, InstanceType, VSwitchId and SecurityGroupId are required)")
+	}
+	raw, err := c.call(ctx, c.ECSEndpoint, "RunInstances", "2014-05-26", params)
+	if err != nil {
+		return "", err
+	}
+	var response struct {
+		InstanceID string `json:"InstanceId"`
+		Sets       struct {
+			Items []string `json:"InstanceIdSet"`
+		} `json:"InstanceIdSets"`
+	}
+	encoded, _ := json.Marshal(raw)
+	if err := json.Unmarshal(encoded, &response); err != nil {
+		return "", err
+	}
+	if response.InstanceID != "" {
+		return response.InstanceID, nil
+	}
+	if len(response.Sets.Items) > 0 && response.Sets.Items[0] != "" {
+		return response.Sets.Items[0], nil
+	}
+	return "", errors.New("RunInstances response did not contain an instance ID")
 }
 
 func (c *Client) GetBalance(ctx context.Context) (AccountBalance, error) {

@@ -460,6 +460,43 @@ func TestReleasedBoundInstanceEntersReplacementState(t *testing.T) {
 	}
 }
 
+func TestCloudSyncCreatesReplacementFromStoredTemplate(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	account, err := store.CreateCloudAccount(ctx, CloudAccountRequest{Name: "replace-create", AccessKeyID: "key", AccessKeySecret: "secret", RegionID: "cn-hongkong", SiteType: "international", ProtectedInstanceID: "i-old"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveCloudSync(ctx, account, []CloudInstanceUpdate{{InstanceID: "i-old", InstanceName: "edge", InstanceType: "ecs.t6-c1m1.large", Status: "Running", Template: map[string]string{"ImageId": "img", "InstanceType": "ecs.t6-c1m1.large", "VSwitchId": "vsw", "SecurityGroupId": "sg"}}}, true, "", 0, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetAccountPowerStopReason(ctx, account.ID, "replacement"); err != nil {
+		t.Fatal(err)
+	}
+	accountsBefore, err := store.ListCloudAccounts(ctx, true)
+	if err != nil || len(accountsBefore) != 1 {
+		t.Fatalf("load replacement account: %v", err)
+	}
+	account = accountsBefore[0]
+	fake := &fakeCloudClient{createID: "i-new"}
+	service := NewCloudService(store)
+	service.clientFor = func(CloudAccount) cloudClient { return fake }
+	if result := service.syncAccount(ctx, account); result.Error != "" {
+		t.Fatalf("replacement sync failed: %+v", result)
+	}
+	accounts, err := store.ListCloudAccounts(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accounts) != 1 || accounts[0].ProtectedInstanceID != "i-new" || accounts[0].PowerStopReason != "" {
+		t.Fatalf("replacement was not bound: %+v", accounts)
+	}
+}
+
 func TestScheduledPowerUpdatesInstanceAndRelayProjection(t *testing.T) {
 	store, err := OpenStore(":memory:")
 	if err != nil {
@@ -1213,6 +1250,8 @@ type fakeCloudClient struct {
 	startCalls     int
 	stopCalls      int
 	stopMode       string
+	createID       string
+	createErr      error
 }
 
 func (client *fakeCloudClient) GetInstanceStatus(context.Context, string) (string, error) {
@@ -1236,6 +1275,10 @@ func (client *fakeCloudClient) StopInstance(_ context.Context, _ string, mode st
 	client.stopCalls++
 	client.stopMode = mode
 	return client.stopErr
+}
+
+func (client *fakeCloudClient) CreateReplacementInstance(context.Context, map[string]string) (string, error) {
+	return client.createID, client.createErr
 }
 
 func createProtectedRelay(t *testing.T, store *Store, protectionMode string) (CloudAccount, string) {

@@ -244,6 +244,7 @@ type CloudInstanceUpdate struct {
 	InstanceType  string
 	BandwidthMbps int
 	IsSpot        bool
+	Template      map[string]string
 }
 
 type HealthSettings struct {
@@ -662,6 +663,11 @@ func (s *Store) migrate(ctx context.Context) error {
 			is_spot INTEGER DEFAULT 0,
 			last_synced TEXT,
 			updated_at TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS instance_templates (
+			account_id INTEGER PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+			template_json TEXT NOT NULL,
+			updated_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS account_traffic_snapshots (
 			account_id INTEGER PRIMARY KEY,
@@ -3256,6 +3262,15 @@ func (s *Store) SaveCloudSync(ctx context.Context, account CloudAccount, instanc
 			if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET cloud_account_id=?,region_id=?,public_ip=CASE WHEN ?<>'' THEN ? ELSE public_ip END WHERE ecs_instance_id=?`, account.ID, instance.RegionID, instance.PublicIP, instance.PublicIP, instance.InstanceID); err != nil {
 				return err
 			}
+			if instance.InstanceID == account.ProtectedInstanceID && len(instance.Template) > 0 {
+				encoded, marshalErr := json.Marshal(instance.Template)
+				if marshalErr != nil {
+					return marshalErr
+				}
+				if _, err := tx.ExecContext(ctx, `INSERT INTO instance_templates(account_id,template_json,updated_at) VALUES(?,?,?) ON CONFLICT(account_id) DO UPDATE SET template_json=excluded.template_json,updated_at=excluded.updated_at`, account.ID, string(encoded), now.Format(time.RFC3339Nano)); err != nil {
+					return err
+				}
+			}
 		}
 		// A spot instance can disappear between two inventory syncs. When the
 		// account has exactly one replacement candidate, carry the binding and
@@ -3348,6 +3363,36 @@ func (s *Store) SaveCloudSync(ctx context.Context, account CloudAccount, instanc
 			ON CONFLICT(account_id) DO UPDATE SET last_error=excluded.last_error,updated_at=excluded.updated_at`, account.ID, trafficError, now.Format(time.RFC3339Nano)); err != nil {
 			return err
 		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) ReplacementTemplate(ctx context.Context, accountID int64) (map[string]string, error) {
+	var encoded string
+	if err := s.db.QueryRowContext(ctx, `SELECT template_json FROM instance_templates WHERE account_id=?`, accountID).Scan(&encoded); err != nil {
+		return nil, err
+	}
+	var template map[string]string
+	if err := json.Unmarshal([]byte(encoded), &template); err != nil {
+		return nil, err
+	}
+	return template, nil
+}
+
+func (s *Store) BindReplacementInstance(ctx context.Context, accountID int64, oldInstanceID, newInstanceID string) error {
+	if strings.TrimSpace(newInstanceID) == "" {
+		return errors.New("replacement instance ID is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE accounts SET instance_id=?,manual_stopped=0,power_stop_reason='' WHERE id=?`, newInstanceID, accountID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE relay_nodes SET ecs_instance_id=?,cloud_account_id=? WHERE cloud_account_id=? AND ecs_instance_id=?`, newInstanceID, accountID, accountID, oldInstanceID); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

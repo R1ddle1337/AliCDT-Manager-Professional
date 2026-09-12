@@ -105,3 +105,20 @@ func TestGetInstancesUsesEIPBandwidthWhenInstanceBandwidthIsZero(t *testing.T) {
 		t.Fatalf("EIP bandwidth was not used: %+v", instances)
 	}
 }
+
+func TestCreateReplacementInstanceUsesTemplate(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		if r.Form.Get("Action") != "RunInstances" || r.Form.Get("ImageId") != "img" || r.Form.Get("VSwitchId") != "vsw" || r.Form.Get("SecurityGroupId") != "sg" {
+			t.Fatalf("unexpected RunInstances form: %v", r.Form)
+		}
+		_, _ = w.Write([]byte(`{"InstanceIdSets":{"InstanceIdSet":["i-new"]}}`))
+	}))
+	defer server.Close()
+	client := NewClient("id", "secret", "cn-hongkong", "china")
+	client.ECSEndpoint = server.URL
+	id, err := client.CreateReplacementInstance(context.Background(), map[string]string{"ImageId": "img", "InstanceType": "ecs.c7.large", "VSwitchId": "vsw", "SecurityGroupId": "sg"})
+	if err != nil || id != "i-new" {
+		t.Fatalf("replacement creation failed: id=%q err=%v", id, err)
+	}
+}

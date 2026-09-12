@@ -131,12 +131,29 @@ func (s *CloudService) syncAccount(ctx context.Context, account CloudAccount) Cl
 		updates = append(updates, CloudInstanceUpdate{
 			InstanceID: instance.InstanceID, InstanceName: instance.InstanceName,
 			RegionID: instance.RegionID, Status: instance.Status, PublicIP: instance.PublicIP,
-			InstanceType: instance.InstanceType, BandwidthMbps: instance.BandwidthMbps, IsSpot: instance.IsSpot,
+			InstanceType: instance.InstanceType, BandwidthMbps: instance.BandwidthMbps, IsSpot: instance.IsSpot, Template: instance.Template,
 		})
 	}
 	instanceError, trafficError := errorString(instanceErr), errorString(trafficErr)
 	if err := s.store.SaveCloudSync(ctx, account, updates, instanceErr == nil, instanceError, traffic, trafficErr == nil, trafficError); err != nil {
 		return CloudSyncResult{AccountID: account.ID, AccountName: account.Name, Error: err.Error()}
+	}
+	if instanceErr == nil && len(instances) == 0 && account.KeepAlive && account.PowerStopReason == "replacement" {
+		if template, templateErr := s.store.ReplacementTemplate(ctx, account.ID); templateErr == nil {
+			if creator, ok := client.(replacementInstanceClient); ok {
+				newID, createErr := creator.CreateReplacementInstance(ctx, template)
+				if createErr == nil {
+					if bindErr := s.store.BindReplacementInstance(ctx, account.ID, account.ProtectedInstanceID, newID); bindErr != nil {
+						instanceErr = bindErr
+					} else {
+						_ = s.store.AddSystemLog(ctx, "info", "keepalive", fmt.Sprintf("[%s] 已创建替代 ECS %s，等待 Agent 恢复", account.Name, newID))
+						_ = s.sendTelegramCategory(ctx, "keepalive", fmt.Sprintf("[%s] 抢占实例已释放，已自动创建替代 ECS %s", account.Name, newID))
+					}
+				} else {
+					_ = s.store.AddSystemLog(ctx, "warning", "keepalive", fmt.Sprintf("[%s] 自动创建替代 ECS 失败，将继续重试: %s", account.Name, friendlyCloudError(createErr)))
+				}
+			}
+		}
 	}
 	var protection TrafficProtectionDecision
 	var protectionErr error
