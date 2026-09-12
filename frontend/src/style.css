@@ -207,6 +207,71 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
 
+/* Mobile layout guardrails: keep page headings horizontal and let actions and
+ * long identifiers wrap inside their cards instead of pushing the viewport. */
+@media (max-width: 639px) {
+  .page-header,
+  .workspace-header,
+  .security-header {
+    align-items: stretch !important;
+    flex-direction: column !important;
+    gap: 12px !important;
+  }
+  .page-header > div,
+  .workspace-header > div,
+  .security-header > div {
+    width: 100%;
+    min-width: 0;
+  }
+  .page-title {
+    margin-top: 0 !important;
+    font-size: 23px !important;
+    line-height: 1.25 !important;
+    white-space: nowrap;
+  }
+  .header-actions,
+  .workspace-actions {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    min-width: 0;
+  }
+  .header-actions > *,
+  .workspace-actions > * {
+    min-width: 0;
+    width: 100%;
+  }
+  .workspace-tabs {
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .workspace-tabs::-webkit-scrollbar { display: none; }
+  .card,
+  .notice,
+  .modal-dialog {
+    max-width: 100%;
+  }
+  .card,
+  .panel-card,
+  .settings-card,
+  .security-card {
+    min-width: 0;
+  }
+  .masked-text,
+  code,
+  pre,
+  .font-mono {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .btn-primary,
+  .btn-ghost,
+  .btn-danger {
+    white-space: nowrap;
+  }
+}
+
 /* Quiet visual system: compact surfaces, one accent colour and a readable
  * sans-serif stack that works well for both Chinese and Latin text. */
 :root {
