@@ -24,7 +24,7 @@
           <span v-if="serviceStatus(service)?.quota_exceeded" class="quota-tag">额度已用完</span>
         </div>
         <div class="service-row-wide mt-4 space-y-2">
-          <div v-for="target in service.targets" :key="target.id" class="target-line"><span class="status-dot status-dot-success"></span><span class="min-w-0 flex-1 truncate">{{ target.name }}</span><MaskedIP :value="target.address" :suffix="`:${target.port}`" placeholder="未设置地址" /><span>P{{ target.priority }} / W{{ target.weight }}</span></div>
+          <div v-for="target in service.targets" :key="target.id" class="target-line"><span class="status-dot status-dot-success"></span><span class="min-w-0 flex-1 truncate">{{ target.name }}</span><MaskedIP :value="target.address" :suffix="`:${target.port}`" placeholder="未设置地址" /><span>优先级 {{ target.priority }}<template v-if="service.mode === 'weighted'"> · 权重 {{ target.weight }}</template></span></div>
         </div>
         <div class="service-row-actions mt-4 flex justify-end gap-1 border-t border-slate-100 pt-3">
           <button v-if="service.traffic_limit_gb > 0" class="btn-ghost px-2 py-1 text-xs" @click="resetTraffic(service)">流量清零</button>
@@ -54,7 +54,7 @@
         <div>
           <label class="field-label">落地目标</label>
           <div class="target-picker">
-            <label v-for="(node, index) in store.landingNodes" :key="node.id" class="target-option"><input v-model="selectedTargets" type="checkbox" :value="node.id" /><span class="min-w-0 flex-1"><strong>{{ node.name }}</strong><small><MaskedIP :value="node.address" :suffix="`:${node.port}`" placeholder="未设置地址" /></small></span><input v-if="selectedTargets.includes(node.id)" v-model.number="targetOptions[node.id].priority" type="number" class="mini-input" title="优先级" /><input v-if="selectedTargets.includes(node.id)" v-model.number="targetOptions[node.id].weight" type="number" min="1" class="mini-input" title="权重" /></label>
+            <label v-for="(node, index) in store.landingNodes" :key="node.id" class="target-option"><input v-model="selectedTargets" type="checkbox" :value="node.id" /><span class="min-w-0 flex-1"><strong>{{ node.name }}</strong><small><MaskedIP :value="node.address" :suffix="`:${node.port}`" placeholder="未设置地址" /></small></span><input v-if="selectedTargets.includes(node.id)" v-model.number="targetOptions[node.id].priority" type="number" class="mini-input" aria-label="目标优先级" title="目标优先级" /><input v-if="selectedTargets.includes(node.id) && form.mode === 'weighted'" v-model.number="targetOptions[node.id].weight" type="number" min="1" class="mini-input" aria-label="目标权重" title="目标权重（仅加权轮询）" /></label>
           </div>
           <p class="mt-2 text-[10px] text-slate-400">一个用户只能绑定一个独立入口，保证额度由单个 Agent 准确执行。入口池暂不参与用户精确计量。</p>
         </div>
