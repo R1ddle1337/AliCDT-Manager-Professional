@@ -186,13 +186,19 @@ func (s *Store) RefreshRelayAgentDNSRecords(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	ids := make([]string, 0, len(records))
 	for _, record := range records {
-		if record.PoolID != "" || record.RelayNodeID == "" || record.Status == "deleting" {
-			continue
+		if record.PoolID == "" && record.RelayNodeID != "" && record.Status != "deleting" {
+			ids = append(ids, record.RelayNodeID)
 		}
-		var publicIP, status string
-		var draining int
-		err := s.db.QueryRowContext(ctx, `SELECT COALESCE(rn.public_ip,''),
+	}
+	states := make(map[string]struct {
+		publicIP, status string
+		draining         int
+	}, len(ids))
+	if len(ids) > 0 {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+		query := `SELECT rn.id,COALESCE(rn.public_ip,''),
 			CASE WHEN ((COALESCE(a.protection_triggered,0)=1 OR COALESCE(a.protection_predictive,0)=1) AND (COALESCE(a.protection_mode,'alert_only')='drain_relay' OR EXISTS(
 				SELECT 1 FROM relay_services ars JOIN relay_pools arp ON arp.id=ars.pool_id
 				WHERE ars.relay_node_id=rn.id AND ars.enabled=1 AND COALESCE(arp.enabled,1)=1 AND COALESCE(arp.auto_drain,1)=1
@@ -201,10 +207,43 @@ func (s *Store) RefreshRelayAgentDNSRecords(ctx context.Context) error {
 				SELECT 1 FROM relay_services ars JOIN relay_pools arp ON arp.id=ars.pool_id
 				WHERE ars.relay_node_id=rn.id AND ars.enabled=1 AND COALESCE(arp.enabled,1)=1 AND COALESCE(arp.auto_drain,1)=1
 			))) OR COALESCE(rn.update_status,'idle') IN ('draining','updating') THEN 1 ELSE 0 END
-			FROM relay_nodes rn LEFT JOIN accounts a ON a.id=rn.cloud_account_id OR (rn.cloud_account_id IS NULL AND rn.ecs_instance_id IN (SELECT instance_id FROM instances WHERE account_id=a.id)) WHERE rn.id=?`, record.RelayNodeID).Scan(&publicIP, &status, &draining)
-		if err != nil {
+			FROM relay_nodes rn LEFT JOIN accounts a ON a.id=rn.cloud_account_id OR (rn.cloud_account_id IS NULL AND rn.ecs_instance_id IN (SELECT instance_id FROM instances WHERE account_id=a.id)) WHERE rn.id IN (` + placeholders + `)`
+		args := make([]interface{}, len(ids))
+		for i := range ids {
+			args[i] = ids[i]
+		}
+		rows, queryErr := s.db.QueryContext(ctx, query, args...)
+		if queryErr != nil {
+			return queryErr
+		}
+		for rows.Next() {
+			var id, publicIP, status string
+			var draining int
+			if scanErr := rows.Scan(&id, &publicIP, &status, &draining); scanErr != nil {
+				rows.Close()
+				return scanErr
+			}
+			states[id] = struct {
+				publicIP, status string
+				draining         int
+			}{publicIP, status, draining}
+		}
+		if closeErr := rows.Close(); closeErr != nil {
+			return closeErr
+		}
+		if rowsErr := rows.Err(); rowsErr != nil {
+			return rowsErr
+		}
+	}
+	for _, record := range records {
+		if record.PoolID != "" || record.RelayNodeID == "" || record.Status == "deleting" {
 			continue
 		}
+		state, ok := states[record.RelayNodeID]
+		if !ok {
+			continue
+		}
+		publicIP, status, draining := state.publicIP, state.status, state.draining
 		active := record.DesiredEnabled && strings.EqualFold(status, "online") && draining == 0 && validRelayIP(publicIP)
 		now := time.Now().UTC().Format(time.RFC3339Nano)
 		if publicIP != "" && publicIP != record.Value {
