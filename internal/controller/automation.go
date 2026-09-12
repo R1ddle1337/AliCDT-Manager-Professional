@@ -480,6 +480,23 @@ func (s *CloudService) sendTelegramWithOptions(ctx context.Context, message stri
 	if token == "" || chatID == "" {
 		return errors.New("telegram Bot Token and Chat ID are required")
 	}
+	if !force {
+		now := time.Now()
+		s.telegramMu.Lock()
+		if last, ok := s.telegramLastSent[message]; ok && now.Sub(last) < 30*time.Second {
+			s.telegramMu.Unlock()
+			return nil
+		}
+		s.telegramLastSent[message] = now
+		if len(s.telegramLastSent) > 256 {
+			for key, stamp := range s.telegramLastSent {
+				if now.Sub(stamp) >= 30*time.Second {
+					delete(s.telegramLastSent, key)
+				}
+			}
+		}
+		s.telegramMu.Unlock()
+	}
 	client := s.telegramHTTPClient
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}

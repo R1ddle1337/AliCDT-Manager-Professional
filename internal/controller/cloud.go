@@ -20,6 +20,8 @@ type CloudService struct {
 	clientFor           func(CloudAccount) cloudClient
 	trafficSafetyWindow time.Duration
 	telegramHTTPClient  *http.Client
+	telegramMu          sync.Mutex
+	telegramLastSent    map[string]time.Time
 }
 
 type cloudClient interface {
@@ -51,6 +53,7 @@ func NewCloudService(store *Store) *CloudService {
 	return &CloudService{
 		store:               store,
 		trafficSafetyWindow: defaultTrafficSafetyWindow,
+		telegramLastSent:    make(map[string]time.Time),
 		clientFor: func(account CloudAccount) cloudClient {
 			return aliyun.NewClient(account.AccessKeyID, account.AccessKeySecret, account.RegionID, account.SiteType)
 		},

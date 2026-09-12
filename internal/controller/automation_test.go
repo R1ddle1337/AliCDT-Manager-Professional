@@ -67,6 +67,32 @@ func TestTelegramRejectsInvalidAPISuccessResponse(t *testing.T) {
 	}
 }
 
+func TestTelegramCollapsesDuplicateAutomationAlerts(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.UpdateSettings(context.Background(), []SettingUpdate{{Key: "tg_bot_token", Value: "secret-token"}, {Key: "tg_chat_id", Value: "chat"}}); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	service := NewCloudService(store)
+	service.telegramHTTPClient = &http.Client{Transport: telegramRoundTripper(func(*http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"ok":true}`)), Header: make(http.Header)}, nil
+	})}
+	if err := service.sendTelegram(context.Background(), "duplicate"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.sendTelegram(context.Background(), "duplicate"); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 {
+		t.Fatalf("duplicate alert sent %d requests, want 1", requests)
+	}
+}
+
 func TestDisabledDailyReportDoesNotRecordASentMessage(t *testing.T) {
 	store, err := OpenStore(":memory:")
 	if err != nil {
