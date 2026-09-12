@@ -107,6 +107,7 @@
         </div>
 
         <div class="account-row-actions account-actions">
+          <button v-if="account.site_type === 'international'" class="btn-ghost" type="button" @click="billingAccount = account">费用估计</button>
           <button class="btn-ghost" type="button" @click="openEdit(account)">编辑</button>
           <button class="btn-danger" type="button" @click="removeAccount(account)">删除</button>
         </div>
@@ -152,6 +153,8 @@
         </article>
       </div>
     </section>
+
+    <AccountBilling v-if="billingAccount" :key="billingAccount.id" :account="billingAccount" @close="billingAccount = null" />
 
     <Modal v-if="showForm" size="large" @close="showForm = false">
       <form class="space-y-5 modal-form" @submit.prevent="saveAccount">
@@ -203,11 +206,13 @@ import { computed, onMounted, ref } from 'vue'
 import { useRelayStore } from '../stores/relay'
 import Modal from '../components/Modal.vue'
 import MaskedIP from '../components/MaskedIP.vue'
+import AccountBilling from '../components/AccountBilling.vue'
 
 const store = useRelayStore()
 const syncing = ref(false)
 const showForm = ref(false)
 const editTarget = ref(null)
+const billingAccount = ref(null)
 const saving = ref(false)
 const formError = ref('')
 const message = ref('')

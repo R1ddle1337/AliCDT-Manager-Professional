@@ -14,7 +14,7 @@ api.interceptors.response.use(r => r, err => {
   if (err.response?.status === 401) {
     clearSession()
     if (window.location.pathname !== '/login') window.location.assign('/login')
-  } else if (!err.response || err.response.status >= 500) {
+  } else if (!axios.isCancel(err) && (!err.response || err.response.status >= 500)) {
     notifyError(apiErrorMessage(err, '控制器暂时不可用，请稍后重试'))
   }
   return Promise.reject(err)
@@ -33,6 +33,11 @@ export const useStore = defineStore('main', () => {
   async function fetchSettings() {
     const { data } = await api.get('/settings')
     settings.value = data
+  }
+
+  async function getBilling(accountId, signal) {
+    const { data } = await api.get(`/billing/${accountId}`, { signal })
+    return data
   }
 
   async function saveSettings(items) {
@@ -62,6 +67,6 @@ export const useStore = defineStore('main', () => {
 
   return {
     logs, settings,
-    fetchLogs, fetchSettings, saveSettings, testTelegram, testDailyReport, fetchVersionInfo, clearLogs,
+    fetchLogs, fetchSettings, getBilling, saveSettings, testTelegram, testDailyReport, fetchVersionInfo, clearLogs,
   }
 })
