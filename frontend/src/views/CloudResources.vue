@@ -88,9 +88,9 @@
         </div>
 
         <div v-if="account.instance_id && !account.instance_binding_valid" class="account-row-wide sync-warning">
-          <strong>绑定实例已不存在</strong>
-          <span>当前绑定的 ECS 已被释放，保活和定时开关机已暂停；请选择当前 ECS 后恢复。</span>
-          <button class="btn-ghost border border-orange-200 px-2 py-1 text-xs text-orange-700" type="button" @click="openEdit(account)">重新绑定实例</button>
+          <strong>{{ account.power_stop_reason === 'replacement' ? '正在等待替代实例' : '绑定实例已不存在' }}</strong>
+          <span>{{ account.power_stop_reason === 'replacement' ? '原抢占实例已释放，系统会自动匹配符合条件的新实例并恢复 Agent、Relay 和 DNS。' : '当前绑定的 ECS 已被释放；可选择新的实例后恢复。' }}</span>
+          <button v-if="account.power_stop_reason !== 'replacement'" class="btn-ghost border border-orange-200 px-2 py-1 text-xs text-orange-700" type="button" @click="openEdit(account)">重新绑定实例</button>
         </div>
 
         <p class="account-row-wide traffic-disclaimer">阿里云接口不提供单个 ECS 的 CDT 用量；同一账户下多个实例共享此快照与保护阈值。</p>
