@@ -93,6 +93,30 @@ func TestTelegramCollapsesDuplicateAutomationAlerts(t *testing.T) {
 	}
 }
 
+func TestTelegramCategoryCanBeDisabled(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	if err := store.UpdateSettings(ctx, []SettingUpdate{{Key: "tg_bot_token", Value: "secret-token"}, {Key: "tg_chat_id", Value: "chat"}, {Key: "tg_notify_scheduler", Value: "0"}}); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	service := NewCloudService(store)
+	service.telegramHTTPClient = &http.Client{Transport: telegramRoundTripper(func(*http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"ok":true}`)), Header: make(http.Header)}, nil
+	})}
+	if err := service.sendTelegramCategory(ctx, "scheduler", "suppressed"); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 0 {
+		t.Fatalf("disabled category sent %d requests", requests)
+	}
+}
+
 func TestDisabledDailyReportDoesNotRecordASentMessage(t *testing.T) {
 	store, err := OpenStore(":memory:")
 	if err != nil {
