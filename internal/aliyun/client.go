@@ -146,15 +146,18 @@ func (c *Client) GetInstances(ctx context.Context) ([]Instance, error) {
 			TotalCount int `json:"TotalCount"`
 			Instances  struct {
 				Items []struct {
-					InstanceID     string `json:"InstanceId"`
-					InstanceName   string `json:"InstanceName"`
-					RegionID       string `json:"RegionId"`
-					Status         string `json:"Status"`
-					InstanceType   string `json:"InstanceType"`
-					SpotStrategy   string `json:"SpotStrategy"`
-					ImageID        string `json:"ImageId"`
-					ZoneID         string `json:"ZoneId"`
-					VSwitchID      string `json:"VSwitchId"`
+					InstanceID    string `json:"InstanceId"`
+					InstanceName  string `json:"InstanceName"`
+					RegionID      string `json:"RegionId"`
+					Status        string `json:"Status"`
+					InstanceType  string `json:"InstanceType"`
+					SpotStrategy  string `json:"SpotStrategy"`
+					ImageID       string `json:"ImageId"`
+					ZoneID        string `json:"ZoneId"`
+					VSwitchID     string `json:"VSwitchId"`
+					VpcAttributes struct {
+						VSwitchID string `json:"VSwitchId"`
+					} `json:"VpcAttributes"`
 					SecurityGroups struct {
 						Items []string `json:"SecurityGroupId"`
 					} `json:"SecurityGroupIds"`
@@ -192,7 +195,11 @@ func (c *Client) GetInstances(ctx context.Context) ([]Instance, error) {
 			if bandwidth == 0 {
 				bandwidth = bandwidthMbps(item.EIP.MaxBandwidthOut)
 			}
-			template := map[string]string{"ImageId": item.ImageID, "InstanceType": item.InstanceType, "ZoneId": item.ZoneID, "VSwitchId": item.VSwitchID, "SecurityGroupId": "", "InstanceName": item.InstanceName}
+			vswitchID := item.VSwitchID
+			if vswitchID == "" {
+				vswitchID = item.VpcAttributes.VSwitchID
+			}
+			template := map[string]string{"ImageId": item.ImageID, "InstanceType": item.InstanceType, "ZoneId": item.ZoneID, "VSwitchId": vswitchID, "SecurityGroupId": "", "InstanceName": item.InstanceName}
 			if len(item.SecurityGroups.Items) > 0 {
 				template["SecurityGroupId"] = item.SecurityGroups.Items[0]
 			}
