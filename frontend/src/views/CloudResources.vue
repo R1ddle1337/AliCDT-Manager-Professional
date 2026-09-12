@@ -185,6 +185,7 @@
           </div>
           <div><label class="field-label">定时关机</label><input v-model="form.auto_stop_time" type="time" class="input" /></div>
           <div><label class="field-label">定时开机</label><input v-model="form.auto_start_time" type="time" class="input" /></div>
+          <div class="field-wide schedule-actions"><span class="field-hint">两个时间都留空即可关闭定时开关机。</span><button type="button" class="btn-ghost border border-slate-200 px-2 py-1 text-xs" :disabled="!form.auto_start_time && !form.auto_stop_time" @click="clearSchedule">关闭定时开关机</button></div>
           <p class="field-wide field-hint">节省停机会释放计算资源和固定公网 IP，但会保留云盘数据；抢占式实例开机可能因库存不足而延迟。已安装 Agent 的实例会在开机时段持续重试恢复，建议绑定 EIP 保持入口地址不变。</p>
           <p v-if="form.protection_mode === 'stop_ecs'" class="field-wide field-hint">流量超过阈值后，会对上面绑定的实例发送一次停机指令；失败会在下次有效同步时重试。</p>
         </div>
@@ -309,6 +310,11 @@ function openEdit(account) {
   }
   formError.value = ''
   showForm.value = true
+}
+
+function clearSchedule() {
+  form.value.auto_start_time = ''
+  form.value.auto_stop_time = ''
 }
 
 async function saveAccount() {
@@ -451,6 +457,7 @@ onMounted(() => Promise.all([store.fetchCloud(), store.fetchUsers()]))
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .field-wide { grid-column: 1 / -1; }
 .field-hint { margin-top: 6px; color: #94a3b8; font-size: 10px; line-height: 1.55; }
+.schedule-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .form-actions { display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #f1f5f9; padding-top: 16px; }
 
 @media (max-width: 900px) {

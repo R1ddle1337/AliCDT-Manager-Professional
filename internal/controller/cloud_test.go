@@ -324,6 +324,35 @@ func TestCloudAccountKeepAliveDefaultsOnButCanBeDisabled(t *testing.T) {
 	}
 }
 
+func TestUpdateCloudAccountClearsSchedule(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	account, err := store.CreateCloudAccount(ctx, CloudAccountRequest{
+		Name: "schedule-toggle", AccessKeyID: "key", AccessKeySecret: "secret", RegionID: "cn-hongkong", SiteType: "china",
+		AutoStopTime: "23:00", AutoStartTime: "08:00",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpdateCloudAccount(ctx, account.ID, CloudAccountRequest{
+		Name: account.Name, AccessKeyID: account.AccessKeyID, RegionID: account.RegionID, SiteType: account.SiteType,
+		AutoStopTime: "", AutoStartTime: "", ShutdownMode: account.ShutdownMode, ProtectionMode: account.ProtectionMode,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	accounts, err := store.ListCloudAccounts(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accounts) != 1 || accounts[0].AutoStopTime != "" || accounts[0].AutoStartTime != "" {
+		t.Fatalf("schedule was not cleared: %+v", accounts)
+	}
+}
+
 func TestCloudSyncRebindsUniqueReplacementInstance(t *testing.T) {
 	store, err := OpenStore(":memory:")
 	if err != nil {
