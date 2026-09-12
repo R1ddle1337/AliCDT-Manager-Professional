@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +49,14 @@ type CloudSyncResult struct {
 }
 
 const defaultTrafficSafetyWindow = 4 * time.Minute
+
+func cloneStringMap(source map[string]string) map[string]string {
+	copy := make(map[string]string, len(source)+1)
+	for key, value := range source {
+		copy[key] = value
+	}
+	return copy
+}
 
 func NewCloudService(store *Store) *CloudService {
 	return &CloudService{
@@ -141,6 +150,14 @@ func (s *CloudService) syncAccount(ctx context.Context, account CloudAccount) Cl
 	if instanceErr == nil && len(instances) == 0 && account.KeepAlive && account.PowerStopReason == "replacement" {
 		if template, templateErr := s.store.ReplacementTemplate(ctx, account.ID); templateErr == nil {
 			if creator, ok := client.(replacementInstanceClient); ok {
+				template = cloneStringMap(template)
+				if controllerURL := strings.TrimRight(strings.TrimSpace(os.Getenv("CDT_AGENT_UPGRADE_CONTROLLER_URL")), "/"); controllerURL != "" {
+					enrollToken := randomID("auto-enroll")
+					if tokenErr := s.store.CreateEnrollmentToken(ctx, enrollToken, 30*time.Minute, account.ID); tokenErr == nil {
+						nodeName := strings.NewReplacer("\n", "", "\r", "", "'", "").Replace(account.Name)
+						template["UserData"] = fmt.Sprintf("#!/bin/sh\ncurl -fsSL %s/agent/install.sh -o /tmp/cdt-install.sh && chmod 700 /tmp/cdt-install.sh && /tmp/cdt-install.sh --server %s --token %s --node-name '%s'\n", controllerURL, controllerURL, enrollToken, nodeName)
+					}
+				}
 				newID, createErr := creator.CreateReplacementInstance(ctx, template)
 				if createErr == nil {
 					if bindErr := s.store.BindReplacementInstance(ctx, account.ID, account.ProtectedInstanceID, newID); bindErr != nil {
