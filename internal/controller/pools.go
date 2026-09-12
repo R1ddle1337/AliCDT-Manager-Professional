@@ -2,10 +2,12 @@ package controller
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
 	"strings"
 	"time"
@@ -30,7 +32,7 @@ func normalizeRelayPoolRequestWithDrain(request CreateRelayPoolRequest) (CreateR
 	if request.DNSRecordName == "" {
 		request.DNSRecordName = request.Hostname
 	}
-	if request.Name == "" || request.Hostname == "" || request.ListenPort < 1 || request.ListenPort > 65535 {
+	if request.Name == "" || request.Hostname == "" || request.ListenPort < 0 || request.ListenPort > 65535 {
 		return request, false, false, errors.New("name, hostname and a valid listen port are required")
 	}
 	if strings.ContainsAny(request.Hostname, "/ :\\") {
@@ -122,6 +124,12 @@ func (s *Store) CreateRelayPool(ctx context.Context, request CreateRelayPoolRequ
 		return RelayPool{}, err
 	}
 	defer tx.Rollback()
+	if request.ListenPort == 0 {
+		request.ListenPort, err = randomRelayPoolPortTx(ctx, tx, request.Members, request.Network)
+		if err != nil {
+			return RelayPool{}, err
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO relay_pools(id,name,hostname,front_door_mode,listen_port,network,mode,enabled,auto_drain,dns_provider_id,dns_record_name,dns_ttl,dial_timeout_ms,udp_idle_timeout_seconds,health_enabled,health_interval_seconds,health_timeout_ms,failure_threshold,success_threshold,recovery_cooldown_seconds,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, poolID, request.Name, request.Hostname, request.FrontDoorMode, request.ListenPort, request.Network, request.Mode, boolInt(enabled), boolInt(autoDrain), nullIfEmpty(request.DNSProviderID), request.DNSRecordName, request.DNSTTL, request.DialTimeoutMillis, request.UDPIdleTimeoutSeconds, boolInt(request.Health.Enabled), request.Health.IntervalSeconds, request.Health.TimeoutMillis, request.Health.FailureThreshold, request.Health.SuccessThreshold, request.Health.RecoveryCooldownSecs, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return RelayPool{}, err
 	}
@@ -193,6 +201,9 @@ func (s *Store) UpdateRelayPool(ctx context.Context, id string, request CreateRe
 	}
 	if strings.TrimSpace(request.FrontDoorMode) == "" {
 		request.FrontDoorMode = existing.FrontDoorMode
+	}
+	if request.ListenPort == 0 {
+		request.ListenPort = existing.ListenPort
 	}
 	request, enabled, autoDrain, err := normalizeRelayPoolRequestWithDrain(request)
 	if err != nil {
@@ -961,6 +972,31 @@ func (s *Store) RefreshAllRelayPoolDNS(ctx context.Context) error {
 func validRelayIP(value string) bool {
 	ip := net.ParseIP(strings.TrimSpace(value))
 	return ip != nil && !ip.IsUnspecified()
+}
+
+func randomRelayPoolPortTx(ctx context.Context, tx *sql.Tx, members []CreateRelayPoolMember, network string) (int, error) {
+	const firstPort, portSpan, attempts = 20000, 40001, 80
+	for attempt := 0; attempt < attempts; attempt++ {
+		n, err := cryptorand.Int(cryptorand.Reader, big.NewInt(portSpan))
+		if err != nil {
+			return 0, fmt.Errorf("generate random relay port: %w", err)
+		}
+		port := firstPort + int(n.Int64())
+		available := true
+		for _, member := range members {
+			if err := validateListenConflictTx(ctx, tx, member.RelayNodeID, "0.0.0.0", port, network, ""); err != nil {
+				if strings.Contains(err.Error(), "conflicts with existing service") {
+					available = false
+					break
+				}
+				return 0, err
+			}
+		}
+		if available {
+			return port, nil
+		}
+	}
+	return 0, errors.New("无法分配可用的随机监听端口，请稍后重试")
 }
 
 // preferredRelayPoolMembers returns the lowest priority tier that is currently

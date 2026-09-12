@@ -3,12 +3,12 @@
     <div><h1 class="page-title">系统设置</h1></div>
 
     <div class="settings-card-grid layout-collection layout-collection--strip">
-    <div class="card settings-card layout-card">
-      <div class="section-heading"><div><h2>Telegram 通知</h2></div></div>
-      <div class="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2"><div><label class="field-label" for="bot-token">机器人令牌</label><input id="bot-token" v-model="form.tg_bot_token" class="input" placeholder="123456:ABC..." /></div><div><label class="field-label" for="chat-id">会话 ID</label><input id="chat-id" v-model="form.tg_chat_id" class="input" placeholder="123..." /></div></div>
-      <div class="setting-row mt-5"><div><div class="text-sm font-semibold text-slate-700">每日流量汇报</div><div class="mt-1 text-xs text-slate-500">每天北京时间 00:00 推送所有实例的流量摘要。</div></div><button type="button" class="toggle" :class="form.tg_daily_report === '1' ? 'toggle-on' : ''" :aria-pressed="form.tg_daily_report === '1'" @click="form.tg_daily_report = form.tg_daily_report === '1' ? '0' : '1'"><span></span></button></div>
-      <div class="mt-4 rounded-lg bg-slate-50 p-3 text-xs leading-6 text-slate-500"><div class="font-semibold text-slate-600">通知触发条件</div><div>流量熔断自动停机、抢占式实例被回收、定时开关机执行。</div><div :class="form.tg_daily_report === '1' ? 'text-accent' : 'text-slate-400'">每日流量汇报：{{ form.tg_daily_report === '1' ? '已开启' : '已关闭' }}</div></div>
-      <div class="mt-5 flex flex-wrap gap-2"><button type="button" @click="save" :disabled="saving" class="btn-primary">{{ saving ? '保存中...' : '保存设置' }}</button><button type="button" @click="testTg" :disabled="testing" class="btn-ghost border border-slate-200">{{ testing ? '发送中...' : '发送测试消息' }}</button><button type="button" @click="testDailyReport" :disabled="reportTesting" class="btn-ghost border border-slate-200">{{ reportTesting ? '发送中...' : '发送测试汇报' }}</button></div>
+    <div class="card settings-card layout-card telegram-card">
+      <div class="section-heading"><div><h2>Telegram 通知</h2><span class="settings-status" :class="telegramReady ? 'settings-status-on' : 'settings-status-off'">{{ telegramReady ? '已配置' : '未配置' }}</span></div><button type="button" class="toggle" :class="form.tg_enabled === '1' ? 'toggle-on' : ''" :aria-pressed="form.tg_enabled === '1'" @click="form.tg_enabled = form.tg_enabled === '1' ? '0' : '1'"><span></span></button></div>
+      <div class="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2"><div><label class="field-label" for="bot-token">机器人令牌</label><input id="bot-token" v-model="form.tg_bot_token" type="password" autocomplete="off" class="input" placeholder="粘贴 Bot Token" /></div><div><label class="field-label" for="chat-id">会话 ID</label><input id="chat-id" v-model="form.tg_chat_id" class="input" placeholder="例如：-1001234567890" /></div></div>
+      <div class="setting-row mt-5"><div><div class="text-sm font-semibold text-slate-700">每日流量汇报</div><div class="mt-1 text-xs text-slate-500">北京时间每天 00:00 发送。</div></div><button type="button" class="toggle" :class="form.tg_daily_report === '1' ? 'toggle-on' : ''" :aria-pressed="form.tg_daily_report === '1'" @click="form.tg_daily_report = form.tg_daily_report === '1' ? '0' : '1'"><span></span></button></div>
+      <div class="mt-5 flex flex-wrap gap-2"><button type="button" @click="save" :disabled="saving" class="btn-primary">{{ saving ? '保存中...' : '保存设置' }}</button><button type="button" @click="testTg" :disabled="testing || !telegramReady" class="btn-ghost border border-slate-200">{{ testing ? '发送中...' : '发送测试消息' }}</button><button type="button" @click="testDailyReport" :disabled="reportTesting || !telegramReady" class="btn-ghost border border-slate-200">{{ reportTesting ? '发送中...' : '测试日报' }}</button></div>
+      <p class="settings-note">运行事件（保活、定时开关机、流量保护）会按通知总开关发送。</p>
     </div>
 
     <div class="card settings-card layout-card">
@@ -24,13 +24,14 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useStore } from '../stores'
 import { apiErrorMessage } from '../utils/session'
 
 const store = useStore(); const saving = ref(false); const testing = ref(false); const reportTesting = ref(false); const msg = ref({ type: 'success', text: '' })
-const form = ref({ tg_bot_token: '', tg_chat_id: '', tg_daily_report: '0' }); const versionInfo = ref({ current: '', has_update: false, latest: '', url: '' })
-onMounted(async () => { await store.fetchSettings(); form.value.tg_bot_token = store.settings.tg_bot_token || ''; form.value.tg_chat_id = store.settings.tg_chat_id || ''; form.value.tg_daily_report = store.settings.tg_daily_report || '0'; checkVersion() })
+const form = ref({ tg_bot_token: '', tg_chat_id: '', tg_enabled: '1', tg_daily_report: '0' }); const versionInfo = ref({ current: '', has_update: false, latest: '', url: '' })
+const telegramReady = computed(() => Boolean(form.value.tg_bot_token && form.value.tg_chat_id))
+onMounted(async () => { await store.fetchSettings(); form.value.tg_bot_token = store.settings.tg_bot_token || ''; form.value.tg_chat_id = store.settings.tg_chat_id || ''; form.value.tg_enabled = store.settings.tg_enabled === '0' ? '0' : '1'; form.value.tg_daily_report = store.settings.tg_daily_report || '0'; checkVersion() })
 function showMessage(type, text, timeout = 4000) { msg.value = { type, text }; window.setTimeout(() => { msg.value = { type: 'success', text: '' } }, timeout) }
 async function checkVersion() { try { versionInfo.value = await store.fetchVersionInfo() } catch (_) { /* version discovery is optional */ } }
 function settingItems() { return Object.entries(form.value).map(([key, value]) => ({ key, value })) }
@@ -41,5 +42,6 @@ async function testDailyReport() { reportTesting.value = true; try { await store
 
 <style scoped>
 .eyebrow { color: #2563eb; font-size: 10px; font-weight: 800; letter-spacing: .16em; }.page-title { margin-top: 6px; color: #172033; font-size: 26px; font-weight: 750; letter-spacing: -.03em; }.page-subtitle { margin-top: 6px; color: #64748b; font-size: 13px; }.settings-card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }.settings-card { padding: 22px; }.section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }.section-heading h2 { color: #1e293b; font-size: 15px; font-weight: 700; }.section-heading p { margin-top: 4px; color: #94a3b8; font-size: 12px; }.section-code { display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; background: #eff6ff; padding: 6px 8px; color: #2563eb; font-size: 9px; font-weight: 800; letter-spacing: .08em; }.setting-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; border-top: 1px solid #eef2f7; padding-top: 18px; }.toggle { position: relative; display: inline-flex; width: 40px; height: 23px; flex: 0 0 auto; border: 0; border-radius: 999px; background: #cbd5e1; transition: transform .15s ease, background .15s ease; }.toggle span { position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(15,23,42,.2); transition: transform .15s ease; }.toggle-on { background: #2563eb; }.toggle-on span { transform: translateX(17px); }
+.settings-status { display: inline-block; margin-top: 5px; border-radius: 999px; padding: 3px 7px; font-size: 10px; font-weight: 700; }.settings-status-on { background: #ecfdf3; color: #15803d; }.settings-status-off { background: #f1f5f9; color: #64748b; }.settings-note { margin-top: 12px; color: #94a3b8; font-size: 10px; }
 @media (max-width: 900px) { .settings-card-grid { grid-template-columns: minmax(0, 1fr); } }
 </style>

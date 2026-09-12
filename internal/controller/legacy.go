@@ -113,14 +113,14 @@ func (s *Store) UpdateSettings(ctx context.Context, items []SettingUpdate) error
 		return err
 	}
 	defer tx.Rollback()
-	allowed := map[string]bool{"tg_bot_token": true, "tg_chat_id": true, "tg_daily_report": true}
+	allowed := map[string]bool{"tg_bot_token": true, "tg_chat_id": true, "tg_enabled": true, "tg_daily_report": true}
 	for _, item := range items {
 		item.Key = strings.TrimSpace(item.Key)
 		if !allowed[item.Key] {
 			return errors.New("unsupported setting key")
 		}
-		if item.Key == "tg_daily_report" && item.Value != "0" && item.Value != "1" {
-			return errors.New("tg_daily_report must be 0 or 1")
+		if (item.Key == "tg_daily_report" || item.Key == "tg_enabled") && item.Value != "0" && item.Value != "1" {
+			return errors.New(item.Key + " must be 0 or 1")
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, item.Key, item.Value); err != nil {
 			return err

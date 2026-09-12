@@ -431,10 +431,23 @@ func (s *CloudService) SendDailyReport(ctx context.Context) error {
 }
 
 func (s *CloudService) TestTelegram(ctx context.Context) error {
-	return s.sendTelegram(ctx, "AliCDT Manager 通知通道测试成功")
+	return s.sendTelegramWithOptions(ctx, "AliCDT Manager 通知通道测试成功", true)
 }
 
 func (s *CloudService) sendTelegram(ctx context.Context, message string) error {
+	return s.sendTelegramWithOptions(ctx, message, false)
+}
+
+func (s *CloudService) sendTelegramWithOptions(ctx context.Context, message string, force bool) error {
+	if !force {
+		enabled, err := s.store.GetSetting(ctx, "tg_enabled")
+		if err != nil {
+			return err
+		}
+		if enabled == "0" {
+			return nil
+		}
+	}
 	token, err := s.store.GetSetting(ctx, "tg_bot_token")
 	if err != nil {
 		return err

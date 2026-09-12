@@ -26,6 +26,26 @@ func TestRelayPoolPrioritySelectsLowestReadyTier(t *testing.T) {
 	}
 }
 
+func TestRandomRelayPoolPortStaysInUnprivilegedRange(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	tx, err := store.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	port, err := randomRelayPoolPortTx(context.Background(), tx, []CreateRelayPoolMember{{RelayNodeID: "missing"}}, "tcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if port < 20000 || port > 60000 {
+		t.Fatalf("random port outside expected range: %d", port)
+	}
+}
+
 func TestRelayPoolMemberJSONRetainsKnownZeroTraffic(t *testing.T) {
 	member := RelayPoolMember{TrafficKnown: true}
 	encoded, err := json.Marshal(member)
