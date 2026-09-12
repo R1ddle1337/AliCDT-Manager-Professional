@@ -24,6 +24,10 @@ type deleteInstanceClient interface {
 	DeleteInstance(context.Context, string) error
 }
 
+type replacementInstanceClient interface {
+	CreateReplacementInstance(context.Context, map[string]string) (string, error)
+}
+
 type billingClient interface {
 	GetBalance(context.Context) (aliyun.AccountBalance, error)
 	GetBillOverview(context.Context, string) (aliyun.BillOverview, error)
