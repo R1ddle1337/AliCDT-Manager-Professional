@@ -260,7 +260,7 @@ func (s *CloudService) runScheduledPowerAt(ctx context.Context, scheduledMinute,
 		return
 	}
 	for _, account := range accounts {
-		if account.ProtectedInstanceID == "" || account.PowerStopReason == "manual" || account.PowerStopReason == "protection" {
+		if account.ProtectedInstanceID == "" || account.PowerStopReason == "manual" || account.PowerStopReason == "protection" || account.PowerStopReason == "replacement" {
 			continue
 		}
 		paired := account.AutoStartTime != "" && account.AutoStopTime != "" && account.AutoStartTime != account.AutoStopTime
@@ -291,8 +291,8 @@ func (s *CloudService) runScheduledPowerAt(ctx context.Context, scheduledMinute,
 			if strings.Contains(message, "not found") || strings.Contains(message, "does not exist") || strings.Contains(message, "released") {
 				// Do not keep a released instance in the scheduled-stop state;
 				// that would cause a warning and API lookup every minute forever.
-				_ = s.store.SetAccountPowerStopReason(ctx, account.ID, "")
-				_ = s.store.AddSystemLog(ctx, "warning", "scheduler", fmt.Sprintf("[%s] 绑定 ECS 已不存在，请重新选择实例；已暂停该账户的定时电源任务", account.Name))
+				_ = s.store.SetAccountPowerStopReason(ctx, account.ID, "replacement")
+				_ = s.store.AddSystemLog(ctx, "warning", "scheduler", fmt.Sprintf("[%s] 绑定 ECS 已释放，正在等待自动替换实例；定时电源任务已暂停", account.Name))
 				continue
 			}
 			_ = s.store.AddSystemLog(ctx, "warning", "scheduler", fmt.Sprintf("[%s] 定时电源任务等待有效实例状态，下次重试", account.Name))

@@ -232,7 +232,7 @@ func (s *Store) SetAccountManualStopped(ctx context.Context, accountID int64, st
 
 func (s *Store) SetAccountPowerStopReason(ctx context.Context, accountID int64, reason string) error {
 	reason = strings.TrimSpace(strings.ToLower(reason))
-	if reason != "" && reason != "manual" && reason != "scheduled" && reason != "protection" {
+	if reason != "" && reason != "manual" && reason != "scheduled" && reason != "protection" && reason != "replacement" {
 		return fmt.Errorf("invalid power stop reason %q", reason)
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE accounts SET manual_stopped=?,power_stop_reason=? WHERE id=?`, boolInt(reason != ""), reason, accountID)

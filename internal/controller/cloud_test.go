@@ -435,6 +435,31 @@ func TestScheduledDowntimeHandlesOvernightWindow(t *testing.T) {
 	}
 }
 
+func TestReleasedBoundInstanceEntersReplacementState(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	account, err := store.CreateCloudAccount(ctx, CloudAccountRequest{Name: "released", AccessKeyID: "key", AccessKeySecret: "secret", RegionID: "cn-hongkong", SiteType: "international", ProtectedInstanceID: "i-released", AutoStopTime: "02:00", AutoStartTime: "03:00"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = account
+	fake := &fakeCloudClient{instanceStatus: "Unknown", instances: nil}
+	service := NewCloudService(store)
+	service.clientFor = func(CloudAccount) cloudClient { return fake }
+	service.runScheduledPowerAt(ctx, "02:00", "02:00")
+	accounts, err := store.ListCloudAccounts(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accounts) != 1 || accounts[0].PowerStopReason != "replacement" {
+		t.Fatalf("released instance did not enter replacement state: %+v", accounts)
+	}
+}
+
 func TestScheduledPowerUpdatesInstanceAndRelayProjection(t *testing.T) {
 	store, err := OpenStore(":memory:")
 	if err != nil {
@@ -1182,6 +1207,7 @@ type fakeCloudClient struct {
 	instances      []aliyun.Instance
 	traffic        float64
 	instanceStatus string
+	statusErr      error
 	stopErr        error
 	startErr       error
 	startCalls     int
@@ -1190,7 +1216,7 @@ type fakeCloudClient struct {
 }
 
 func (client *fakeCloudClient) GetInstanceStatus(context.Context, string) (string, error) {
-	return client.instanceStatus, nil
+	return client.instanceStatus, client.statusErr
 }
 
 func (client *fakeCloudClient) GetInstances(context.Context) ([]aliyun.Instance, error) {
