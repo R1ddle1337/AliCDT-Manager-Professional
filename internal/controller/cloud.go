@@ -155,7 +155,7 @@ func (s *CloudService) syncAccount(ctx context.Context, account CloudAccount) Cl
 					enrollToken := randomID("auto-enroll")
 					if tokenErr := s.store.CreateEnrollmentToken(ctx, enrollToken, 30*time.Minute, account.ID); tokenErr == nil {
 						nodeName := strings.NewReplacer("\n", "", "\r", "", "'", "").Replace(account.Name)
-						template["UserData"] = fmt.Sprintf("#!/bin/sh\ncurl -fsSL %s/agent/install.sh -o /tmp/cdt-install.sh && chmod 700 /tmp/cdt-install.sh && /tmp/cdt-install.sh --server %s --token %s --node-name '%s'\n", controllerURL, controllerURL, enrollToken, nodeName)
+						template["UserData"] = fmt.Sprintf("#!/bin/sh\nset -eu\nif ! command -v curl >/dev/null 2>&1; then\n  if command -v apk >/dev/null 2>&1; then apk add --no-cache curl; elif command -v apt-get >/dev/null 2>&1; then apt-get update && apt-get install -y curl; elif command -v yum >/dev/null 2>&1; then yum install -y curl; fi\nfi\ncurl -fsSL '%s/agent/install.sh' -o /tmp/cdt-install.sh\nchmod 700 /tmp/cdt-install.sh\n/tmp/cdt-install.sh --server '%s' --token '%s' --node-name '%s'\n", controllerURL, controllerURL, enrollToken, nodeName)
 					}
 				}
 				newID, createErr := creator.CreateReplacementInstance(ctx, template)
