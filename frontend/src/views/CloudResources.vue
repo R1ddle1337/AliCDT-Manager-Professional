@@ -3,7 +3,6 @@
     <header class="page-header">
       <div>
         <h1 class="page-title">云资源</h1>
-        <p class="page-subtitle">统一管理阿里云账户、ECS 实例和账户级 CDT 月流量快照</p>
       </div>
       <div class="header-actions">
         <button class="btn-ghost border border-slate-200" type="button" @click="openCreate">添加账户</button>
@@ -22,8 +21,8 @@
     </div>
 
     <section v-if="activeSection === 'overview'" class="monitor-grid">
-      <article class="card monitor-panel"><div class="panel-header"><div><h2>保护状态</h2><p>账户级 CDT 阈值和自动化动作</p></div></div><div v-if="protectedAccounts.length" class="monitor-list"><div v-for="account in protectedAccounts" :key="account.id" class="monitor-line"><span class="status-dot status-dot-warning"></span><div><strong>{{ account.name }}</strong><small>{{ protectionModeLabel(account.protection_mode) }} · {{ trafficSummary(account) }}</small></div><span class="monitor-state">处理中</span></div></div><div v-else class="monitor-empty"><span class="status-dot status-dot-success"></span>暂无账户触发流量保护</div></article>
-      <article class="card monitor-panel"><div class="panel-header"><div><h2>实例状态</h2><p>所有地域的 ECS 运行概况</p></div><span>{{ runningInstanceCount }}/{{ store.cloud.instances.length }}</span></div><div class="monitor-list"><div v-for="instance in store.cloud.instances.slice(0, 6)" :key="instance.instance_id" class="monitor-line"><span class="status-dot" :class="instance.status === 'Running' ? 'status-dot-success' : 'status-dot-muted'"></span><div><strong>{{ instance.instance_name || instance.instance_id }}</strong><small>{{ instance.region_id }} · {{ instance.instance_type || '规格未知' }}</small></div><span class="monitor-state">{{ instance.status === 'Running' ? '运行中' : '已停机' }}</span></div><div v-if="!store.cloud.instances.length" class="monitor-empty">暂无实例数据</div></div></article>
+      <article class="card monitor-panel"><div class="panel-header"><div><h2>保护状态</h2></div></div><div v-if="protectedAccounts.length" class="monitor-list"><div v-for="account in protectedAccounts" :key="account.id" class="monitor-line"><span class="status-dot status-dot-warning"></span><div><strong>{{ account.name }}</strong><small>{{ protectionModeLabel(account.protection_mode) }} · {{ trafficSummary(account) }}</small></div><span class="monitor-state">处理中</span></div></div><div v-else class="monitor-empty"><span class="status-dot status-dot-success"></span>暂无账户触发流量保护</div></article>
+      <article class="card monitor-panel"><div class="panel-header"><div><h2>实例状态</h2></div><span>{{ runningInstanceCount }}/{{ store.cloud.instances.length }}</span></div><div class="monitor-list"><div v-for="instance in store.cloud.instances.slice(0, 6)" :key="instance.instance_id" class="monitor-line"><span class="status-dot" :class="instance.status === 'Running' ? 'status-dot-success' : 'status-dot-muted'"></span><div><strong>{{ instance.instance_name || instance.instance_id }}</strong><small>{{ instance.region_id }} · {{ instance.instance_type || '规格未知' }}</small></div><span class="monitor-state">{{ instance.status === 'Running' ? '运行中' : '已停机' }}</span></div><div v-if="!store.cloud.instances.length" class="monitor-empty">暂无实例数据</div></div></article>
     </section>
 
     <div v-if="activeSection !== 'overview'" class="toolbar-row"><label class="search-box"><span>⌕</span><input v-model.trim="search" class="input" placeholder="搜索账户、实例 ID 或地域" /></label><span class="toolbar-hint">数据每 2 分钟自动同步，也可点击立即同步</span></div>
@@ -158,7 +157,7 @@
       <form class="space-y-5 modal-form" @submit.prevent="saveAccount">
         <div>
           <h2 class="mt-1 text-lg font-bold text-slate-900">{{ editTarget ? '编辑阿里云账户' : '添加阿里云账户' }}</h2>
-          <p class="mt-2 text-xs leading-5 text-slate-500">密钥仅由控制端保存，不会下发给中转 Agent。</p>
+
         </div>
         <div class="form-grid">
           <div class="field-wide"><label class="field-label">账户名称</label><input v-model.trim="form.name" class="input" required /></div>

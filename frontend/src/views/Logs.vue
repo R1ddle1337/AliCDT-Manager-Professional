@@ -1,7 +1,7 @@
 <template>
   <div class="space-y-6 fade-in logs-page">
     <div class="flex flex-wrap items-end justify-between gap-4">
-      <div><h1 class="page-title">系统日志</h1><p class="page-subtitle">查看自动化任务和账户操作记录</p></div>
+      <div><h1 class="page-title">系统日志</h1></div>
       <div class="flex flex-wrap items-center gap-2"><select v-model="category" :disabled="loading || clearing" @change="load" class="input w-36 py-2"><option value="">全部分类</option><option value="traffic">流量</option><option value="keepalive">保活</option><option value="scheduler">定时任务</option><option value="ddns">DDNS</option><option value="notify">通知</option><option value="system">系统</option></select><button type="button" :disabled="loading || clearing" @click="load" class="btn-ghost border border-slate-200">{{ loading ? '刷新中...' : '刷新' }}</button><button type="button" :disabled="loading || clearing || !store.logs.length" @click="clearLogs" class="btn-danger">{{ clearing ? '清空中...' : '清空' }}</button></div>
     </div>
 

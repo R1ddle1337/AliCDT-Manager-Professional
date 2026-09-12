@@ -3,7 +3,6 @@
     <header class="page-header">
       <div>
         <h1 class="page-title">我的用量</h1>
-        <p class="page-subtitle">查看入口端口、计费方向和本月可用流量</p>
       </div>
       <button class="btn-ghost border border-slate-200" type="button" :disabled="loading" @click="refresh">{{ loading ? '刷新中...' : '刷新' }}</button>
     </header>
@@ -17,7 +16,7 @@
       </section>
 
       <section class="card usage-panel">
-        <div class="panel-header"><div><h2>流量进度</h2><p>用量由已分配云账户的 CDT 快照汇总</p></div><span class="panel-code">CDT</span></div>
+        <div class="panel-header"><div><h2>流量进度</h2></div><span class="panel-code">CDT</span></div>
         <div class="panel-body">
           <div class="large-track"><div class="traffic-fill" :class="user.traffic_percent >= 100 ? 'traffic-danger' : ''" :style="{ width: Math.min(100, user.traffic_percent || 0) + '%' }"></div></div>
           <div class="traffic-meta"><span>{{ formatPercent(user.traffic_percent) }} 已使用</span><span>{{ formatGB(user.traffic_remaining_gb) }} 剩余</span></div>
@@ -27,7 +26,7 @@
       </section>
 
       <section class="card account-panel">
-        <div class="panel-header"><div><h2>我的入口端口</h2><p>同一用户全部端口共享上方的一份流量额度</p></div><span class="panel-code">{{ entryPortCount }}</span></div>
+        <div class="panel-header"><div><h2>我的入口端口</h2></div><span class="panel-code">{{ entryPortCount }}</span></div>
         <div v-if="user.entry_groups?.length" class="account-table">
           <div v-for="group in user.entry_groups" :key="group.id" class="entry-card">
             <div class="entry-title"><div><strong>{{ group.name }}</strong><small>{{ group.relay_node_name }} · {{ group.network.toUpperCase() }} · {{ billingModeLabel(group.billing_mode) }}</small></div><span :class="group.enabled ? 'entry-on' : 'entry-off'">{{ group.enabled ? '可用' : '已停用' }}</span></div>
@@ -39,7 +38,7 @@
       </section>
 
       <section class="card account-panel">
-        <div class="panel-header"><div><h2>我的云账户</h2><p>密钥和云资源操作仅对管理员开放</p></div><span class="panel-code">{{ user.accounts.length }}</span></div>
+        <div class="panel-header"><div><h2>我的云账户</h2></div><span class="panel-code">{{ user.accounts.length }}</span></div>
         <div v-if="user.accounts.length" class="account-table">
           <div v-for="account in user.accounts" :key="account.id" class="account-row">
             <div><strong>{{ account.name }}</strong><small>{{ account.synced_at ? '同步于 ' + formatDate(account.synced_at) : '尚无同步快照' }}</small></div>

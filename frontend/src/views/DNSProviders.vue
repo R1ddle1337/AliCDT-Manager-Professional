@@ -3,7 +3,6 @@
     <header class="page-header">
       <div>
         <h1 class="page-title">DNS 托管</h1>
-        <p class="page-subtitle">集中管理域名服务商和 Relay 入口记录，配置、状态与异常各归其位。</p>
       </div>
       <div class="header-actions">
         <button
@@ -83,7 +82,6 @@
       <div class="panel-heading">
         <div>
           <h2>域名服务商</h2>
-          <p>保存前会验证凭据和域名权限；密钥只写入服务端，不会在页面回显。</p>
         </div>
         <button type="button" class="btn-primary panel-create" @click="openProvider()">添加服务商</button>
       </div>
@@ -176,7 +174,6 @@
       <div class="panel-heading records-heading">
         <div>
           <h2>托管记录</h2>
-          <p>Agent 来源会跟随 Relay 公网 IP；系统不会修改本页之外的 DNS 记录。</p>
         </div>
         <button
           type="button"
@@ -283,7 +280,6 @@
       <form class="modal-form" @submit.prevent="saveProvider">
         <div class="modal-heading">
           <h2>{{ providerForm.id ? '编辑 DNS 服务商' : '添加 DNS 服务商' }}</h2>
-          <p>服务端会在保存前测试凭据和域名权限，测试失败不会写入配置。</p>
         </div>
 
         <section class="form-section">
@@ -378,7 +374,6 @@
       <form class="modal-form" @submit.prevent="saveRecord">
         <div class="modal-heading">
           <h2>{{ recordForm.id ? '编辑托管记录' : '添加托管记录' }}</h2>
-          <p>选择记录来源；Agent 来源会在公网 IP 变化后自动等待同步。</p>
         </div>
 
         <section class="form-section">

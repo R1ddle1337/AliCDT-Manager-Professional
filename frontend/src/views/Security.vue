@@ -1,7 +1,7 @@
 <template>
   <div class="security-page space-y-5 fade-in">
     <header class="security-header">
-      <div><h1 class="page-title">安全中心</h1><p class="page-subtitle">管理员密码、登录保护和活动会话统一管理</p></div>
+      <div><h1 class="page-title">安全中心</h1></div>
       <span class="security-status"><span class="status-dot status-dot-success"></span>基础防护已启用</span>
     </header>
 

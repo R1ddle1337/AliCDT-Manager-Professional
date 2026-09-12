@@ -1,7 +1,7 @@
 <template>
   <div class="space-y-5 fade-in relay-nodes-page">
     <header class="flex flex-wrap items-end justify-between gap-4">
-      <div><h1 class="page-title">中转节点</h1><p class="page-subtitle">安装在阿里云 CDT ECS 上的 Relay 代理 · 入口 IP 默认仅显示前两段</p></div>
+      <div><h1 class="page-title">中转节点</h1></div>
       <div class="flex flex-wrap items-end gap-2">
         <label class="account-picker"><span>绑定云账户</span><select v-model="selectedAccountID" class="input"><option value="">不绑定（Agent 有元数据时自动关联）</option><option v-for="account in store.cloud.accounts" :key="account.id" :value="String(account.id)">{{ account.name }} · {{ account.region_id }}</option></select></label>
         <button class="btn-ghost border border-blue-200 text-blue-700" :disabled="upgradeBusy || !upgradeNodes.length" @click="requestUpgradeAll">{{ upgradeBusy ? '升级请求中...' : (upgradeNodes.length ? `升级 ${upgradeNodes.length} 台 Agent` : 'Agent 已是最新') }}</button>
