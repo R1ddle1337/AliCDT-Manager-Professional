@@ -5,10 +5,10 @@
     <div class="settings-card-grid layout-collection layout-collection--strip">
     <div class="card settings-card layout-card telegram-card">
       <div class="section-heading"><div><h2>Telegram 通知</h2><span class="settings-status" :class="telegramReady ? 'settings-status-on' : 'settings-status-off'">{{ telegramReady ? '已配置' : '未配置' }}</span></div><button type="button" class="toggle" :class="form.tg_enabled === '1' ? 'toggle-on' : ''" :aria-pressed="form.tg_enabled === '1'" @click="form.tg_enabled = form.tg_enabled === '1' ? '0' : '1'"><span></span></button></div>
-      <div class="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2"><div><label class="field-label" for="bot-token">机器人令牌</label><input id="bot-token" v-model="form.tg_bot_token" type="password" autocomplete="off" class="input" placeholder="粘贴 Bot Token" /></div><div><label class="field-label" for="chat-id">会话 ID</label><input id="chat-id" v-model="form.tg_chat_id" class="input" placeholder="例如：-1001234567890" /></div></div>
+      <div class="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2"><div><label class="field-label" for="bot-token">机器人令牌</label><input id="bot-token" v-model="form.tg_bot_token" type="password" autocomplete="new-password" class="input" placeholder="已配置时留空即可" /></div><div><label class="field-label" for="chat-id">会话 ID</label><input id="chat-id" v-model="form.tg_chat_id" class="input" placeholder="例如：-1001234567890" /></div></div>
       <div class="setting-row mt-5"><div><div class="text-sm font-semibold text-slate-700">每日流量汇报</div><div class="mt-1 text-xs text-slate-500">北京时间每天 00:00 发送。</div></div><button type="button" class="toggle" :class="form.tg_daily_report === '1' ? 'toggle-on' : ''" :aria-pressed="form.tg_daily_report === '1'" @click="form.tg_daily_report = form.tg_daily_report === '1' ? '0' : '1'"><span></span></button></div>
       <div class="mt-5 flex flex-wrap gap-2"><button type="button" @click="save" :disabled="saving" class="btn-primary">{{ saving ? '保存中...' : '保存设置' }}</button><button type="button" @click="testTg" :disabled="testing || !telegramReady" class="btn-ghost border border-slate-200">{{ testing ? '发送中...' : '发送测试消息' }}</button><button type="button" @click="testDailyReport" :disabled="reportTesting || !telegramReady" class="btn-ghost border border-slate-200">{{ reportTesting ? '发送中...' : '测试日报' }}</button></div>
-      <p class="settings-note">运行事件（保活、定时开关机、流量保护）会按通知总开关发送。</p>
+      <p class="settings-note">已配置的令牌不会回传到浏览器；修改其他设置时令牌留空即可保留。</p>
     </div>
 
     <div class="card settings-card layout-card">
@@ -30,8 +30,8 @@ import { apiErrorMessage } from '../utils/session'
 
 const store = useStore(); const saving = ref(false); const testing = ref(false); const reportTesting = ref(false); const msg = ref({ type: 'success', text: '' })
 const form = ref({ tg_bot_token: '', tg_chat_id: '', tg_enabled: '1', tg_daily_report: '0' }); const versionInfo = ref({ current: '', has_update: false, latest: '', url: '' })
-const telegramReady = computed(() => Boolean(form.value.tg_bot_token && form.value.tg_chat_id))
-onMounted(async () => { await store.fetchSettings(); form.value.tg_bot_token = store.settings.tg_bot_token || ''; form.value.tg_chat_id = store.settings.tg_chat_id || ''; form.value.tg_enabled = store.settings.tg_enabled === '0' ? '0' : '1'; form.value.tg_daily_report = store.settings.tg_daily_report || '0'; checkVersion() })
+const telegramReady = computed(() => Boolean((form.value.tg_bot_token || store.settings.tg_configured === '1') && form.value.tg_chat_id))
+onMounted(async () => { await store.fetchSettings(); form.value.tg_bot_token = ''; form.value.tg_chat_id = store.settings.tg_chat_id || ''; form.value.tg_enabled = store.settings.tg_enabled === '0' ? '0' : '1'; form.value.tg_daily_report = store.settings.tg_daily_report || '0'; checkVersion() })
 function showMessage(type, text, timeout = 4000) { msg.value = { type, text }; window.setTimeout(() => { msg.value = { type: 'success', text: '' } }, timeout) }
 async function checkVersion() { try { versionInfo.value = await store.fetchVersionInfo() } catch (_) { /* version discovery is optional */ } }
 function settingItems() { return Object.entries(form.value).map(([key, value]) => ({ key, value })) }

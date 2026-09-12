@@ -90,3 +90,32 @@ func TestDisabledDailyReportDoesNotRecordASentMessage(t *testing.T) {
 		}
 	}
 }
+
+func TestPublicSettingsMaskTelegramTokenAndEmptySavePreservesIt(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	if err := store.UpdateSettings(ctx, []SettingUpdate{{Key: "tg_bot_token", Value: "secret-token"}, {Key: "tg_chat_id", Value: "chat"}}); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := store.GetPublicSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := settings["tg_bot_token"]; ok {
+		t.Fatal("telegram token was returned by public settings")
+	}
+	if settings["tg_configured"] != "1" {
+		t.Fatalf("expected configured marker, got %#v", settings)
+	}
+	if err := store.UpdateSettings(ctx, []SettingUpdate{{Key: "tg_bot_token", Value: ""}, {Key: "tg_chat_id", Value: "new-chat"}}); err != nil {
+		t.Fatal(err)
+	}
+	token, err := store.GetSetting(ctx, "tg_bot_token")
+	if err != nil || token != "secret-token" {
+		t.Fatalf("empty token save changed secret: %q, %v", token, err)
+	}
+}

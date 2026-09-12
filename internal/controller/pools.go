@@ -984,13 +984,15 @@ func validRelayIP(value string) bool {
 }
 
 func randomRelayPoolPortTx(ctx context.Context, tx *sql.Tx, members []CreateRelayPoolMember, network string) (int, error) {
-	const firstPort, portSpan, attempts = 20000, 40001, 80
+	const firstPort, portSpan = 20000, 40001
 	startValue, err := cryptorand.Int(cryptorand.Reader, big.NewInt(portSpan))
 	if err != nil {
 		return 0, fmt.Errorf("generate random relay port: %w", err)
 	}
 	start := int(startValue.Int64())
-	for attempt := 0; attempt < attempts; attempt++ {
+	// Scan the complete unprivileged pool from a random offset. A bounded
+	// probe can report failure even when a free port exists under load.
+	for attempt := 0; attempt < portSpan; attempt++ {
 		port := firstPort + (start+attempt)%portSpan
 		available := true
 		for _, member := range members {

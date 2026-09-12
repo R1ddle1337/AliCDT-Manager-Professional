@@ -431,11 +431,13 @@ func (s *CloudService) sendDailyReport(ctx context.Context, force bool) error {
 		report.WriteString("\n\n")
 		report.WriteString(account.Name)
 		if instance, ok := instances[account.ID]; ok {
-			usedGB := 0.0
-			if snapshot, exists := traffic[account.ID]; exists {
-				usedGB = snapshot.UsedGB
+			trafficText := "待同步"
+			if snapshot, exists := traffic[account.ID]; exists && snapshot.SyncedAt != nil && snapshot.LastError == "" {
+				trafficText = fmt.Sprintf("%.2f GB / %.2f GB", snapshot.UsedGB, account.TrafficLimitGB)
+			} else if snapshot, exists := traffic[account.ID]; exists && snapshot.LastError != "" {
+				trafficText = "同步失败（保留上次有效值）"
 			}
-			report.WriteString(fmt.Sprintf("\n状态: %s\n账户流量: %.2f GB / %.2f GB\n地域: %s", instance.Status, usedGB, account.TrafficLimitGB, instance.RegionID))
+			report.WriteString(fmt.Sprintf("\n状态: %s\n账户流量: %s\n地域: %s", instance.Status, trafficText, instance.RegionID))
 		} else {
 			report.WriteString("\n暂无实例数据")
 		}

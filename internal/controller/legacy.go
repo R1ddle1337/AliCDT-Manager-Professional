@@ -82,7 +82,7 @@ func (s *Store) ClearSystemLogs(ctx context.Context, category string) error {
 }
 
 func (s *Store) GetPublicSettings(ctx context.Context) (map[string]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT key,COALESCE(value,'') FROM settings WHERE key NOT LIKE '%password_hash%' AND key NOT LIKE '%totp%' ORDER BY key`)
+	rows, err := s.db.QueryContext(ctx, `SELECT key,COALESCE(value,'') FROM settings WHERE key NOT LIKE '%password_hash%' AND key NOT LIKE '%totp%' AND key<>'tg_bot_token' ORDER BY key`)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,19 @@ func (s *Store) GetPublicSettings(ctx context.Context) (map[string]string, error
 		}
 		settings[key] = value
 	}
-	return settings, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	var token string
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(value,'') FROM settings WHERE key='tg_bot_token'`).Scan(&token); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if token != "" {
+		settings["tg_configured"] = "1"
+	} else {
+		settings["tg_configured"] = "0"
+	}
+	return settings, nil
 }
 
 func (s *Store) GetSetting(ctx context.Context, key string) (string, error) {
@@ -121,6 +133,13 @@ func (s *Store) UpdateSettings(ctx context.Context, items []SettingUpdate) error
 		}
 		if (item.Key == "tg_daily_report" || item.Key == "tg_enabled") && item.Value != "0" && item.Value != "1" {
 			return errors.New(item.Key + " must be 0 or 1")
+		}
+		// An empty token from the settings form means "keep the existing
+		// secret". This prevents the browser from ever needing to read or
+		// re-submit the Bot Token. Clearing a token is an explicit server-side
+		// operation and is intentionally not implicit in a save.
+		if item.Key == "tg_bot_token" && strings.TrimSpace(item.Value) == "" {
+			continue
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, item.Key, item.Value); err != nil {
 			return err
