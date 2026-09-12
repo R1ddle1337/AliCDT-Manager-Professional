@@ -212,7 +212,7 @@ func (s *CloudService) runKeepAliveAt(ctx context.Context, hhmm string) {
 		return
 	}
 	for _, account := range accounts {
-		if !account.KeepAlive || account.ProtectedInstanceID == "" || account.PowerStopReason != "" || inScheduledDowntime(account, hhmm) {
+		if !account.KeepAlive || account.ProtectedInstanceID == "" || account.PowerStopReason != "" || inScheduledDowntime(account, hhmm) || account.AutoStartTime == hhmm {
 			continue
 		}
 		status, err := s.currentInstanceStatus(ctx, account, account.ProtectedInstanceID)

@@ -456,6 +456,13 @@ func TestScheduledPowerUpdatesInstanceAndRelayProjection(t *testing.T) {
 	if overview.Instances[0].Status != "Running" {
 		t.Fatalf("scheduled start did not update instance projection: %+v", overview.Instances)
 	}
+	// The keep-alive pass in the same minute must yield to the scheduled
+	// start, even while ECS still reports the asynchronous transition as stopped.
+	fake.instances[0].Status = "Stopped"
+	service.runKeepAliveAt(ctx, "03:00")
+	if fake.startCalls != 1 {
+		t.Fatalf("keep-alive duplicated the scheduled start, calls=%d", fake.startCalls)
+	}
 	// Reflect the asynchronous ECS transition completing before the next tick.
 	fake.instances[0].Status = "Running"
 	// A replayed scheduler tick in the same minute must be harmless.
