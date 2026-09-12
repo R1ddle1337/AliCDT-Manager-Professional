@@ -232,7 +232,7 @@ func (s *CloudService) runKeepAliveAt(ctx context.Context, hhmm string) {
 					_ = s.store.SetAccountNoStockNotified(ctx, account.ID, true)
 					message := fmt.Sprintf("[%s] 保活失败：抢占实例库存不足，系统将持续重试", account.Name)
 					_ = s.store.AddSystemLog(ctx, "warning", "keepalive", message)
-					_ = s.sendTelegram(ctx, message)
+					_ = s.sendTelegramCategory(ctx, "keepalive", message)
 				}
 				continue
 			}
@@ -242,11 +242,11 @@ func (s *CloudService) runKeepAliveAt(ctx context.Context, hhmm string) {
 		s.reconcilePowerState(ctx, account.ProtectedInstanceID, "Running")
 		if account.NoStockNotified {
 			_ = s.store.SetAccountNoStockNotified(ctx, account.ID, false)
-			_ = s.sendTelegram(ctx, fmt.Sprintf("[%s] 抢占实例库存已恢复，实例已重新启动", account.Name))
+			_ = s.sendTelegramCategory(ctx, "keepalive", fmt.Sprintf("[%s] 抢占实例库存已恢复，实例已重新启动", account.Name))
 		}
 		message := fmt.Sprintf("[%s] 实例 %s 被回收，已自动拉起", account.Name, account.ProtectedInstanceID)
 		_ = s.store.AddSystemLog(ctx, "info", "keepalive", message)
-		_ = s.sendTelegram(ctx, message)
+		_ = s.sendTelegramCategory(ctx, "keepalive", message)
 	}
 }
 
@@ -325,7 +325,7 @@ func (s *CloudService) runScheduledPowerAt(ctx context.Context, scheduledMinute,
 			s.reconcilePowerState(ctx, account.ProtectedInstanceID, "Stopped")
 			message := fmt.Sprintf("[%s] 定时关机指令已接受（计划 %s，执行 %s，北京时间，%s）", account.Name, account.AutoStopTime, currentMinute, shutdownMode)
 			_ = s.store.AddSystemLog(ctx, "info", "scheduler", message)
-			_ = s.sendTelegram(ctx, message)
+			_ = s.sendTelegramCategory(ctx, "scheduler", message)
 			continue
 		}
 		if status == "Running" {
@@ -346,7 +346,7 @@ func (s *CloudService) runScheduledPowerAt(ctx context.Context, scheduledMinute,
 		s.reconcilePowerState(ctx, account.ProtectedInstanceID, "Running")
 		message := fmt.Sprintf("[%s] 定时开机指令已接受（计划 %s，执行 %s，北京时间），等待 ECS 和 Agent 恢复", account.Name, account.AutoStartTime, currentMinute)
 		_ = s.store.AddSystemLog(ctx, "info", "scheduler", message)
-		_ = s.sendTelegram(ctx, message)
+		_ = s.sendTelegramCategory(ctx, "scheduler", message)
 	}
 }
 
@@ -390,7 +390,7 @@ func (s *CloudService) runMonthlyReset(ctx context.Context) {
 	if len(restarted) > 0 {
 		message := "每月流量周期已重置，已恢复并启动：" + strings.Join(restarted, "、")
 		_ = s.store.AddSystemLog(ctx, "info", "system", message)
-		_ = s.sendTelegram(ctx, message)
+		_ = s.sendTelegramCategory(ctx, "protection", message)
 	}
 }
 
@@ -456,6 +456,16 @@ func (s *CloudService) TestTelegram(ctx context.Context) error {
 }
 
 func (s *CloudService) sendTelegram(ctx context.Context, message string) error {
+	return s.sendTelegramCategory(ctx, "system", message)
+}
+
+func (s *CloudService) sendTelegramCategory(ctx context.Context, category, message string) error {
+	if category != "" {
+		enabled, err := s.telegramCategoryEnabled(ctx, category)
+		if err != nil || !enabled {
+			return err
+		}
+	}
 	return s.sendTelegramWithOptions(ctx, message, false)
 }
 
@@ -515,6 +525,21 @@ func (s *CloudService) telegramNotificationsEnabled(ctx context.Context) (bool, 
 		return false, err
 	}
 	return enabled != "0", nil
+}
+
+func (s *CloudService) telegramCategoryEnabled(ctx context.Context, category string) (bool, error) {
+	if ok, err := s.telegramNotificationsEnabled(ctx); err != nil || !ok {
+		return ok, err
+	}
+	key := "tg_notify_" + strings.TrimSpace(strings.ToLower(category))
+	if key == "tg_notify_" {
+		return true, nil
+	}
+	value, err := s.store.GetSetting(ctx, key)
+	if err != nil {
+		return false, err
+	}
+	return value != "0", nil
 }
 
 func (s *CloudService) sendTelegramChunk(ctx context.Context, client *http.Client, token, chatID, message string) error {

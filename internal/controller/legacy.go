@@ -125,13 +125,13 @@ func (s *Store) UpdateSettings(ctx context.Context, items []SettingUpdate) error
 		return err
 	}
 	defer tx.Rollback()
-	allowed := map[string]bool{"tg_bot_token": true, "tg_chat_id": true, "tg_enabled": true, "tg_daily_report": true}
+	allowed := map[string]bool{"tg_bot_token": true, "tg_chat_id": true, "tg_enabled": true, "tg_daily_report": true, "tg_notify_scheduler": true, "tg_notify_keepalive": true, "tg_notify_protection": true, "tg_notify_system": true}
 	for _, item := range items {
 		item.Key = strings.TrimSpace(item.Key)
 		if !allowed[item.Key] {
 			return errors.New("unsupported setting key")
 		}
-		if (item.Key == "tg_daily_report" || item.Key == "tg_enabled") && item.Value != "0" && item.Value != "1" {
+		if (item.Key == "tg_daily_report" || item.Key == "tg_enabled" || strings.HasPrefix(item.Key, "tg_notify_")) && item.Value != "0" && item.Value != "1" {
 			return errors.New(item.Key + " must be 0 or 1")
 		}
 		// An empty token from the settings form means "keep the existing
