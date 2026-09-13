@@ -114,7 +114,7 @@ const minecraftForm = ref({ edition: 'java', target_address: '', target_port: 25
 
 const blank = () => ({ relay_node_id: store.relayNodes[0]?.id || '', user_id: 0, name: '', listen_host: '0.0.0.0', listen_port: 443, network: 'tcp', mode: 'failover', enabled: true, billing_mode: 'both', traffic_limit_gb: 0 })
 const form = ref(blank())
-const canCreate = computed(() => store.relayNodes.length > 0 && store.landingNodes.length > 0)
+const canCreate = computed(() => store.relayNodes.some(node => node.status === 'online' && node.public_ip) && store.landingNodes.length > 0)
 const assignableUsers = computed(() => store.users.filter(user => !user.relay_service || user.id === editTarget.value?.user_id))
 const enabledDNSProviders = computed(() => store.dnsProviders.filter(provider => provider.enabled !== false))
 const selectedMinecraftDNSProvider = computed(() => enabledDNSProviders.value.find(provider => String(provider.id) === String(minecraftForm.value.dns_provider_id)))
@@ -124,7 +124,7 @@ const minecraftConnectionPreview = computed(() => formatMinecraftAddress(minecra
 
 function ensureOptions() { store.landingNodes.forEach((node, index) => { if (!targetOptions[node.id]) targetOptions[node.id] = { priority: index * 10, weight: 1 } }) }
 function openCreate() { ensureOptions(); editTarget.value = null; form.value = blank(); selectedTargets.value = []; formError.value = ''; showForm.value = true }
-function openMinecraft() { const provider = enabledDNSProviders.value[0]; minecraftError.value = ''; minecraftForm.value = { edition: 'java', target_address: '', target_port: 25565, listen_port: 25565, relay_node_id: store.relayNodes.find(node => node.status === 'online')?.id || store.relayNodes[0]?.id || '', user_id: 0, entry_mode: provider ? 'dns' : 'ip', dns_provider_id: provider?.id || '', dns_record_name: 'mc', dns_ttl: normalizeTTLForProvider(60, provider) }; showMinecraft.value = true }
+function openMinecraft() { const provider = enabledDNSProviders.value[0]; const relayNode = store.relayNodes.find(node => node.status === 'online' && node.public_ip); minecraftError.value = ''; if (!relayNode) { messageType.value = 'error'; message.value = '没有可用的在线中转节点'; return } minecraftForm.value = { edition: 'java', target_address: '', target_port: 25565, listen_port: 25565, relay_node_id: relayNode.id, user_id: 0, entry_mode: provider ? 'dns' : 'ip', dns_provider_id: provider?.id || '', dns_record_name: 'mc', dns_ttl: normalizeTTLForProvider(60, provider) }; showMinecraft.value = true }
 function normalizeMinecraftDNSSettings() { minecraftForm.value.dns_ttl = normalizeTTLForProvider(minecraftForm.value.dns_ttl, selectedMinecraftDNSProvider.value) }
 function openEdit(service) { ensureOptions(); editTarget.value = service; form.value = { relay_node_id: service.relay_node_id, user_id: service.user_id || 0, name: service.name, listen_host: service.listen_host, listen_port: service.listen_port, network: service.network, mode: service.mode, enabled: service.enabled, billing_mode: service.billing_mode || 'both', traffic_limit_gb: service.traffic_limit_gb || 0 }; selectedTargets.value = service.targets.map(target => target.landing_node_id); service.targets.forEach(target => { targetOptions[target.landing_node_id] = { priority: target.priority, weight: target.weight } }); formError.value = ''; showForm.value = true }
 
