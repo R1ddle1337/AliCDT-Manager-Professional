@@ -1,31 +1,97 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import { createRouter, createWebHistory } from 'vue-router'
+import axios from 'axios'
 import App from './App.vue'
 import './style.css'
+import { clearSession } from './utils/session'
 
-import Dashboard from './views/Dashboard.vue'
-import Login from './views/Login.vue'
-import Accounts from './views/Accounts.vue'
-import Logs from './views/Logs.vue'
-import Settings from './views/Settings.vue'
+const identityApi = axios.create({ timeout: 20000 })
+
+const Login = () => import('./views/Login.vue')
+const AdminWorkspace = () => import('./views/AdminWorkspace.vue')
+const RelayNodes = () => import('./views/RelayNodes.vue')
+const LandingNodes = () => import('./views/LandingNodes.vue')
+const RelayServices = () => import('./views/RelayServices.vue')
+const CloudResources = () => import('./views/CloudResources.vue')
+const Logs = () => import('./views/Logs.vue')
+const Settings = () => import('./views/Settings.vue')
+const Security = () => import('./views/Security.vue')
+const DNSProviders = () => import('./views/DNSProviders.vue')
+const RelayPools = () => import('./views/RelayPools.vue')
+const Users = () => import('./views/Users.vue')
+const UserUsage = () => import('./views/UserUsage.vue')
+
+const authMeta = (title, audience = 'admin') => ({
+  auth: true,
+  [audience]: true,
+  title,
+})
 
 const router = createRouter({
   history: createWebHistory(),
+  scrollBehavior: () => ({ top: 0 }),
   routes: [
-    { path: '/login', component: Login },
-    { path: '/', component: Dashboard, meta: { auth: true } },
-    { path: '/accounts', component: Accounts, meta: { auth: true } },
-    { path: '/logs', component: Logs, meta: { auth: true } },
-    { path: '/settings', component: Settings, meta: { auth: true } },
-  ]
+    { path: '/login', component: Login, meta: { title: '登录' } },
+    { path: '/', redirect: '/workspace' },
+    { path: '/workspace', component: AdminWorkspace, meta: authMeta('中转管理') },
+    { path: '/instances', redirect: '/cloud-resources' },
+    { path: '/accounts', redirect: '/cloud-resources' },
+    { path: '/relay-nodes', component: RelayNodes, meta: authMeta('中转节点') },
+    { path: '/landing-nodes', component: LandingNodes, meta: authMeta('落地目标') },
+    { path: '/relay-services', component: RelayServices, meta: authMeta('独立转发') },
+    { path: '/cloud-resources', component: CloudResources, meta: authMeta('云资源') },
+    { path: '/logs', component: Logs, meta: authMeta('系统日志') },
+    { path: '/settings', component: Settings, meta: authMeta('系统设置') },
+    { path: '/security', component: Security, meta: authMeta('安全中心') },
+    { path: '/dns', component: DNSProviders, meta: authMeta('DNS 托管') },
+    { path: '/relay-pools', component: RelayPools, meta: authMeta('入口池') },
+    { path: '/users', component: Users, meta: authMeta('用户管理') },
+    { path: '/usage', component: UserUsage, meta: authMeta('我的用量', 'user') },
+    { path: '/:pathMatch(.*)*', redirect: '/' },
+  ],
 })
 
-router.beforeEach((to, from, next) => {
+router.beforeEach(async (to, from, next) => {
+  document.documentElement.classList.add('route-pending')
   const token = localStorage.getItem('token')
   if (to.meta.auth && !token) return next('/login')
-  if (to.path === '/login' && token) return next('/')
+  let role = localStorage.getItem('role')
+  if (token && !role) {
+    try {
+      const { data } = await identityApi.get('/api/v2/auth/me', { headers: { Authorization: `Bearer ${token}` } })
+      role = data.role
+      localStorage.setItem('role', role)
+      localStorage.setItem('username', data.username || '')
+      localStorage.setItem('displayName', data.display_name || data.username || '')
+    } catch (_) {
+      clearSession()
+      return next('/login')
+    }
+  }
+  if (to.path === '/login' && token) return next(role === 'user' ? '/usage' : '/')
+  if (to.meta.admin && role !== 'admin') return next(role === 'user' ? '/usage' : '/login')
+  if (to.meta.user && role !== 'user') return next(role === 'admin' ? '/' : '/login')
   next()
+})
+
+router.afterEach(to => {
+  document.title = `${to.meta.title || '控制台'} · AliCDT`
+  sessionStorage.removeItem('alicdt_chunk_reload')
+  window.requestAnimationFrame(() => document.documentElement.classList.remove('route-pending'))
+})
+
+router.onError(error => {
+  document.documentElement.classList.remove('route-pending')
+  const message = String(error?.message || error)
+  if (!/dynamically imported module|loading chunk|loading css chunk/i.test(message)) return
+  const reloadKey = 'alicdt_chunk_reload'
+  if (sessionStorage.getItem(reloadKey)) {
+    sessionStorage.removeItem(reloadKey)
+    return
+  }
+  sessionStorage.setItem(reloadKey, '1')
+  window.location.reload()
 })
 
 const app = createApp(App)

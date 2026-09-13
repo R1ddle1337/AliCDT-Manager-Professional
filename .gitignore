@@ -4,5 +4,9 @@ __pycache__/
 .env
 node_modules/
 frontend/dist/
+bin/
 *.db
 .DS_Store
+data-go/
+data-go-staging/
+data-agent/

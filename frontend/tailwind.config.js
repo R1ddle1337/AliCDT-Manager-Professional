@@ -21,7 +21,7 @@ export default {
         'text-muted': '#64748b',
       },
       fontFamily: {
-        sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'sans-serif'],
+        sans: ['Inter', 'Noto Sans SC', 'Source Han Sans SC', 'PingFang SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'sans-serif'],
         mono: ['SF Mono', 'JetBrains Mono', 'monospace'],
       },
       borderRadius: {

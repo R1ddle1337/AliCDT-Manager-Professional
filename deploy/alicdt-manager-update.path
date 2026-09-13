@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for AliCDT Manager update requests
+
+[Path]
+PathChanged=/app/alicdt-manager/data/update.request
+Unit=alicdt-manager-update.service
+
+[Install]
+WantedBy=multi-user.target
